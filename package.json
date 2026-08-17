@@ -1,0 +1,22 @@
+{
+  "name": "smm-panel",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @smm/api",
+    "dev:api": "npm run dev --workspace @smm/api",
+    "dev:web": "npm run dev --workspace @smm/web",
+    "dev:worker": "npm run dev --workspace @smm/worker",
+    "build": "npm run build --workspace @smm/shared && npm run build --workspace @smm/api && npm run build --workspace @smm/web && npm run build --workspace @smm/worker",
+    "lint": "npm run lint --workspace @smm/shared && npm run lint --workspace @smm/api && npm run lint --workspace @smm/web && npm run lint --workspace @smm/worker",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,66 @@
+<svg width="1440" height="960" viewBox="0 0 1440 960" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Admin SMM Panel dashboard mockup</title>
+  <desc id="desc">Dark admin dashboard with metrics, provider health, orders, payments, support, logs, and service controls.</desc>
+  <rect width="1440" height="960" fill="#050A14"/>
+  <rect x="24" y="24" width="252" height="912" rx="26" fill="#0B1220" stroke="#1F2A3D"/>
+  <text x="56" y="78" fill="#F8FAFC" font-family="Inter, Arial" font-size="28" font-weight="850">SMM Admin</text>
+  <text x="56" y="108" fill="#A78BFA" font-family="Inter, Arial" font-size="13" font-weight="800" letter-spacing="3">OPERATIONS</text>
+  <g font-family="Inter, Arial" font-size="16" font-weight="650">
+    <rect x="48" y="150" width="204" height="48" rx="14" fill="#7C3AED"/>
+    <text x="78" y="181" fill="white">Overview</text>
+    <text x="78" y="242" fill="#94A3B8">Orders</text>
+    <text x="78" y="298" fill="#94A3B8">Users</text>
+    <text x="78" y="354" fill="#94A3B8">Services</text>
+    <text x="78" y="410" fill="#94A3B8">Providers</text>
+    <text x="78" y="466" fill="#94A3B8">Payments</text>
+    <text x="78" y="522" fill="#94A3B8">Tickets</text>
+    <text x="78" y="578" fill="#94A3B8">Reports</text>
+    <text x="78" y="634" fill="#94A3B8">Security</text>
+    <text x="78" y="690" fill="#94A3B8">Settings</text>
+  </g>
+  <rect x="48" y="800" width="204" height="92" rx="18" fill="#111827" stroke="#253044"/>
+  <text x="70" y="835" fill="#94A3B8" font-family="Inter, Arial" font-size="13">Provider balance</text>
+  <text x="70" y="870" fill="#F59E0B" font-family="Inter, Arial" font-size="28" font-weight="850">$1,842.20</text>
+
+  <text x="316" y="78" fill="#F8FAFC" font-family="Inter, Arial" font-size="34" font-weight="850">Admin overview</text>
+  <text x="316" y="110" fill="#94A3B8" font-family="Inter, Arial" font-size="16">Monitor revenue, orders, payments, providers, and support operations.</text>
+  <rect x="1148" y="48" width="236" height="52" rx="18" fill="#0B1220" stroke="#1F2A3D"/>
+  <text x="1174" y="80" fill="#CBD5E1" font-family="Inter, Arial" font-size="15">Admin • 2FA enabled</text>
+
+  <g font-family="Inter, Arial">
+    <rect x="316" y="148" width="244" height="132" rx="24" fill="#0B1220" stroke="#1F2A3D"/>
+    <text x="344" y="196" fill="#94A3B8" font-size="14">Revenue today</text><text x="344" y="242" fill="#F8FAFC" font-size="34" font-weight="850">$4,280</text>
+    <rect x="584" y="148" width="244" height="132" rx="24" fill="#0B1220" stroke="#1F2A3D"/>
+    <text x="612" y="196" fill="#94A3B8" font-size="14">Profit margin</text><text x="612" y="242" fill="#22C55E" font-size="34" font-weight="850">31.6%</text>
+    <rect x="852" y="148" width="244" height="132" rx="24" fill="#0B1220" stroke="#1F2A3D"/>
+    <text x="880" y="196" fill="#94A3B8" font-size="14">Orders</text><text x="880" y="242" fill="#F8FAFC" font-size="34" font-weight="850">1,284</text>
+    <rect x="1120" y="148" width="264" height="132" rx="24" fill="#0B1220" stroke="#1F2A3D"/>
+    <text x="1148" y="196" fill="#94A3B8" font-size="14">Failed orders</text><text x="1148" y="242" fill="#EF4444" font-size="34" font-weight="850">18</text>
+  </g>
+
+  <rect x="316" y="314" width="662" height="382" rx="26" fill="#0B1220" stroke="#1F2A3D"/>
+  <text x="346" y="366" fill="#F8FAFC" font-family="Inter, Arial" font-size="22" font-weight="850">Live order queue</text>
+  <g font-family="Inter, Arial" font-size="14">
+    <text x="346" y="410" fill="#64748B" font-weight="700">ORDER</text><text x="482" y="410" fill="#64748B" font-weight="700">USER</text><text x="630" y="410" fill="#64748B" font-weight="700">SERVICE</text><text x="810" y="410" fill="#64748B" font-weight="700">STATUS</text>
+    <rect x="346" y="432" width="592" height="58" rx="14" fill="#111827"/><text x="368" y="468" fill="#E2E8F0">#10291</text><text x="482" y="468" fill="#CBD5E1">linh@example</text><text x="630" y="468" fill="#CBD5E1">IG Followers</text><text x="810" y="468" fill="#38BDF8">Submitting</text>
+    <rect x="346" y="506" width="592" height="58" rx="14" fill="#111827"/><text x="368" y="542" fill="#E2E8F0">#10290</text><text x="482" y="542" fill="#CBD5E1">nam@example</text><text x="630" y="542" fill="#CBD5E1">TikTok Likes</text><text x="810" y="542" fill="#22C55E">Completed</text>
+    <rect x="346" y="580" width="592" height="58" rx="14" fill="#111827"/><text x="368" y="616" fill="#E2E8F0">#10289</text><text x="482" y="616" fill="#CBD5E1">mai@example</text><text x="630" y="616" fill="#CBD5E1">YT Views</text><text x="810" y="616" fill="#F59E0B">Partial</text>
+  </g>
+
+  <rect x="1014" y="314" width="370" height="382" rx="26" fill="#0B1220" stroke="#1F2A3D"/>
+  <text x="1044" y="366" fill="#F8FAFC" font-family="Inter, Arial" font-size="22" font-weight="850">Provider health</text>
+  <g font-family="Inter, Arial" font-size="14">
+    <rect x="1044" y="398" width="304" height="64" rx="16" fill="#111827"/><circle cx="1072" cy="430" r="8" fill="#22C55E"/><text x="1094" y="426" fill="#E2E8F0" font-weight="700">Provider A</text><text x="1094" y="446" fill="#94A3B8">Latency 320ms</text>
+    <rect x="1044" y="480" width="304" height="64" rx="16" fill="#111827"/><circle cx="1072" cy="512" r="8" fill="#F59E0B"/><text x="1094" y="508" fill="#E2E8F0" font-weight="700">Provider B</text><text x="1094" y="528" fill="#94A3B8">Low balance</text>
+    <rect x="1044" y="562" width="304" height="64" rx="16" fill="#111827"/><circle cx="1072" cy="594" r="8" fill="#EF4444"/><text x="1094" y="590" fill="#E2E8F0" font-weight="700">Provider C</text><text x="1094" y="610" fill="#94A3B8">Timeout spike</text>
+  </g>
+
+  <rect x="316" y="732" width="1068" height="180" rx="26" fill="#0B1220" stroke="#1F2A3D"/>
+  <text x="346" y="784" fill="#F8FAFC" font-family="Inter, Arial" font-size="22" font-weight="850">Operations shortcuts</text>
+  <g font-family="Inter, Arial" font-size="15" font-weight="800">
+    <rect x="346" y="814" width="176" height="52" rx="16" fill="#7C3AED"/><text x="388" y="846" fill="white">Sync services</text>
+    <rect x="542" y="814" width="176" height="52" rx="16" fill="#111827" stroke="#253044"/><text x="587" y="846" fill="#CBD5E1">Review logs</text>
+    <rect x="738" y="814" width="176" height="52" rx="16" fill="#111827" stroke="#253044"/><text x="780" y="846" fill="#CBD5E1">Payments</text>
+    <rect x="934" y="814" width="176" height="52" rx="16" fill="#111827" stroke="#253044"/><text x="978" y="846" fill="#CBD5E1">Refunds</text>
+  </g>
+</svg>
