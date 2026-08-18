@@ -1,6 +1,13 @@
 import { createServer } from "node:http";
 import { loadConfig } from "@smm/config";
-import { adminWalletPage, authPage, panelPage, walletPage } from "./page.js";
+import {
+  adminCatalogPage,
+  adminWalletPage,
+  authPage,
+  panelPage,
+  servicesPage,
+  walletPage,
+} from "./page.js";
 const config = loadConfig(process.env, 3000);
 const server = createServer((request, response) => {
   const path = new URL(request.url ?? "/", config.appUrl).pathname;
@@ -26,6 +33,8 @@ const server = createServer((request, response) => {
       "/forgot-password",
       "/wallet",
       "/admin/wallet",
+      "/services",
+      "/admin/catalog",
     ].includes(path)
   ) {
     response.setHeader("content-type", "text/html; charset=utf-8");
@@ -43,9 +52,13 @@ const server = createServer((request, response) => {
             ? authPage("forgot", config.apiUrl.origin)
             : path === "/wallet"
               ? walletPage(config.apiUrl.origin)
-              : path === "/admin/wallet"
-                ? adminWalletPage(config.apiUrl.origin)
-                : panelPage(path === "/admin", config.apiUrl.origin);
+              : path === "/services"
+                ? servicesPage(config.apiUrl.origin)
+                : path === "/admin/catalog"
+                  ? adminCatalogPage(config.apiUrl.origin)
+                  : path === "/admin/wallet"
+                    ? adminWalletPage(config.apiUrl.origin)
+                    : panelPage(path === "/admin", config.apiUrl.origin);
     response.end(page);
     return;
   }

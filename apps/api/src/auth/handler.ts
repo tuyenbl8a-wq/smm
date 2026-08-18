@@ -3,6 +3,7 @@ import type { AppConfig } from "@smm/config";
 import type { AuthStore, AuthUser } from "./store.js";
 import { canAccessAdmin } from "../admin/dashboard.js";
 import { WalletError, type WalletService } from "../wallet/service.js";
+import { CatalogError, type CatalogService } from "../catalog/service.js";
 import {
   csrfValue,
   hashPassword,
@@ -26,6 +27,7 @@ export class AuthHandler {
     private readonly store: AuthStore,
     private readonly config: AppConfig,
     private readonly wallet?: WalletService,
+    private readonly catalog?: CatalogService,
   ) {}
   async handle(
     request: IncomingMessage,
@@ -70,6 +72,23 @@ export class AuthHandler {
         if (!this.wallet) throw new Error("Wallet service unavailable");
         return this.ok(response, await this.wallet.summary(auth.user.id));
       }
+      if (request.method === "GET" && path === "/api/v1/customer/catalog") {
+        if (!this.catalog) throw new Error("Catalog service unavailable");
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.catalog.customerCatalog(auth.user.id, {
+            page: Number(url.searchParams.get("page") ?? "1"),
+            limit: Number(url.searchParams.get("limit") ?? "50"),
+            ...(url.searchParams.get("category")
+              ? { category: url.searchParams.get("category")! }
+              : {}),
+            ...(url.searchParams.get("search")
+              ? { search: url.searchParams.get("search")! }
+              : {}),
+          }),
+        );
+      }
       if (
         request.method === "GET" &&
         path === "/api/v1/customer/wallet/transactions"
@@ -84,6 +103,17 @@ export class AuthHandler {
             Number(url.searchParams.get("limit") ?? "20"),
           ),
         );
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/catalog") {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.catalog) throw new Error("Catalog service unavailable");
+        return this.ok(response, await this.catalog.adminOverview());
       }
       const adminWallet =
         /^\/api\/v1\/admin\/wallets\/([0-9a-f-]{36})(?:\/transactions|\/mutations)?$/.exec(
@@ -130,6 +160,59 @@ export class AuthHandler {
         await this.store.revokeSession(auth.session.id);
         this.clearCookies(response);
         return this.ok(response, { loggedOut: true });
+      }
+      if (
+        request.method === "POST" &&
+        path.startsWith("/api/v1/admin/catalog/")
+      ) {
+        this.checkBurst(request, "admin-catalog-mutation");
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.catalog) throw new Error("Catalog service unavailable");
+        const body = await this.body(request);
+        if (path === "/api/v1/admin/catalog/categories")
+          return this.ok(
+            response,
+            await this.catalog.createCategory(auth.user.id, body),
+          );
+        if (path === "/api/v1/admin/catalog/services")
+          return this.ok(
+            response,
+            await this.catalog.createService(auth.user.id, body),
+          );
+        if (path === "/api/v1/admin/catalog/price-groups")
+          return this.ok(
+            response,
+            await this.catalog.createPriceGroup(auth.user.id, body),
+          );
+        if (path === "/api/v1/admin/catalog/price-rules")
+          return this.ok(
+            response,
+            await this.catalog.upsertPriceRule(auth.user.id, body),
+          );
+        const category =
+          /^\/api\/v1\/admin\/catalog\/categories\/([0-9a-f-]{36})\/update$/.exec(
+            path,
+          );
+        if (category)
+          return this.ok(
+            response,
+            await this.catalog.updateCategory(auth.user.id, category[1]!, body),
+          );
+        const service =
+          /^\/api\/v1\/admin\/catalog\/services\/([0-9a-f-]{36})\/update$/.exec(
+            path,
+          );
+        if (service)
+          return this.ok(
+            response,
+            await this.catalog.updateService(auth.user.id, service[1]!, body),
+          );
       }
       if (
         request.method === "POST" &&
@@ -235,6 +318,8 @@ export class AuthHandler {
       }
       return this.error(response, 404, "NOT_FOUND", "Route not found");
     } catch (error) {
+      if (error instanceof CatalogError)
+        return this.error(response, 422, error.code, error.message);
       if (error instanceof WalletError) {
         const status =
           error.code === "INSUFFICIENT_BALANCE"
