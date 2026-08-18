@@ -36,6 +36,8 @@ importers:
 
   packages/config: {}
 
+  packages/database: {}
+
   packages/health:
     dependencies:
       "@smm/types":

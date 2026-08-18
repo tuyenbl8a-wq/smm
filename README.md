@@ -76,3 +76,11 @@ Redis are reachable only by Compose services. To run application processes on th
 host against separately available infrastructure, use `pnpm dev`. Health routes
 are `/health` on every process and `/health/ready` on API and worker. See
 [docs/PHASE-2.md](docs/PHASE-2.md) for the delivered runtime contract.
+
+## Database schema
+
+The PostgreSQL/Prisma domain schema lives in
+`packages/database/prisma/schema.prisma`. Run its dependency-free structural and
+financial-safety checks with `pnpm --filter @smm/database db:validate`. Database
+money is represented as decimal strings at TypeScript boundaries. Current migration
+status and concurrency rules are documented in [docs/DATABASE.md](docs/DATABASE.md).
