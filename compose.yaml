@@ -119,6 +119,32 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+  migrate:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    command:
+      [
+        "node",
+        "packages/database/node_modules/prisma/build/index.js",
+        "migrate",
+        "deploy",
+        "--schema",
+        "packages/database/prisma/schema.prisma",
+      ]
+  seed:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    command:
+      [
+        "node",
+        "packages/database/node_modules/prisma/build/index.js",
+        "db",
+        "seed",
+        "--schema",
+        "packages/database/prisma/schema.prisma",
+      ]
 volumes:
   postgres_data:
   redis_data:

@@ -22,3 +22,25 @@ test("external payment identities are unique", () => {
   assert.match(schema, /externalTransactionId String\? @unique/);
   assert.match(schema, /@@unique\(\[paymentMethodId, externalEventId\]\)/);
 });
+test("initial migration creates every mapped model table", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260818130000_initial/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const table of schema.matchAll(/@@map\("([^"]+)"\)/g))
+    assert.match(migration, new RegExp(`CREATE TABLE "${table[1]}"`));
+  assert.match(migration, /CREATE EXTENSION IF NOT EXISTS pgcrypto/);
+  assert.match(migration, /FOREIGN KEY/);
+});
+test("development seed requires environment credentials and blocks production", () => {
+  const seed = readFileSync(
+    new URL("../prisma/seed.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(seed, /NODE_ENV === "production"/);
+  assert.match(seed, /required\("DEV_SEED_ADMIN_PASSWORD"\)/);
+  assert.doesNotMatch(seed, /password\s*=\s*["'][^"']+["']/i);
+});

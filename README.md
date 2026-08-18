@@ -82,5 +82,18 @@ are `/health` on every process and `/health/ready` on API and worker. See
 The PostgreSQL/Prisma domain schema lives in
 `packages/database/prisma/schema.prisma`. Run its dependency-free structural and
 financial-safety checks with `pnpm --filter @smm/database db:validate`. Database
-money is represented as decimal strings at TypeScript boundaries. Current migration
-status and concurrency rules are documented in [docs/DATABASE.md](docs/DATABASE.md).
+money is represented as decimal strings at TypeScript boundaries. Migration,
+seeding, and concurrency rules are documented in
+[docs/DATABASE.md](docs/DATABASE.md).
+
+```bash
+pnpm db:generate
+pnpm db:validate
+pnpm db:migrate:deploy
+pnpm db:seed
+```
+
+The development seed refuses production mode and requires
+`DEV_SEED_ADMIN_EMAIL` plus a 12-character-or-longer
+`DEV_SEED_ADMIN_PASSWORD`; no administrator password is embedded in the
+repository.

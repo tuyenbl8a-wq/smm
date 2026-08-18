@@ -6,7 +6,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY types ./types
 COPY packages ./packages
 COPY apps ./apps
-RUN pnpm install --offline --frozen-lockfile && pnpm build
+RUN pnpm install --no-frozen-lockfile && pnpm db:generate && pnpm build
 
 FROM node:20.20-alpine AS runtime
 ENV NODE_ENV=production

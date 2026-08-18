@@ -16,6 +16,11 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "dev": "pnpm build && node scripts/dev.mjs",
     "dev:docker": "docker compose up --build",
-    "docker:config": "docker compose config --quiet"
+    "docker:config": "docker compose config --quiet",
+    "db:generate": "pnpm --filter @smm/database db:generate",
+    "db:validate": "pnpm --filter @smm/database db:validate",
+    "db:migrate": "pnpm --filter @smm/database db:migrate",
+    "db:migrate:deploy": "pnpm --filter @smm/database db:migrate:deploy",
+    "db:seed": "pnpm --filter @smm/database db:seed"
   }
 }

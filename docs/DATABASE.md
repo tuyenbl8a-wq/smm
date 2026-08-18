@@ -1,30 +1,32 @@
 # Database design
 
-`packages/database/prisma/schema.prisma` defines the PostgreSQL domain model. The
-current Phase 3 increment includes 38 models, operational indexes, soft-delete
-columns where appropriate, immutable financial snapshots, and database uniqueness
-for payment events and financial idempotency.
+`packages/database/prisma/schema.prisma` defines 38 PostgreSQL models with operational indexes, soft deletion where appropriate, immutable financial snapshots, foreign-key-backed migration tables, and uniqueness for payment/provider idempotency.
 
-## Money
+## Money and concurrency
 
-All monetary columns use `Decimal` backed by PostgreSQL `numeric`, normally
-`numeric(20,8)`. Exchange-rate snapshots use `numeric(24,12)`. Application
-boundaries transport amounts as validated decimal strings and never as JavaScript
-floating-point values.
+All monetary columns use `Decimal` backed by PostgreSQL `numeric`, normally `numeric(20,8)`; exchange-rate snapshots use `numeric(24,12)`. TypeScript boundaries transport validated decimal strings, never floating-point values. Wallets carry a version for guarded updates and every ledger mutation requires a unique idempotency key plus before/after balances. Provider submissions, refund/refill/cancel requests, webhook events, and external payment identities are protected by database uniqueness.
 
-## Concurrency and idempotency
+## Prisma commands
 
-Wallets carry a version column for guarded updates. Every ledger mutation requires
-an immutable `WalletTransaction` with a unique idempotency key, before/after
-balances, and reference metadata. Provider submissions, refunds, refill/cancel
-requests, payment events, and external transaction identifiers have database
-unique constraints rather than relying only on preflight application queries.
+```bash
+pnpm db:generate
+pnpm db:validate
+pnpm db:migrate             # development only: creates new migrations
+pnpm db:migrate:deploy      # applies committed migrations
+pnpm db:seed
+```
 
-## Migration status
+The committed initial migration creates extensions, enums, all model tables, indexes, unique constraints, and foreign keys. Prisma Client generation is part of the Docker build.
 
-The Prisma model and schema-invariant tests are implemented. The initial generated
-SQL migration and seed are not yet committed: the execution environment blocks the
-npm registry, so the real Prisma CLI cannot be installed to generate and validate
-its SQL against PostgreSQL. Phase 3 remains active until that migration is produced
-by Prisma, reviewed, and exercised on a disposable PostgreSQL database. Handwritten
-partial SQL is intentionally not substituted for a verified migration.
+## Development seed safety
+
+Seeding is rejected when `NODE_ENV=production`. `DEV_SEED_ADMIN_EMAIL` and `DEV_SEED_ADMIN_PASSWORD` are mandatory and the password must contain at least 12 characters. Demo-customer credentials are optional but must be supplied as a pair. No credential is embedded in source. The seed upserts roles, permissions, SUPER_ADMIN grants, wallets, safe defaults, a category, and an inactive demonstration service.
+
+## Local versus Docker URLs
+
+For host processes, use a host-reachable URL such as `postgresql://smm:password@localhost:5432/smm?schema=public`. Compose overrides `DATABASE_URL` inside containers to use hostname `postgres`, so `.env` can retain the host URL. Apply and seed in Compose with:
+
+```bash
+docker compose --profile tools run --rm migrate
+docker compose --profile tools run --rm seed
+```

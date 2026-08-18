@@ -61,3 +61,17 @@ for (const field of ["balance", "amount", "charge", "providerCost", "profit"]) {
 console.log(
   `Validated ${models.length} Prisma models and monetary invariants.`,
 );
+const migration = readFileSync(
+  new URL(
+    "../prisma/migrations/20260818130000_initial/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+for (const table of schema.matchAll(/@@map\("([^"]+)"\)/g)) {
+  if (!migration.includes(`CREATE TABLE "${table[1]}"`))
+    throw new Error(`Initial migration does not create ${table[1]}`);
+}
+if (!migration.includes("FOREIGN KEY"))
+  throw new Error("Initial migration must enforce foreign keys");
+console.log("Validated initial migration table and foreign-key coverage.");
