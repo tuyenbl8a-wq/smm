@@ -18,14 +18,20 @@ import {
   BinanceWebhookProcessor,
 } from "./payment/binance.js";
 import { CassoWebhook } from "./payment/casso.js";
+import { PaymentSettingsService } from "./payment/settings.js";
+
 const config = loadConfig(process.env, 4000);
+
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
 ) => Promise<any>;
+
 const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
+
 const orderService = new OrderService(prisma);
 const resellerService = new ResellerService(prisma, orderService);
+
 const server = createApiServer(
   config,
   new AuthHandler(
@@ -39,6 +45,7 @@ const server = createApiServer(
     resellerService,
     new DepositService(prisma),
     new SupportService(prisma),
+    new PaymentSettingsService(prisma, config.encryptionKey),
   ),
   resellerService,
   new VietQrWebhook(prisma, process.env.VIETQR_WEBHOOK_SECRET ?? ""),
@@ -52,8 +59,13 @@ const server = createApiServer(
     ),
   ),
   new DistributedRateLimiter(new RedisCounterClient(new URL(config.redisUrl))),
-  new CassoWebhook(prisma, process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? ""),
+ new CassoWebhook(
+  prisma,
+  process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? "",
+  config.encryptionKey,
+),
 );
+
 server.listen(config.port, config.host, () => {
   console.log(
     JSON.stringify({
@@ -64,6 +76,7 @@ server.listen(config.port, config.host, () => {
     }),
   );
 });
+
 function shutdown(): void {
   server.close((error) => {
     if (error) {
@@ -73,5 +86,6 @@ function shutdown(): void {
     void prisma.$disconnect();
   });
 }
+
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

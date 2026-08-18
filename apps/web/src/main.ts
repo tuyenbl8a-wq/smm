@@ -4,6 +4,7 @@ import {
   adminCatalogPage,
   adminProvidersPage,
   adminWalletPage,
+  adminPaymentsPage,
   authPage,
   panelPage,
   ordersPage,
@@ -15,9 +16,12 @@ import {
   adminSupportPage,
   adminDepositsPage,
 } from "./page.js";
+
 const config = loadConfig(process.env, 3000);
+
 const server = createServer((request, response) => {
   const path = new URL(request.url ?? "/", config.appUrl).pathname;
+
   if (request.method === "GET" && path === "/health") {
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.end(
@@ -29,8 +33,10 @@ const server = createServer((request, response) => {
     );
     return;
   }
+
   const orderMatch = /^\/orders\/([0-9a-f-]{36})$/.exec(path),
     depositMatch = /^\/deposit\/([0-9a-f-]{36})$/.exec(path);
+
   if (request.method === "GET" && (orderMatch || depositMatch)) {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
@@ -40,6 +46,7 @@ const server = createServer((request, response) => {
     );
     return;
   }
+
   if (
     request.method === "GET" &&
     [
@@ -55,6 +62,7 @@ const server = createServer((request, response) => {
       "/orders",
       "/admin/catalog",
       "/admin/providers",
+      "/admin/payments",
       "/api-docs",
       "/deposit",
       "/support",
@@ -69,6 +77,7 @@ const server = createServer((request, response) => {
       `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${config.apiUrl.origin}; img-src data: https://img.vietqr.io; base-uri 'none'; frame-ancestors 'none'`,
     );
     response.setHeader("x-content-type-options", "nosniff");
+
     const page =
       path === "/login" || path === "/"
         ? authPage("login", config.apiUrl.origin)
@@ -86,34 +95,39 @@ const server = createServer((request, response) => {
                     ? adminCatalogPage(config.apiUrl.origin)
                     : path === "/admin/providers"
                       ? adminProvidersPage(config.apiUrl.origin)
-                      : path === "/admin/support"
-                        ? adminSupportPage(config.apiUrl.origin)
-                        : path === "/admin/deposits"
-                          ? adminDepositsPage(config.apiUrl.origin)
-                          : [
-                                "/api-docs",
-                                "/deposit",
-                                "/support",
-                                "/notifications",
-                              ].includes(path)
-                            ? featurePage(
-                                path === "/api-docs"
-                                  ? "api"
-                                  : (path.slice(1) as any),
-                                config.apiUrl.origin,
-                              )
-                            : path === "/admin/wallet"
-                              ? adminWalletPage(config.apiUrl.origin)
-                              : panelPage(
-                                  path === "/admin",
+                      : path === "/admin/payments"
+                        ? adminPaymentsPage(config.apiUrl.origin)
+                        : path === "/admin/support"
+                          ? adminSupportPage(config.apiUrl.origin)
+                          : path === "/admin/deposits"
+                            ? adminDepositsPage(config.apiUrl.origin)
+                            : [
+                                  "/api-docs",
+                                  "/deposit",
+                                  "/support",
+                                  "/notifications",
+                                ].includes(path)
+                              ? featurePage(
+                                  path === "/api-docs"
+                                    ? "api"
+                                    : (path.slice(1) as any),
                                   config.apiUrl.origin,
-                                );
+                                )
+                              : path === "/admin/wallet"
+                                ? adminWalletPage(config.apiUrl.origin)
+                                : panelPage(
+                                    path === "/admin",
+                                    config.apiUrl.origin,
+                                  );
+
     response.end(page);
     return;
   }
+
   response.statusCode = 404;
   response.end("Not found");
 });
+
 server.listen(config.port, config.host, () =>
   console.log(
     JSON.stringify({
@@ -124,6 +138,7 @@ server.listen(config.port, config.host, () =>
     }),
   ),
 );
+
 function shutdown(): void {
   server.close((error) => {
     if (error) {
@@ -132,5 +147,6 @@ function shutdown(): void {
     }
   });
 }
+
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

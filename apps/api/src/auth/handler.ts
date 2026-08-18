@@ -13,6 +13,7 @@ import { OrderLifecycleService } from "../order/lifecycle.js";
 import { ResellerService } from "../reseller/service.js";
 import { DepositService } from "../payment/service.js";
 import { SupportService } from "../support/service.js";
+import { PaymentSettingsService } from "../payment/settings.js";
 import {
   csrfValue,
   hashPassword,
@@ -43,6 +44,7 @@ export class AuthHandler {
     private readonly reseller?: ResellerService,
     private readonly deposits?: DepositService,
     private readonly support?: SupportService,
+    private readonly paymentSettings?: PaymentSettingsService,
   ) {}
   async handle(
     request: IncomingMessage,
@@ -182,6 +184,26 @@ export class AuthHandler {
           await this.support!.adminInbox(Object.fromEntries(u.searchParams)),
         );
       }
+
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/admin/payment-settings"
+      ) {
+        if (!canAccessAdmin(auth.access, "settings.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.paymentSettings)
+          throw new Error("Payment settings service unavailable");
+        return this.ok(
+          response,
+          await this.paymentSettings.getAdminSettings(),
+        );
+      }
+
       if (request.method === "GET" && path === "/api/v1/admin/deposits") {
         if (!canAccessAdmin(auth.access, "payments.manage"))
           return this.error(
@@ -285,6 +307,28 @@ export class AuthHandler {
             "Invalid CSRF token",
           );
       }
+
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/admin/payment-settings"
+      ) {
+        if (!canAccessAdmin(auth.access, "settings.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.paymentSettings)
+          throw new Error("Payment settings service unavailable");
+        return this.ok(
+          response,
+          await this.paymentSettings.updateAdminSettings(
+            await this.body(request),
+          ),
+        );
+      }
+
       if (request.method === "POST" && path === "/api/v1/customer/orders") {
         this.checkBurst(request, "customer-order-create");
         if (!this.orders) throw new Error("Order service unavailable");
