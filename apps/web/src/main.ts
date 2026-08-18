@@ -14,6 +14,8 @@ import {
   depositDetailPage,
   adminSupportPage,
   adminDepositsPage,
+  adminModulePage,
+  adminRecordPage,
 } from "./page.js";
 const config = loadConfig(process.env, 3000);
 const server = createServer((request, response) => {
@@ -30,7 +32,19 @@ const server = createServer((request, response) => {
     return;
   }
   const orderMatch = /^\/orders\/([0-9a-f-]{36})$/.exec(path),
-    depositMatch = /^\/deposit\/([0-9a-f-]{36})$/.exec(path);
+    depositMatch = /^\/deposit\/([0-9a-f-]{36})$/.exec(path),
+    adminRecord = /^\/admin\/(users|orders)\/([0-9a-f-]{36})$/.exec(path);
+  if (request.method === "GET" && adminRecord) {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(
+      adminRecordPage(
+        config.apiUrl.origin,
+        adminRecord[1] as "users" | "orders",
+        adminRecord[2]!,
+      ),
+    );
+    return;
+  }
   if (request.method === "GET" && (orderMatch || depositMatch)) {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
@@ -61,6 +75,12 @@ const server = createServer((request, response) => {
       "/notifications",
       "/admin/support",
       "/admin/deposits",
+      "/admin/users",
+      "/admin/orders",
+      "/admin/reports",
+      "/admin/logs",
+      "/admin/settings",
+      "/admin/payments",
     ].includes(path)
   ) {
     response.setHeader("content-type", "text/html; charset=utf-8");
@@ -91,23 +111,34 @@ const server = createServer((request, response) => {
                         : path === "/admin/deposits"
                           ? adminDepositsPage(config.apiUrl.origin)
                           : [
-                                "/api-docs",
-                                "/deposit",
-                                "/support",
-                                "/notifications",
+                                "/admin/users",
+                                "/admin/orders",
+                                "/admin/reports",
+                                "/admin/logs",
+                                "/admin/settings",
                               ].includes(path)
-                            ? featurePage(
-                                path === "/api-docs"
-                                  ? "api"
-                                  : (path.slice(1) as any),
+                            ? adminModulePage(
                                 config.apiUrl.origin,
+                                path.split("/").at(-1) as any,
                               )
-                            : path === "/admin/wallet"
-                              ? adminWalletPage(config.apiUrl.origin)
-                              : panelPage(
-                                  path === "/admin",
+                            : [
+                                  "/api-docs",
+                                  "/deposit",
+                                  "/support",
+                                  "/notifications",
+                                ].includes(path)
+                              ? featurePage(
+                                  path === "/api-docs"
+                                    ? "api"
+                                    : (path.slice(1) as any),
                                   config.apiUrl.origin,
-                                );
+                                )
+                              : path === "/admin/wallet"
+                                ? adminWalletPage(config.apiUrl.origin)
+                                : panelPage(
+                                    path === "/admin",
+                                    config.apiUrl.origin,
+                                  );
     response.end(page);
     return;
   }

@@ -97,3 +97,6 @@ The development seed refuses production mode and requires
 `DEV_SEED_ADMIN_EMAIL` plus a 12-character-or-longer
 `DEV_SEED_ADMIN_PASSWORD`; no administrator password is embedded in the
 repository.
+
+Production deployment, HTTPS/reverse-proxy, backup/restore, webhook, and
+recovery checks are documented in [docs/PRODUCTION.md](docs/PRODUCTION.md).

@@ -18,6 +18,7 @@ import {
   BinanceWebhookProcessor,
 } from "./payment/binance.js";
 import { CassoWebhook } from "./payment/casso.js";
+import { AdminOperationsService } from "./admin/operations.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -25,7 +26,12 @@ const dynamicImport = new Function("specifier", "return import(specifier)") as (
 const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
 const orderService = new OrderService(prisma);
-const resellerService = new ResellerService(prisma, orderService);
+const lifecycleService = new OrderLifecycleService(prisma);
+const resellerService = new ResellerService(
+  prisma,
+  orderService,
+  lifecycleService,
+);
 const server = createApiServer(
   config,
   new AuthHandler(
@@ -35,10 +41,11 @@ const server = createApiServer(
     new CatalogService(prisma),
     new ProviderService(prisma, config.encryptionKey),
     orderService,
-    new OrderLifecycleService(prisma),
+    lifecycleService,
     resellerService,
     new DepositService(prisma),
     new SupportService(prisma),
+    new AdminOperationsService(prisma),
   ),
   resellerService,
   new VietQrWebhook(prisma, process.env.VIETQR_WEBHOOK_SECRET ?? ""),
