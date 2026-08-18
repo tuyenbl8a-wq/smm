@@ -191,11 +191,14 @@ export class AuthHandler {
             "Permission denied",
           );
         const u = new URL(request.url ?? path, this.config.apiUrl);
+        const depositStatus = u.searchParams.get("status");
         return this.ok(
           response,
           await this.deposits!.adminHistory({
-            ...(u.searchParams.get("status")
-              ? { status: u.searchParams.get("status")! }
+            ...(depositStatus &&
+            depositStatus !== "undefined" &&
+            depositStatus !== "null"
+              ? { status: depositStatus }
               : {}),
             take: Number(u.searchParams.get("limit") ?? "50"),
           }),
