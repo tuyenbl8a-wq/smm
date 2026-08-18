@@ -4,4 +4,4 @@ PASS: authenticated lifecycle requests, exact-once partial refund primitive, API
 
 EXTERNAL: Binance merchant order/webhook/reconciliation requires official credentials; SMTP delivery requires SMTP credentials; S3 production storage requires durable storage credentials. Each integration fails closed without credentials.
 
-FAIL: full admin support inbox UI, provider-side refill/cancel execution wiring, Binance atomic webhook credit/reconciliation wiring, secure attachment HTTP upload/download routes, and runtime scheduling of the new reconciliation/email workers remain incomplete. Phase 19 was not started.
+FAIL: full admin support inbox UI, provider-side refill/cancel execution wiring, Binance reconciliation wiring, secure attachment HTTP upload/download routes, and runtime scheduling of the reconciliation worker remain incomplete. Phase 19 was not started.

@@ -11,7 +11,10 @@ import { OrderLifecycleService } from "./order/lifecycle.js";
 import { DepositService } from "./payment/service.js";
 import { SupportService } from "./support/service.js";
 import { VietQrWebhook } from "./payment/vietqr.js";
-import { BinanceMerchantProvider } from "./payment/binance.js";
+import {
+  BinanceMerchantProvider,
+  BinanceWebhookProcessor,
+} from "./payment/binance.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -39,11 +42,14 @@ const server = createApiServer(
     prisma,
     process.env.VIETQR_WEBHOOK_SECRET ?? "disabled-development-secret",
   ),
-  new BinanceMerchantProvider(
-    "https://bpay.binanceapi.com",
-    process.env.BINANCE_MERCHANT_API_KEY ?? "",
-    process.env.BINANCE_MERCHANT_SECRET ?? "",
-    process.env.BINANCE_WEBHOOK_SECRET ?? "disabled",
+  new BinanceWebhookProcessor(
+    prisma,
+    new BinanceMerchantProvider(
+      "https://bpay.binanceapi.com",
+      process.env.BINANCE_MERCHANT_API_KEY ?? "",
+      process.env.BINANCE_MERCHANT_SECRET ?? "",
+      process.env.BINANCE_WEBHOOK_SECRET ?? "disabled",
+    ),
   ),
 );
 server.listen(config.port, config.host, () => {

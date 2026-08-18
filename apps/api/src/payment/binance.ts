@@ -70,3 +70,80 @@ export class BinanceMerchantProvider implements PaymentProvider {
     );
   }
 }
+export class BinanceWebhookProcessor {
+  constructor(
+    private db: any,
+    private provider: BinanceMerchantProvider,
+  ) {}
+  async process(raw: string, signature: string) {
+    if (!this.provider.verifyWebhook(raw, signature))
+      throw new Error("SIGNATURE_INVALID");
+    const event = await this.provider.handleWebhook(JSON.parse(raw));
+    try {
+      return await this.db.$transaction(async (tx: any) => {
+        const deposit = await tx.deposit.findUnique({
+          where: { code: event.depositCode },
+        });
+        if (!deposit) throw new Error("DEPOSIT_NOT_FOUND");
+        const webhook = await tx.paymentWebhook.create({
+          data: {
+            paymentMethodId: deposit.paymentMethodId,
+            externalEventId: event.eventId,
+            signatureValid: true,
+            status: "PENDING",
+            payload: JSON.parse(raw),
+            payloadHash: createHmac("sha256", "binance-payload")
+              .update(raw)
+              .digest("hex"),
+          },
+        });
+        if (
+          String(deposit.grossAmount) !== event.amount ||
+          deposit.sourceCurrency !== event.currency
+        ) {
+          await tx.deposit.update({
+            where: { id: deposit.id },
+            data: {
+              status: "MANUAL_REVIEW",
+              externalTransactionId: event.transactionId,
+            },
+          });
+          return { status: "MANUAL_REVIEW" };
+        }
+        const rows = await tx.$queryRawUnsafe(
+          `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
+          String(deposit.netAmount),
+          deposit.userId,
+        );
+        await tx.walletTransaction.create({
+          data: {
+            walletId: rows[0].id,
+            userId: deposit.userId,
+            type: "DEPOSIT",
+            amount: String(deposit.netAmount),
+            balanceBefore: rows[0].before,
+            balanceAfter: rows[0].after,
+            referenceId: deposit.id,
+            idempotencyKey: `deposit:${event.transactionId}`,
+          },
+        });
+        await tx.deposit.update({
+          where: { id: deposit.id },
+          data: {
+            status: "PAID",
+            paidAt: new Date(),
+            externalTransactionId: event.transactionId,
+          },
+        });
+        await tx.paymentWebhook.update({
+          where: { id: webhook.id },
+          data: { status: "SUCCEEDED", processedAt: new Date() },
+        });
+        return { status: "PAID" };
+      });
+    } catch (e: any) {
+      if (e?.code === "P2002") return { status: "DUPLICATE" };
+      throw e;
+    }
+  }
+}

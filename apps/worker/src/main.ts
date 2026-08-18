@@ -3,6 +3,7 @@ import { loadConfig } from "@smm/config";
 import { endpointFromUrl, probeTcp } from "@smm/health";
 import { SubmitWorker } from "./provider-submit.js";
 import { ProviderSyncWorker } from "./provider-sync.js";
+import { EmailWorker } from "./email.js";
 const config = loadConfig(process.env, 4100);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -11,6 +12,17 @@ const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
 const submitWorker = new SubmitWorker(prisma, config.encryptionKey);
 const syncWorker = new ProviderSyncWorker(prisma, config.encryptionKey);
+const emailWorker = new EmailWorker(prisma, null);
+let emailRunning = false;
+const emailPoll = setInterval(async () => {
+  if (emailRunning) return;
+  emailRunning = true;
+  try {
+    await emailWorker.once();
+  } finally {
+    emailRunning = false;
+  }
+}, 10000);
 void syncWorker.once();
 const syncPoll = setInterval(
   () => void syncWorker.once().catch(() => undefined),
@@ -81,6 +93,7 @@ server.listen(config.port, config.host, () =>
 function shutdown(): void {
   clearInterval(poll);
   clearInterval(syncPoll);
+  clearInterval(emailPoll);
   void prisma.$disconnect();
   server.close((error) => {
     if (error) {

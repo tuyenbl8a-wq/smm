@@ -5,7 +5,7 @@ import type { HealthCheck } from "@smm/types";
 import type { AuthHandler } from "./auth/handler.js";
 import type { ResellerService } from "./reseller/service.js";
 import type { VietQrWebhook } from "./payment/vietqr.js";
-import type { BinanceMerchantProvider } from "./payment/binance.js";
+import type { BinanceWebhookProcessor } from "./payment/binance.js";
 
 function json(
   response: ServerResponse,
@@ -25,7 +25,7 @@ export function createApiServer(
   auth?: AuthHandler,
   reseller?: ResellerService,
   vietqr?: VietQrWebhook,
-  binance?: BinanceMerchantProvider,
+  binance?: BinanceWebhookProcessor,
 ): Server {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", config.apiUrl).pathname;
@@ -66,10 +66,10 @@ export function createApiServer(
           return;
         }
         const sig = String(request.headers["binancepay-signature"] ?? "");
-        if (!binance!.verifyWebhook(raw, sig))
-          throw new Error("SIGNATURE_INVALID");
-        response.statusCode = 202;
-        response.end(JSON.stringify({ accepted: true }));
+        const result = await binance!.process(raw, sig);
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify(result));
         return;
       } catch {
         response.statusCode = 401;
