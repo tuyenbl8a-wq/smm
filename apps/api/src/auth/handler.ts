@@ -119,6 +119,7 @@ export class AuthHandler {
         return this.ok(response, {
           user: this.publicUser(auth.user),
           area: "customer",
+          dashboard: await this.store.customerDashboard(auth.user.id),
         });
       if (path.startsWith("/api/v1/admin") && request.method === "GET") {
         if (

@@ -12,6 +12,24 @@ export interface AuthSession {
   expiresAt: Date;
   revokedAt: Date | null;
 }
+export interface CustomerDashboard {
+  balance: string;
+  currency: string;
+  totalOrders: number;
+  activeOrders: number;
+  completedOrders: number;
+  totalSpent: string;
+  totalDeposited: string;
+  openTickets: number;
+  unreadNotifications: number;
+  activity: Array<{ date: string; orders: number; spent: string }>;
+  notifications: Array<{
+    id: string;
+    title: string;
+    body: string;
+    createdAt: Date;
+  }>;
+}
 export interface AuthStore {
   findUserByEmail(email: string): Promise<AuthUser | null>;
   findUserByUsername(username: string): Promise<AuthUser | null>;
@@ -66,6 +84,7 @@ export interface AuthStore {
     ipAddress: string | undefined,
     since: Date,
   ): Promise<number>;
+  customerDashboard(userId: string): Promise<CustomerDashboard>;
 }
 export class PrismaAuthStore implements AuthStore {
   constructor(private readonly db: any) {}
@@ -190,5 +209,76 @@ export class PrismaAuthStore implements AuthStore {
         OR: [{ email }, ...(ipAddress ? [{ ipAddress }] : [])],
       },
     });
+  }
+  async customerDashboard(userId: string): Promise<CustomerDashboard> {
+    const { buildActivitySeries, subtractDecimal } =
+      await import("../customer/dashboard.js");
+    const since = new Date();
+    since.setUTCHours(0, 0, 0, 0);
+    since.setUTCDate(since.getUTCDate() - 6);
+    const [
+      wallet,
+      totalOrders,
+      activeOrders,
+      completedOrders,
+      orderSpend,
+      deposits,
+      openTickets,
+      unreadNotifications,
+      notifications,
+      activityRecords,
+    ] = await Promise.all([
+      this.db.wallet.findUnique({
+        where: { userId },
+        select: { balance: true, currency: true },
+      }),
+      this.db.order.count({ where: { userId } }),
+      this.db.order.count({
+        where: {
+          userId,
+          status: { in: ["PENDING", "PROCESSING", "IN_PROGRESS"] },
+        },
+      }),
+      this.db.order.count({ where: { userId, status: "COMPLETED" } }),
+      this.db.order.aggregate({
+        where: { userId },
+        _sum: { charge: true, refundedAmount: true },
+      }),
+      this.db.deposit.aggregate({
+        where: { userId, status: "PAID" },
+        _sum: { netAmount: true },
+      }),
+      this.db.ticket.count({
+        where: { userId, status: { not: "CLOSED" } },
+      }),
+      this.db.notification.count({ where: { userId, readAt: null } }),
+      this.db.notification.findMany({
+        where: { userId },
+        select: { id: true, title: true, body: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      }),
+      this.db.order.findMany({
+        where: { userId, createdAt: { gte: since } },
+        select: { createdAt: true, charge: true },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
+    return {
+      balance: String(wallet?.balance ?? "0"),
+      currency: wallet?.currency ?? "USD",
+      totalOrders,
+      activeOrders,
+      completedOrders,
+      totalSpent: subtractDecimal(
+        orderSpend._sum.charge,
+        orderSpend._sum.refundedAmount,
+      ),
+      totalDeposited: String(deposits._sum.netAmount ?? "0"),
+      openTickets,
+      unreadNotifications,
+      activity: buildActivitySeries(activityRecords),
+      notifications,
+    };
   }
 }

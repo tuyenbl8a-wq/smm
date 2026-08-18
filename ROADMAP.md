@@ -11,7 +11,7 @@ migration validation, and build checks applicable to the code introduced by it.
 | 2     | Typed environment validation, Docker development PostgreSQL/Redis, health foundation | ✅     |
 | 3     | Production Prisma schema, indexes, constraints, migration, development seed          | ✅     |
 | 4     | Authentication, sessions, password recovery/verification, RBAC permissions           | ✅     |
-| 5     | Responsive customer shell and dashboard                                              | 🚧     |
+| 5     | Responsive customer shell and dashboard                                              | ✅     |
 | 6     | Responsive protected admin shell and dashboard                                       | ⬜     |
 | 7     | Atomic wallet service and immutable transaction ledger                               | ⬜     |
 | 8     | Categories, services, price groups, and pricing rules                                | ⬜     |
@@ -43,9 +43,6 @@ migration validation, and build checks applicable to the code introduced by it.
 
 ## Next phase acceptance criteria
 
-Phase 4 must implement persisted registration, login/logout, session rotation,
-password recovery and email verification, plus backend-enforced roles and
-permissions. Authentication tests must cover password hashing, revoked/expired
-sessions, authorization denial, and brute-force logging. The committed Phase 3
-migration and seed should first be exercised with `docker compose --profile tools`
-on a Docker-capable host.
+Phase 6 must add a protected responsive admin shell and dashboard backed by
+permission-guarded aggregate APIs. It must not reuse customer authorization or
+expose operational data to ordinary users.
