@@ -10,6 +10,9 @@ import {
   servicesPage,
   walletPage,
   featurePage,
+  orderDetailPage,
+  depositDetailPage,
+  adminSupportPage,
 } from "./page.js";
 const config = loadConfig(process.env, 3000);
 const server = createServer((request, response) => {
@@ -22,6 +25,17 @@ const server = createServer((request, response) => {
         service: "web",
         timestamp: new Date().toISOString(),
       }),
+    );
+    return;
+  }
+  const orderMatch = /^\/orders\/([0-9a-f-]{36})$/.exec(path),
+    depositMatch = /^\/deposit\/([0-9a-f-]{36})$/.exec(path);
+  if (request.method === "GET" && (orderMatch || depositMatch)) {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(
+      orderMatch
+        ? orderDetailPage(config.apiUrl.origin, orderMatch[1]!)
+        : depositDetailPage(config.apiUrl.origin, depositMatch![1]!),
     );
     return;
   }
@@ -44,6 +58,7 @@ const server = createServer((request, response) => {
       "/deposit",
       "/support",
       "/notifications",
+      "/admin/support",
     ].includes(path)
   ) {
     response.setHeader("content-type", "text/html; charset=utf-8");
@@ -74,6 +89,7 @@ const server = createServer((request, response) => {
                             "/deposit",
                             "/support",
                             "/notifications",
+                            "/admin/support",
                           ].includes(path)
                         ? featurePage(
                             path === "/api-docs"
@@ -81,9 +97,14 @@ const server = createServer((request, response) => {
                               : (path.slice(1) as any),
                             config.apiUrl.origin,
                           )
-                        : path === "/admin/wallet"
-                          ? adminWalletPage(config.apiUrl.origin)
-                          : panelPage(path === "/admin", config.apiUrl.origin);
+                        : path === "/admin/support"
+                          ? adminSupportPage(config.apiUrl.origin)
+                          : path === "/admin/wallet"
+                            ? adminWalletPage(config.apiUrl.origin)
+                            : panelPage(
+                                path === "/admin",
+                                config.apiUrl.origin,
+                              );
     response.end(page);
     return;
   }
