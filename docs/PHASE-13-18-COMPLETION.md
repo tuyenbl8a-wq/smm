@@ -1,0 +1,5 @@
+# Phase 13–18 end-to-end completion audit
+
+Authenticated customer routes now expose lifecycle actions, API-key management, payment-method/deposit creation and history/detail, ticket create/list/detail/reply, and notifications/read state. `/api/v2` remains API-key authenticated. Public VietQR and Binance webhook routes read raw bytes before signature validation. Customer pages `/api-docs`, `/deposit`, `/support`, and `/notifications` call these APIs and retain session CSRF protection for mutations.
+
+External provider and payment success is never simulated. VietQR credits only in its verified transaction. Binance remains fail-closed without merchant credentials. Provider reconciliation, Binance reconciliation, SMTP transport, full admin support inbox, and binary attachment persistence require further runtime wiring and therefore are not represented as fully complete here.

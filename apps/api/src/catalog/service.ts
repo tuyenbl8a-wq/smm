@@ -1,0 +1,393 @@
+import { calculateSaleRate, decimalInput } from "./pricing.js";
+
+export class CatalogError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+const slug = (value: unknown): string => {
+  const result = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(result) || result.length > 180)
+    throw new CatalogError("SLUG_INVALID", "Invalid slug");
+  return result;
+};
+const name = (value: unknown): string => {
+  const result = String(value ?? "").trim();
+  if (result.length < 2 || result.length > 255)
+    throw new CatalogError("NAME_INVALID", "Name must be 2–255 characters");
+  return result;
+};
+const integer = (value: unknown, field: string, min = 0): number => {
+  const result = Number(value);
+  if (!Number.isSafeInteger(result) || result < min)
+    throw new CatalogError("INTEGER_INVALID", `${field} is invalid`);
+  return result;
+};
+
+export class CatalogService {
+  constructor(private readonly db: any) {}
+
+  async customerCatalog(
+    userId: string,
+    query: { page: number; limit: number; category?: string; search?: string },
+  ) {
+    const page = integer(query.page, "page", 1);
+    const limit = integer(query.limit, "limit", 1);
+    if (limit > 100)
+      throw new CatalogError("PAGINATION_INVALID", "Limit cannot exceed 100");
+    const categories = await this.db.serviceCategory.findMany({
+      where: {
+        active: true,
+        deletedAt: null,
+        ...(query.category ? { slug: slug(query.category) } : {}),
+      },
+      select: { id: true, name: true, slug: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+    const where = {
+      active: true,
+      deletedAt: null,
+      categoryId: { in: categories.map((category: any) => category.id) },
+      ...(query.search
+        ? {
+            name: { contains: query.search.slice(0, 100), mode: "insensitive" },
+          }
+        : {}),
+    };
+    const user = await this.db.user.findUnique({
+      where: { id: userId },
+      select: { priceGroupId: true },
+    });
+    const [total, services, rules] = await Promise.all([
+      this.db.service.count({ where }),
+      this.db.service.findMany({
+        where,
+        select: {
+          id: true,
+          categoryId: true,
+          name: true,
+          description: true,
+          type: true,
+          rate: true,
+          min: true,
+          max: true,
+          averageTime: true,
+          refill: true,
+          cancel: true,
+          customFields: true,
+        },
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      user?.priceGroupId
+        ? this.db.priceRule.findMany({
+            where: { priceGroupId: user.priceGroupId },
+            select: {
+              serviceId: true,
+              fixedRate: true,
+              markupPercent: true,
+              fixedProfit: true,
+              minProfit: true,
+            },
+          })
+        : [],
+    ]);
+    /* Provider cost is fetched separately only for pricing and is never selected into the public row. */
+    const costs = await this.db.service.findMany({
+      where: { id: { in: services.map((service: any) => service.id) } },
+      select: { id: true, providerCost: true, rate: true },
+    });
+    const costMap = new Map(costs.map((item: any) => [item.id, item]));
+    const ruleMap = new Map(rules.map((rule: any) => [rule.serviceId, rule]));
+    return {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+      categories,
+      services: services.map((service: any) => {
+        const source: any = costMap.get(service.id);
+        const rule: any = ruleMap.get(service.id);
+        return {
+          ...service,
+          rate: calculateSaleRate({
+            baseRate: source.rate,
+            providerCost: source.providerCost,
+            fixedRate: rule?.fixedRate,
+            markupPercent: rule?.markupPercent,
+            fixedProfit: rule?.fixedProfit,
+            minProfit: rule?.minProfit ?? "0",
+          }),
+        };
+      }),
+    };
+  }
+
+  async adminOverview() {
+    const [categories, services, priceGroups, priceRules] = await Promise.all([
+      this.db.serviceCategory.findMany({
+        where: { deletedAt: null },
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      }),
+      this.db.service.findMany({
+        where: { deletedAt: null },
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        take: 200,
+      }),
+      this.db.priceGroup.findMany({ orderBy: { name: "asc" } }),
+      this.db.priceRule.findMany({ take: 500 }),
+    ]);
+    return {
+      categories,
+      services: services.map((x: any) => ({
+        ...x,
+        rate: String(x.rate),
+        providerCost: String(x.providerCost),
+      })),
+      priceGroups,
+      priceRules: priceRules.map((x: any) => ({
+        ...x,
+        fixedRate: x.fixedRate == null ? null : String(x.fixedRate),
+        markupPercent: x.markupPercent == null ? null : String(x.markupPercent),
+        fixedProfit: x.fixedProfit == null ? null : String(x.fixedProfit),
+        minProfit: String(x.minProfit),
+      })),
+    };
+  }
+
+  async createCategory(actorId: string, input: any) {
+    const data = {
+      name: name(input.name),
+      slug: slug(input.slug),
+      description: input.description
+        ? String(input.description).slice(0, 5000)
+        : null,
+      sortOrder: integer(input.sortOrder ?? 0, "sortOrder"),
+      active: input.active !== false,
+    };
+    return this.db.$transaction(async (tx: any) => {
+      const item = await tx.serviceCategory.create({ data });
+      await this.audit(
+        tx,
+        actorId,
+        "CATEGORY_CREATE",
+        "service_category",
+        item.id,
+        null,
+        item,
+      );
+      return item;
+    });
+  }
+  async updateCategory(actorId: string, id: string, input: any) {
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.serviceCategory.findUnique({ where: { id } });
+      if (!before)
+        throw new CatalogError("CATEGORY_NOT_FOUND", "Category not found");
+      const data = {
+        ...(input.name !== undefined ? { name: name(input.name) } : {}),
+        ...(input.slug !== undefined ? { slug: slug(input.slug) } : {}),
+        ...(input.active !== undefined
+          ? { active: Boolean(input.active) }
+          : {}),
+        ...(input.sortOrder !== undefined
+          ? { sortOrder: integer(input.sortOrder, "sortOrder") }
+          : {}),
+      };
+      const item = await tx.serviceCategory.update({ where: { id }, data });
+      await this.audit(
+        tx,
+        actorId,
+        "CATEGORY_UPDATE",
+        "service_category",
+        id,
+        before,
+        item,
+      );
+      return item;
+    });
+  }
+  async createService(actorId: string, input: any) {
+    const min = integer(input.min, "min", 1),
+      max = integer(input.max, "max", 1);
+    if (max < min)
+      throw new CatalogError(
+        "RANGE_INVALID",
+        "Maximum must be at least minimum",
+      );
+    const data = {
+      categoryId: String(input.categoryId),
+      name: name(input.name),
+      description: input.description
+        ? String(input.description).slice(0, 10000)
+        : null,
+      type: name(input.type ?? "DEFAULT").slice(0, 80),
+      pricingModel: "PER_THOUSAND",
+      rate: decimalInput(input.rate),
+      providerCost: decimalInput(input.providerCost, true),
+      min,
+      max,
+      averageTime: input.averageTime
+        ? String(input.averageTime).slice(0, 100)
+        : null,
+      refill: Boolean(input.refill),
+      cancel: Boolean(input.cancel),
+      active: input.active !== false,
+      sortOrder: integer(input.sortOrder ?? 0, "sortOrder"),
+    };
+    return this.db.$transaction(async (tx: any) => {
+      const item = await tx.service.create({ data });
+      await this.audit(
+        tx,
+        actorId,
+        "SERVICE_CREATE",
+        "service",
+        item.id,
+        null,
+        item,
+      );
+      return item;
+    });
+  }
+  async updateService(actorId: string, id: string, input: any) {
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.service.findUnique({ where: { id } });
+      if (!before)
+        throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
+      const data: any = {
+        ...(input.name !== undefined ? { name: name(input.name) } : {}),
+        ...(input.rate !== undefined ? { rate: decimalInput(input.rate) } : {}),
+        ...(input.providerCost !== undefined
+          ? { providerCost: decimalInput(input.providerCost, true) }
+          : {}),
+        ...(input.active !== undefined
+          ? { active: Boolean(input.active) }
+          : {}),
+        ...(input.min !== undefined
+          ? { min: integer(input.min, "min", 1) }
+          : {}),
+        ...(input.max !== undefined
+          ? { max: integer(input.max, "max", 1) }
+          : {}),
+      };
+      if ((data.min ?? before.min) > (data.max ?? before.max))
+        throw new CatalogError(
+          "RANGE_INVALID",
+          "Maximum must be at least minimum",
+        );
+      const item = await tx.service.update({ where: { id }, data });
+      await this.audit(
+        tx,
+        actorId,
+        "SERVICE_UPDATE",
+        "service",
+        id,
+        before,
+        item,
+      );
+      return item;
+    });
+  }
+  async createPriceGroup(actorId: string, input: any) {
+    const code = String(input.code ?? "")
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z0-9_]{2,50}$/.test(code))
+      throw new CatalogError("CODE_INVALID", "Invalid price group code");
+    return this.db.$transaction(async (tx: any) => {
+      const item = await tx.priceGroup.create({
+        data: {
+          name: name(input.name).slice(0, 100),
+          code,
+          active: input.active !== false,
+        },
+      });
+      await this.audit(
+        tx,
+        actorId,
+        "PRICE_GROUP_CREATE",
+        "price_group",
+        item.id,
+        null,
+        item,
+      );
+      return item;
+    });
+  }
+  async upsertPriceRule(actorId: string, input: any) {
+    const data = {
+      priceGroupId: String(input.priceGroupId),
+      serviceId: String(input.serviceId),
+      fixedRate:
+        input.fixedRate == null || input.fixedRate === ""
+          ? null
+          : decimalInput(input.fixedRate),
+      markupPercent:
+        input.markupPercent == null || input.markupPercent === ""
+          ? null
+          : decimalInput(input.markupPercent, true),
+      fixedProfit:
+        input.fixedProfit == null || input.fixedProfit === ""
+          ? null
+          : decimalInput(input.fixedProfit, true),
+      minProfit: decimalInput(input.minProfit ?? "0", true),
+    };
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.priceRule.findUnique({
+        where: {
+          priceGroupId_serviceId: {
+            priceGroupId: data.priceGroupId,
+            serviceId: data.serviceId,
+          },
+        },
+      });
+      const item = await tx.priceRule.upsert({
+        where: {
+          priceGroupId_serviceId: {
+            priceGroupId: data.priceGroupId,
+            serviceId: data.serviceId,
+          },
+        },
+        create: data,
+        update: data,
+      });
+      await this.audit(
+        tx,
+        actorId,
+        before ? "PRICE_RULE_UPDATE" : "PRICE_RULE_CREATE",
+        "price_rule",
+        item.id,
+        before,
+        item,
+      );
+      return item;
+    });
+  }
+  private audit(
+    tx: any,
+    actorId: string,
+    action: string,
+    resource: string,
+    resourceId: string,
+    before: any,
+    after: any,
+  ) {
+    return tx.auditLog.create({
+      data: {
+        actorId,
+        action,
+        resource,
+        resourceId,
+        before: before ? JSON.parse(JSON.stringify(before)) : null,
+        after: JSON.parse(JSON.stringify(after)),
+      },
+    });
+  }
+}
