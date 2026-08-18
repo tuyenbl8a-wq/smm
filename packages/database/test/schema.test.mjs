@@ -18,6 +18,21 @@ test("money never uses floating point", () => {
   assert.match(schema, /balance Decimal/);
   assert.match(schema, /providerCost Decimal/);
 });
+test("all Prisma enum values use multiline declarations", () => {
+  assert.doesNotMatch(schema, /enum\s+\w+\s*\{[^\n{}]+\}/);
+  const enums = [...schema.matchAll(/enum\s+(\w+)\s*\{([\s\S]*?)\n\}/g)];
+  assert.equal(enums.length, 12);
+  for (const [, , body] of enums) {
+    const values = body
+      .split("\n")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    assert.equal(
+      values.every((value) => !/\s/.test(value)),
+      true,
+    );
+  }
+});
 test("external payment identities are unique", () => {
   assert.match(schema, /externalTransactionId String\? @unique/);
   assert.match(schema, /@@unique\(\[paymentMethodId, externalEventId\]\)/);

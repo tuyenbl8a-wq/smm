@@ -7,18 +7,98 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum UserStatus { PENDING ACTIVE BANNED DELETED }
-enum RoleCode { USER RESELLER SUPPORT STAFF ADMIN SUPER_ADMIN }
-enum TransactionType { DEPOSIT ORDER REFUND ADMIN_ADD ADMIN_SUBTRACT AFFILIATE BONUS ADJUSTMENT }
-enum OrderStatus { PENDING PROCESSING IN_PROGRESS COMPLETED PARTIAL CANCELED REFUNDED FAILED }
-enum DepositStatus { PENDING PAID EXPIRED CANCELED FAILED MANUAL_REVIEW }
-enum ProviderStatus { ACTIVE DEGRADED INACTIVE }
-enum TicketStatus { OPEN ANSWERED CUSTOMER_REPLY CLOSED }
-enum TicketPriority { LOW NORMAL HIGH URGENT }
-enum DiscountType { PERCENT FIXED }
-enum CommissionStatus { PENDING APPROVED PAID CANCELED }
-enum RequestStatus { PENDING PROCESSING COMPLETED FAILED UNKNOWN }
-enum NotificationChannel { IN_APP EMAIL TELEGRAM }
+enum UserStatus {
+  PENDING
+  ACTIVE
+  BANNED
+  DELETED
+}
+
+enum RoleCode {
+  USER
+  RESELLER
+  SUPPORT
+  STAFF
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum TransactionType {
+  DEPOSIT
+  ORDER
+  REFUND
+  ADMIN_ADD
+  ADMIN_SUBTRACT
+  AFFILIATE
+  BONUS
+  ADJUSTMENT
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  IN_PROGRESS
+  COMPLETED
+  PARTIAL
+  CANCELED
+  REFUNDED
+  FAILED
+}
+
+enum DepositStatus {
+  PENDING
+  PAID
+  EXPIRED
+  CANCELED
+  FAILED
+  MANUAL_REVIEW
+}
+
+enum ProviderStatus {
+  ACTIVE
+  DEGRADED
+  INACTIVE
+}
+
+enum TicketStatus {
+  OPEN
+  ANSWERED
+  CUSTOMER_REPLY
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELED
+}
+
+enum RequestStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  UNKNOWN
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  TELEGRAM
+}
 
 model User {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

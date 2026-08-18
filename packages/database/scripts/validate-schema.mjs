@@ -47,6 +47,24 @@ const missing = required.filter(
 );
 if (missing.length)
   throw new Error(`Missing required Prisma models: ${missing.join(", ")}`);
+const inlineEnums = [...schema.matchAll(/enum\s+(\w+)\s*\{[^\n{}]+\}/g)].map(
+  (match) => match[1],
+);
+if (inlineEnums.length)
+  throw new Error(
+    `Prisma enums must declare one value per line: ${inlineEnums.join(", ")}`,
+  );
+const enumBlocks = [...schema.matchAll(/enum\s+(\w+)\s*\{([\s\S]*?)\n\}/g)];
+if (enumBlocks.length === 0)
+  throw new Error("Prisma schema must contain parseable multiline enum blocks");
+for (const [block, name, body] of enumBlocks) {
+  const values = body
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (values.length === 0 || values.some((value) => /\s/.test(value)))
+    throw new Error(`${name} contains an invalid enum declaration: ${block}`);
+}
 const models = [...schema.matchAll(/model\s+(\w+)\s*\{([\s\S]*?)\n\}/g)];
 for (const [, name, body] of models) {
   if (!/createdAt\s+DateTime/.test(body) || !/updatedAt\s+DateTime/.test(body))
