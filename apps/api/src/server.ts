@@ -2,6 +2,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AppConfig } from "@smm/config";
 import { endpointFromUrl, probeTcp } from "@smm/health";
 import type { HealthCheck } from "@smm/types";
+import type { AuthHandler } from "./auth/handler.js";
 
 function json(
   response: ServerResponse,
@@ -16,9 +17,28 @@ function json(
   response.setHeader("x-content-type-options", "nosniff");
   response.end(JSON.stringify(payload));
 }
-export function createApiServer(config: AppConfig): Server {
+export function createApiServer(config: AppConfig, auth?: AuthHandler): Server {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", config.apiUrl).pathname;
+    const origin =
+      typeof request.headers.origin === "string"
+        ? request.headers.origin
+        : undefined;
+    if (origin === config.appUrl.origin) {
+      response.setHeader("access-control-allow-origin", origin);
+      response.setHeader("access-control-allow-credentials", "true");
+      response.setHeader("vary", "origin");
+    }
+    if (request.method === "OPTIONS") {
+      response.statusCode = 204;
+      response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
+      response.setHeader(
+        "access-control-allow-headers",
+        "content-type,x-csrf-token",
+      );
+      response.end();
+      return;
+    }
     if (request.method === "GET" && path === "/health") {
       json(response, 200, {
         status: "ok",
@@ -27,6 +47,7 @@ export function createApiServer(config: AppConfig): Server {
       });
       return;
     }
+    if (auth && (await auth.handle(request, response, path))) return;
     if (request.method === "GET" && path === "/health/ready") {
       const [database, redis] = await Promise.all([
         probeTcp(endpointFromUrl(config.databaseUrl), config.healthTimeoutMs),

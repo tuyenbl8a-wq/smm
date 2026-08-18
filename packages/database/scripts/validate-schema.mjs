@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 const schema = readFileSync(
   new URL("../prisma/schema.prisma", import.meta.url),
   "utf8",
@@ -79,13 +79,13 @@ for (const field of ["balance", "amount", "charge", "providerCost", "profit"]) {
 console.log(
   `Validated ${models.length} Prisma models and monetary invariants.`,
 );
-const migration = readFileSync(
-  new URL(
-    "../prisma/migrations/20260818130000_initial/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
+const migrationRoot = new URL("../prisma/migrations/", import.meta.url);
+const migration = readdirSync(migrationRoot, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) =>
+    readFileSync(new URL(`${entry.name}/migration.sql`, migrationRoot), "utf8"),
+  )
+  .join("\n");
 for (const table of schema.matchAll(/@@map\("([^"]+)"\)/g)) {
   if (!migration.includes(`CREATE TABLE "${table[1]}"`))
     throw new Error(`Initial migration does not create ${table[1]}`);

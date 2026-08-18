@@ -1,7 +1,17 @@
 import { loadConfig } from "@smm/config";
 import { createApiServer } from "./server.js";
+import { AuthHandler } from "./auth/handler.js";
+import { PrismaAuthStore } from "./auth/store.js";
 const config = loadConfig(process.env, 4000);
-const server = createApiServer(config);
+const dynamicImport = new Function("specifier", "return import(specifier)") as (
+  specifier: string,
+) => Promise<any>;
+const { PrismaClient } = await dynamicImport("@prisma/client");
+const prisma = new PrismaClient();
+const server = createApiServer(
+  config,
+  new AuthHandler(new PrismaAuthStore(prisma), config),
+);
 server.listen(config.port, config.host, () => {
   console.log(
     JSON.stringify({
@@ -18,6 +28,7 @@ function shutdown(): void {
       console.error(error);
       process.exitCode = 1;
     }
+    void prisma.$disconnect();
   });
 }
 process.on("SIGTERM", shutdown);

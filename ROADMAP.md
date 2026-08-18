@@ -10,8 +10,8 @@ migration validation, and build checks applicable to the code introduced by it.
 | 1     | Repository audit, architecture, workspace policy, configuration inventory            | ✅     |
 | 2     | Typed environment validation, Docker development PostgreSQL/Redis, health foundation | ✅     |
 | 3     | Production Prisma schema, indexes, constraints, migration, development seed          | ✅     |
-| 4     | Authentication, sessions, password recovery/verification, RBAC permissions           | ⬜     |
-| 5     | Responsive customer shell and dashboard                                              | ⬜     |
+| 4     | Authentication, sessions, password recovery/verification, RBAC permissions           | ✅     |
+| 5     | Responsive customer shell and dashboard                                              | 🚧     |
 | 6     | Responsive protected admin shell and dashboard                                       | ⬜     |
 | 7     | Atomic wallet service and immutable transaction ledger                               | ⬜     |
 | 8     | Categories, services, price groups, and pricing rules                                | ⬜     |

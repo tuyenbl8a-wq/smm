@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 const schema = readFileSync(
   new URL("../prisma/schema.prisma", import.meta.url),
   "utf8",
@@ -38,13 +38,13 @@ test("external payment identities are unique", () => {
   assert.match(schema, /@@unique\(\[paymentMethodId, externalEventId\]\)/);
 });
 test("initial migration creates every mapped model table", () => {
-  const migration = readFileSync(
-    new URL(
-      "../prisma/migrations/20260818130000_initial/migration.sql",
-      import.meta.url,
-    ),
-    "utf8",
-  );
+  const root = new URL("../prisma/migrations/", import.meta.url);
+  const migration = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) =>
+      readFileSync(new URL(`${entry.name}/migration.sql`, root), "utf8"),
+    )
+    .join("\n");
   for (const table of schema.matchAll(/@@map\("([^"]+)"\)/g))
     assert.match(migration, new RegExp(`CREATE TABLE "${table[1]}"`));
   assert.match(migration, /CREATE EXTENSION IF NOT EXISTS pgcrypto/);

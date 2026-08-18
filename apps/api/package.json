@@ -12,6 +12,7 @@
     "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js"
   },
   "dependencies": {
+    "@prisma/client": "6.14.0",
     "@smm/config": "workspace:*",
     "@smm/health": "workspace:*",
     "@smm/types": "workspace:*"

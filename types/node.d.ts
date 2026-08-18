@@ -10,16 +10,22 @@ declare const process: {
   exitCode?: number;
   on(event: string, listener: (...args: unknown[]) => void): void;
 };
-declare const Buffer: { byteLength(value: string): number };
+declare const Buffer: {
+  byteLength(value: string): number;
+  from(value: string, encoding?: string): unknown;
+};
 declare module "node:http" {
   export interface IncomingMessage {
     method?: string;
     url?: string;
     headers: Record<string, string | string[] | undefined>;
+    socket: { remoteAddress?: string };
+    on(event: string, listener: (chunk?: unknown) => void): void;
+    destroy(): void;
   }
   export interface ServerResponse {
     statusCode: number;
-    setHeader(name: string, value: string): void;
+    setHeader(name: string, value: string | string[]): void;
     end(data?: string): void;
   }
   export interface Server {
@@ -58,7 +64,34 @@ declare module "node:assert/strict" {
   export default assert;
 }
 declare module "node:fs" {
-  export function readFileSync(path: string, encoding: string): string;
+  export function readFileSync(path: string | URL, encoding: string): string;
+  export function readdirSync(
+    path: string | URL,
+    options: { withFileTypes: true },
+  ): Array<{ name: string; isDirectory(): boolean }>;
+}
+declare module "node:crypto" {
+  export function randomBytes(size: number): {
+    toString(encoding: string): string;
+  };
+  export function createHash(algorithm: string): {
+    update(value: string): { digest(encoding: string): string };
+  };
+  export function createHmac(
+    algorithm: string,
+    key: string,
+  ): { update(value: string): { digest(encoding: string): string } };
+  export function timingSafeEqual(left: unknown, right: unknown): boolean;
+  export function scrypt(
+    password: string,
+    salt: unknown,
+    length: number,
+    options: object,
+    callback: (
+      error: Error | null,
+      key: { toString(encoding?: string): string },
+    ) => void,
+  ): void;
 }
 declare module "node:url" {
   export function fileURLToPath(url: string): string;
