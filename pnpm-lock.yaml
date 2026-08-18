@@ -6,3 +6,40 @@ settings:
 
 importers:
   .: {}
+
+  apps/api:
+    dependencies:
+      "@smm/config":
+        specifier: workspace:*
+        version: link:../../packages/config
+      "@smm/health":
+        specifier: workspace:*
+        version: link:../../packages/health
+      "@smm/types":
+        specifier: workspace:*
+        version: link:../../packages/types
+
+  apps/web:
+    dependencies:
+      "@smm/config":
+        specifier: workspace:*
+        version: link:../../packages/config
+
+  apps/worker:
+    dependencies:
+      "@smm/config":
+        specifier: workspace:*
+        version: link:../../packages/config
+      "@smm/health":
+        specifier: workspace:*
+        version: link:../../packages/health
+
+  packages/config: {}
+
+  packages/health:
+    dependencies:
+      "@smm/types":
+        specifier: workspace:*
+        version: link:../types
+
+  packages/types: {}

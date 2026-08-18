@@ -8,7 +8,7 @@ migration validation, and build checks applicable to the code introduced by it.
 | Phase | Scope                                                                                | Status |
 | ----- | ------------------------------------------------------------------------------------ | ------ |
 | 1     | Repository audit, architecture, workspace policy, configuration inventory            | ✅     |
-| 2     | Typed environment validation, Docker development PostgreSQL/Redis, health foundation | 🚧     |
+| 2     | Typed environment validation, Docker development PostgreSQL/Redis, health foundation | ✅     |
 | 3     | Production Prisma schema, indexes, constraints, migration, development seed          | ⬜     |
 | 4     | Authentication, sessions, password recovery/verification, RBAC permissions           | ⬜     |
 | 5     | Responsive customer shell and dashboard                                              | ⬜     |
@@ -43,7 +43,9 @@ migration validation, and build checks applicable to the code introduced by it.
 
 ## Next phase acceptance criteria
 
-Phase 2 must provide typed, fail-fast configuration with actionable missing-key
-errors; local PostgreSQL and Redis containers with health checks and persistent
-volumes; application health primitives; and tests proving required/optional
-environment behavior. Empty payment credentials must disable only their adapters.
+Phase 3 must provide the complete Prisma schema, reviewed SQL migration, database
+constraints and indexes, migration verification against PostgreSQL, and a safe
+development seed. Prisma packages cannot be installed in the current execution
+environment because its registry proxy returns HTTP 403; the phase must not be
+represented as complete until the real ORM and migration tooling can be installed
+and exercised against PostgreSQL.

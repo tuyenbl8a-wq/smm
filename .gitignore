@@ -10,3 +10,6 @@ coverage/
 *.log
 .DS_Store
 
+
+# compiler and test output
+**/dist-test/

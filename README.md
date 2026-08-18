@@ -61,3 +61,18 @@ packages. Each phase adds package-specific checks alongside its production code.
 Docker, migrations, backup/restore, deployment, and incident procedures will be
 added in their owning phases. Until those phases are complete this repository
 must not be presented or deployed as a production-ready service.
+
+## Development runtime
+
+Copy `.env.example` to `.env`, generate independent secrets, set a local-only
+`POSTGRES_PASSWORD`, then start the complete stack:
+
+```bash
+docker compose up --build
+```
+
+The web and API bind to loopback ports 3000 and 4000 by default. PostgreSQL and
+Redis are reachable only by Compose services. To run application processes on the
+host against separately available infrastructure, use `pnpm dev`. Health routes
+are `/health` on every process and `/health/ready` on API and worker. See
+[docs/PHASE-2.md](docs/PHASE-2.md) for the delivered runtime contract.
