@@ -1,0 +1,101 @@
+export class SupportError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+const message = (v: unknown) => {
+  const x = String(v ?? "").trim();
+  if (x.length < 2 || x.length > 10000)
+    throw new SupportError(
+      "MESSAGE_INVALID",
+      "Message must be 2-10000 characters",
+    );
+  return x;
+};
+export class SupportService {
+  constructor(private db: any) {}
+  async create(userId: string, input: any) {
+    const subject = String(input.subject ?? "").trim();
+    if (subject.length < 3 || subject.length > 255)
+      throw new SupportError("SUBJECT_INVALID", "Invalid subject");
+    return this.db.$transaction(async (tx: any) => {
+      const ticket = await tx.ticket.create({
+        data: {
+          userId,
+          subject,
+          category: String(input.category ?? "GENERAL").slice(0, 80),
+          status: "OPEN",
+          priority: "NORMAL",
+        },
+      });
+      await tx.ticketMessage.create({
+        data: {
+          ticketId: ticket.id,
+          authorId: userId,
+          message: message(input.message),
+        },
+      });
+      return { ...ticket, id: String(ticket.id) };
+    });
+  }
+  async list(userId: string) {
+    const rows = await this.db.ticket.findMany({
+      where: { userId },
+      orderBy: { updatedAt: "desc" },
+      take: 100,
+    });
+    return rows.map((x: any) => ({ ...x, id: String(x.id) }));
+  }
+  async reply(userId: string, id: bigint, input: any, isStaff = false) {
+    return this.db.$transaction(async (tx: any) => {
+      const ticket = await tx.ticket.findUnique({ where: { id } });
+      if (!ticket || (!isStaff && ticket.userId !== userId))
+        throw new SupportError("TICKET_NOT_FOUND", "Ticket not found");
+      const item = await tx.ticketMessage.create({
+        data: {
+          ticketId: id,
+          authorId: userId,
+          message: message(input.message),
+          internal: isStaff && Boolean(input.internal),
+        },
+      });
+      await tx.ticket.update({
+        where: { id },
+        data: { status: isStaff ? "ANSWERED" : "CUSTOMER_REPLY" },
+      });
+      if (isStaff && !input.internal)
+        await tx.notification.create({
+          data: {
+            userId: ticket.userId,
+            channel: "IN_APP",
+            type: "TICKET_REPLY",
+            title: `Ticket #${id} replied`,
+            body: "Support has replied to your ticket",
+            data: { ticketId: String(id) },
+          },
+        });
+      return item;
+    });
+  }
+  notifications(userId: string) {
+    return this.db.notification.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+  }
+  validateAttachment(x: { name: string; mime: string; size: number }) {
+    if (
+      x.size > 5 * 1024 * 1024 ||
+      ![/^image\/(png|jpeg|webp)$/, /^application\/pdf$/].some((r) =>
+        r.test(x.mime),
+      ) ||
+      !/^[-_.A-Za-z0-9]+$/.test(x.name)
+    )
+      throw new SupportError("ATTACHMENT_INVALID", "Invalid attachment");
+    return `${crypto.randomUUID()}-${x.name}`;
+  }
+}

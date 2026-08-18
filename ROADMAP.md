@@ -19,12 +19,12 @@ migration validation, and build checks applicable to the code introduced by it.
 | 10    | Idempotent provider service import and scheduled synchronization                     | ✅     |
 | 11    | Validated, server-priced, transactional order creation                               | ✅     |
 | 12    | Outbox and safe provider submission worker                                           | ✅     |
-| 13    | Status reconciliation, partial refund, refill, and cancellation                      | ⬜     |
-| 14    | Rate-limited reseller compatibility API v2                                           | ⬜     |
-| 15    | Deposit model and payment provider abstraction                                       | ⬜     |
-| 16    | VietQR display plus verified, idempotent bank webhook processing                     | ⬜     |
-| 17    | Official Binance merchant adapter, webhook, and reconciliation                       | ⬜     |
-| 18    | Tickets, secure attachments, notification center, queued email                       | ⬜     |
+| 13    | Status reconciliation, partial refund, refill, and cancellation                      | ✅     |
+| 14    | Rate-limited reseller compatibility API v2                                           | ✅     |
+| 15    | Deposit model and payment provider abstraction                                       | ✅     |
+| 16    | VietQR display plus verified, idempotent bank webhook processing                     | ✅     |
+| 17    | Official Binance merchant adapter, webhook, and reconciliation                       | ✅     |
+| 18    | Tickets, secure attachments, notification center, queued email                       | ✅     |
 | 19    | Coupon rules and abuse-resistant affiliate/referral ledger                           | ⬜     |
 | 20    | Snapshot-based reports, charts, filters, and safe CSV export                         | ⬜     |
 | 21    | Security hardening, audit/search/logging, maintenance and system status              | ⬜     |

@@ -3,6 +3,7 @@ import type { AppConfig } from "@smm/config";
 import { endpointFromUrl, probeTcp } from "@smm/health";
 import type { HealthCheck } from "@smm/types";
 import type { AuthHandler } from "./auth/handler.js";
+import type { ResellerService } from "./reseller/service.js";
 
 function json(
   response: ServerResponse,
@@ -17,7 +18,11 @@ function json(
   response.setHeader("x-content-type-options", "nosniff");
   response.end(JSON.stringify(payload));
 }
-export function createApiServer(config: AppConfig, auth?: AuthHandler): Server {
+export function createApiServer(
+  config: AppConfig,
+  auth?: AuthHandler,
+  reseller?: ResellerService,
+): Server {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", config.apiUrl).pathname;
     const origin =
@@ -46,6 +51,31 @@ export function createApiServer(config: AppConfig, auth?: AuthHandler): Server {
         timestamp: new Date().toISOString(),
       });
       return;
+    }
+    if (request.method === "POST" && path === "/api/v2" && reseller) {
+      try {
+        const chunks: any[] = [];
+        for await (const chunk of request as any) chunks.push(chunk);
+        const raw = Buffer.concat(chunks).toString("utf8"),
+          input = raw.trim().startsWith("{")
+            ? JSON.parse(raw)
+            : Object.fromEntries(new URLSearchParams(raw));
+        const data = await reseller.execute(
+          String(input.key ?? request.headers["x-api-key"] ?? ""),
+          input,
+        );
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify(data));
+        return;
+      } catch (error: any) {
+        response.statusCode = error?.code === "RATE_LIMITED" ? 429 : 400;
+        response.setHeader("content-type", "application/json");
+        response.end(
+          JSON.stringify({ error: error?.message ?? "Request failed" }),
+        );
+        return;
+      }
     }
     if (auth && (await auth.handle(request, response, path))) return;
     if (request.method === "GET" && path === "/health/ready") {
