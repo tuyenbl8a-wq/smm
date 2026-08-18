@@ -22,7 +22,7 @@ test("payment secrets are encrypted and admin reads only masked values", async (
       },
       auditLog: db.auditLog,
     });
-  const service = new PaymentSettingsService(db, "encryption-key");
+  const service = new PaymentSettingsService(db, "test-encryption-key");
   await service.update("admin", {
     cassoEnabled: true,
     cassoWebhookSecureToken: "very-secret-webhook-token",
@@ -35,7 +35,7 @@ test("payment secrets are encrypted and admin reads only masked values", async (
     await service.webhookToken("fallback"),
     "very-secret-webhook-token",
   );
-  const view = await service.adminView();
+  const view: any = await service.adminView();
   assert.equal(view.cassoWebhookSecureToken.configured, true);
   assert.notEqual(
     view.cassoWebhookSecureToken.masked,
@@ -46,7 +46,7 @@ test("payment secrets are encrypted and admin reads only masked values", async (
 test("Casso webhook token falls back to environment when DB is unset", async () => {
   const service = new PaymentSettingsService(
     { setting: { findUnique: async () => null } },
-    "encryption-key",
+    "test-encryption-key",
   );
   assert.equal(
     await service.webhookToken("environment-token"),

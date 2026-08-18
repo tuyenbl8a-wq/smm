@@ -650,6 +650,19 @@ export class AuthHandler {
             response,
             await this.catalog.updateService(auth.user.id, service[1]!, body),
           );
+        const priceGroup =
+          /^\/api\/v1\/admin\/catalog\/price-groups\/([0-9a-f-]{36})\/update$/.exec(
+            path,
+          );
+        if (priceGroup)
+          return this.ok(
+            response,
+            await this.catalog.updatePriceGroup(
+              auth.user.id,
+              priceGroup[1]!,
+              body,
+            ),
+          );
       }
       if (
         request.method === "POST" &&

@@ -60,11 +60,14 @@ declare module "node:test" {
 declare module "node:assert/strict" {
   const assert: {
     equal(actual: unknown, expected: unknown): void;
+    notEqual(actual: unknown, expected: unknown): void;
     deepEqual(actual: unknown, expected: unknown): void;
+    match(actual: string, matcher: RegExp): void;
+    doesNotMatch(actual: string, matcher: RegExp): void;
     throws(callback: () => unknown, matcher?: RegExp): void;
     rejects(
       callback: () => Promise<unknown>,
-      matcher?: RegExp | ((error: unknown) => boolean),
+      matcher?: RegExp | ((error: any) => boolean),
     ): Promise<void>;
   };
   export default assert;

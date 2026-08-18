@@ -376,6 +376,37 @@ export class CatalogService {
       return item;
     });
   }
+  async updatePriceGroup(actorId: string, id: string, input: any) {
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.priceGroup.findUnique({ where: { id } });
+      if (!before)
+        throw new CatalogError(
+          "PRICE_GROUP_NOT_FOUND",
+          "Price group not found",
+        );
+      const item = await tx.priceGroup.update({
+        where: { id },
+        data: {
+          ...(input.name !== undefined
+            ? { name: name(input.name).slice(0, 100) }
+            : {}),
+          ...(input.active !== undefined
+            ? { active: Boolean(input.active) }
+            : {}),
+        },
+      });
+      await this.audit(
+        tx,
+        actorId,
+        "PRICE_GROUP_UPDATE",
+        "price_group",
+        id,
+        before,
+        item,
+      );
+      return item;
+    });
+  }
   async upsertPriceRule(actorId: string, input: any) {
     const data = {
       priceGroupId: String(input.priceGroupId),

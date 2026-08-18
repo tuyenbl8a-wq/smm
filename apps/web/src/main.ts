@@ -18,6 +18,7 @@ import {
   adminRecordPage,
   accountPage,
   adminPaymentsPage,
+  adminProviderDetailPage,
 } from "./page.js";
 const config = loadConfig(process.env, 3000);
 const server = createServer((request, response) => {
@@ -35,7 +36,15 @@ const server = createServer((request, response) => {
   }
   const orderMatch = /^\/orders\/([0-9a-f-]{36})$/.exec(path),
     depositMatch = /^\/deposit\/([0-9a-f-]{36})$/.exec(path),
-    adminRecord = /^\/admin\/(users|orders)\/([0-9a-f-]{36})$/.exec(path);
+    adminRecord = /^\/admin\/(users|orders)\/([0-9a-f-]{36})$/.exec(path),
+    providerRecord = /^\/admin\/providers\/([0-9a-f-]{36})$/.exec(path);
+  if (request.method === "GET" && providerRecord) {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(
+      adminProviderDetailPage(config.apiUrl.origin, providerRecord[1]!),
+    );
+    return;
+  }
   if (request.method === "GET" && adminRecord) {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(

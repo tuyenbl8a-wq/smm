@@ -15,7 +15,12 @@ test("all customer destinations use the shared customer navigation", () => {
     "/notifications",
     "/account",
   ])
-    assert.match(page, new RegExp(`href=\\"${route.replace("/", "\\/")}\\"`));
+    assert.match(
+      page,
+      route === "/notifications"
+        ? /href="\/notifications"/
+        : new RegExp(`navLink\\(active, \\"${route.replace("/", "\\/")}\\"`),
+    );
   for (const fn of [
     "walletPage",
     "servicesPage",
@@ -36,4 +41,19 @@ test("customer and admin routes remain independently available", () => {
     "/admin/support",
   ])
     assert.match(main, new RegExp(`\\"${route.replaceAll("/", "\\/")}\\"`));
+  assert.match(main, /adminProviderDetailPage/);
+  assert.match(main, /providerRecord/);
+});
+test("navigation highlights active destinations and groups admin operations", () => {
+  assert.match(page, /active === path/);
+  assert.match(page, /VẬN HÀNH/);
+  assert.match(page, /TÀI CHÍNH/);
+  assert.match(page, /HỆ THỐNG/);
+  assert.match(page, /customerNavigation\("\/deposit"\)/);
+});
+test("catalog and provider audit controls are wired to authenticated APIs", () => {
+  assert.match(page, /catalog\/price-groups\/.*\/update/);
+  assert.match(page, /data-rule/);
+  assert.match(page, /data-mapping/);
+  assert.match(page, /admin\/providers\/\$\{id\}/);
 });
