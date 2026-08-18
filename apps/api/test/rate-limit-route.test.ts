@@ -50,3 +50,26 @@ test("the real v2 route returns 429 and Retry-After from distributed limiter", a
   assert.equal(Number(limited.headers.get("retry-after")) > 0, true);
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
+
+test("runtime-capable counter uses atomic increment with TTL", async () => {
+  let atomicCalls = 0,
+    legacyCalls = 0;
+  const limiter = new DistributedRateLimiter({
+    incrWithExpiry: async (_key, ttl) => {
+      atomicCalls++;
+      assert.equal(ttl, 61);
+      return atomicCalls;
+    },
+    incr: async () => {
+      legacyCalls++;
+      return 1;
+    },
+    expire: async () => {
+      legacyCalls++;
+    },
+  });
+  assert.equal((await limiter.consume("api-key:ip", 1)).allowed, true);
+  assert.equal((await limiter.consume("api-key:ip", 1)).allowed, false);
+  assert.equal(atomicCalls, 2);
+  assert.equal(legacyCalls, 0);
+});

@@ -47,4 +47,13 @@ export class RedisCounterClient {
   expire(k: string, s: number) {
     return this.command(["EXPIRE", k, String(s)]);
   }
+  incrWithExpiry(k: string, seconds: number) {
+    return this.command([
+      "EVAL",
+      "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]) end; return n",
+      "1",
+      k,
+      String(seconds),
+    ]);
+  }
 }
