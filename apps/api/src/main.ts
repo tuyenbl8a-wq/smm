@@ -19,6 +19,7 @@ import {
 } from "./payment/binance.js";
 import { CassoWebhook } from "./payment/casso.js";
 import { AdminOperationsService } from "./admin/operations.js";
+import { PaymentSettingsService } from "./payment/settings.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -32,6 +33,10 @@ const resellerService = new ResellerService(
   orderService,
   lifecycleService,
 );
+const paymentSettings = new PaymentSettingsService(
+  prisma,
+  config.encryptionKey,
+);
 const server = createApiServer(
   config,
   new AuthHandler(
@@ -43,9 +48,10 @@ const server = createApiServer(
     orderService,
     lifecycleService,
     resellerService,
-    new DepositService(prisma),
+    new DepositService(prisma, () => paymentSettings.publicBank()),
     new SupportService(prisma),
     new AdminOperationsService(prisma),
+    paymentSettings,
   ),
   resellerService,
   new VietQrWebhook(prisma, process.env.VIETQR_WEBHOOK_SECRET ?? ""),
@@ -59,7 +65,9 @@ const server = createApiServer(
     ),
   ),
   new DistributedRateLimiter(new RedisCounterClient(new URL(config.redisUrl))),
-  new CassoWebhook(prisma, process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? ""),
+  new CassoWebhook(prisma, process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? "", () =>
+    paymentSettings.webhookToken(process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? ""),
+  ),
 );
 server.listen(config.port, config.host, () => {
   console.log(

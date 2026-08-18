@@ -131,7 +131,14 @@ export class CatalogService {
   }
 
   async adminOverview() {
-    const [categories, services, priceGroups, priceRules] = await Promise.all([
+    const [
+      categories,
+      services,
+      priceGroups,
+      priceRules,
+      providerServices,
+      mappings,
+    ] = await Promise.all([
       this.db.serviceCategory.findMany({
         where: { deletedAt: null },
         orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -143,6 +150,12 @@ export class CatalogService {
       }),
       this.db.priceGroup.findMany({ orderBy: { name: "asc" } }),
       this.db.priceRule.findMany({ take: 500 }),
+      this.db.providerService.findMany({
+        where: { active: true },
+        orderBy: { name: "asc" },
+        take: 500,
+      }),
+      this.db.serviceMapping.findMany({ take: 500 }),
     ]);
     return {
       categories,
@@ -159,7 +172,49 @@ export class CatalogService {
         fixedProfit: x.fixedProfit == null ? null : String(x.fixedProfit),
         minProfit: String(x.minProfit),
       })),
+      providerServices: providerServices.map((x: any) => ({
+        ...x,
+        rate: String(x.rate),
+      })),
+      mappings,
     };
+  }
+  async upsertMapping(actorId: string, input: any) {
+    const data = {
+      serviceId: String(input.serviceId),
+      providerServiceId: String(input.providerServiceId),
+      priority: integer(input.priority ?? 100, "priority", 0),
+      active: input.active !== false,
+      markupPercent: input.markupPercent
+        ? decimalInput(input.markupPercent, true)
+        : null,
+      fixedProfit: input.fixedProfit
+        ? decimalInput(input.fixedProfit, true)
+        : null,
+      minProfit: decimalInput(input.minProfit ?? "0", true),
+    };
+    return this.db.$transaction(async (tx: any) => {
+      const item = await tx.serviceMapping.upsert({
+        where: {
+          serviceId_providerServiceId: {
+            serviceId: data.serviceId,
+            providerServiceId: data.providerServiceId,
+          },
+        },
+        create: data,
+        update: data,
+      });
+      await this.audit(
+        tx,
+        actorId,
+        "SERVICE_MAPPING_UPSERT",
+        "service_mapping",
+        item.id,
+        null,
+        item,
+      );
+      return item;
+    });
   }
 
   async createCategory(actorId: string, input: any) {

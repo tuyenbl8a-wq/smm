@@ -13,10 +13,14 @@ export class CassoWebhook {
   constructor(
     private db: any,
     private secureToken: string,
+    private tokenResolver?: () => Promise<string>,
   ) {}
 
   async process(raw: string, suppliedToken: string) {
-    if (!this.secureToken || !equal(this.secureToken, suppliedToken))
+    const secureToken = this.tokenResolver
+      ? await this.tokenResolver()
+      : this.secureToken;
+    if (!secureToken || !equal(secureToken, suppliedToken))
       throw new Error("CASSO_AUTH_INVALID");
     const payload = JSON.parse(raw),
       transactions = Array.isArray(payload.data)

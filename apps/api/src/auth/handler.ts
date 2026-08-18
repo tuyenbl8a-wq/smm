@@ -14,6 +14,7 @@ import { ResellerService } from "../reseller/service.js";
 import { DepositService } from "../payment/service.js";
 import { SupportService } from "../support/service.js";
 import { AdminOperationsService } from "../admin/operations.js";
+import { PaymentSettingsService } from "../payment/settings.js";
 import {
   csrfValue,
   hashPassword,
@@ -45,6 +46,7 @@ export class AuthHandler {
     private readonly deposits?: DepositService,
     private readonly support?: SupportService,
     private readonly admin?: AdminOperationsService,
+    private readonly paymentSettings?: PaymentSettingsService,
   ) {}
   async handle(
     request: IncomingMessage,
@@ -274,6 +276,19 @@ export class AuthHandler {
           );
         return this.ok(response, await this.admin!.settings());
       }
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/admin/payment-settings"
+      ) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.paymentSettings!.adminView());
+      }
       if (request.method === "GET" && path === "/api/v1/admin/tickets") {
         if (!canAccessAdmin(auth.access, "tickets.manage"))
           return this.error(
@@ -346,6 +361,21 @@ export class AuthHandler {
           );
         if (!this.providers) throw new Error("Provider service unavailable");
         return this.ok(response, await this.providers.list());
+      }
+      const providerDetail =
+        /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "GET" && providerDetail) {
+        if (!canAccessAdmin(auth.access, "providers.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.providers!.detail(providerDetail[1]!),
+        );
       }
       const adminWallet =
         /^\/api\/v1\/admin\/wallets\/([0-9a-f-]{36})(?:\/transactions|\/mutations)?$/.exec(
@@ -478,6 +508,25 @@ export class AuthHandler {
           ),
         );
       }
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/admin/payment-settings"
+      ) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.paymentSettings!.update(
+            auth.user.id,
+            await this.body(request),
+          ),
+        );
+      }
       if (request.method === "POST" && path === "/api/v1/customer/api-keys")
         return this.ok(response, await this.reseller!.generate(auth.user.id));
       const keyDisable =
@@ -578,6 +627,11 @@ export class AuthHandler {
             response,
             await this.catalog.upsertPriceRule(auth.user.id, body),
           );
+        if (path === "/api/v1/admin/catalog/mappings")
+          return this.ok(
+            response,
+            await this.catalog.upsertMapping(auth.user.id, body),
+          );
         const category =
           /^\/api\/v1\/admin\/catalog\/categories\/([0-9a-f-]{36})\/update$/.exec(
             path,
@@ -614,6 +668,18 @@ export class AuthHandler {
           return this.ok(
             response,
             await this.providers.create(auth.user.id, await this.body(request)),
+          );
+        const update = /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})$/.exec(
+          path,
+        );
+        if (update)
+          return this.ok(
+            response,
+            await this.providers.update(
+              auth.user.id,
+              update[1]!,
+              await this.body(request),
+            ),
           );
         const action =
           /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})\/(test|sync)$/.exec(
@@ -683,6 +749,10 @@ export class AuthHandler {
           auth.user,
           auth.session.id,
         );
+      if (request.method === "POST" && path === "/api/v1/auth/logout-others") {
+        await this.store.revokeOtherSessions(auth.user.id, auth.session.id);
+        return this.ok(response, { revoked: true });
+      }
       if (
         request.method === "POST" &&
         path.startsWith("/api/v1/auth/sessions/") &&
