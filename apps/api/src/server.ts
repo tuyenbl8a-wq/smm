@@ -4,6 +4,8 @@ import { endpointFromUrl, probeTcp } from "@smm/health";
 import type { HealthCheck } from "@smm/types";
 import type { AuthHandler } from "./auth/handler.js";
 import type { ResellerService } from "./reseller/service.js";
+import type { VietQrWebhook } from "./payment/vietqr.js";
+import type { BinanceMerchantProvider } from "./payment/binance.js";
 
 function json(
   response: ServerResponse,
@@ -22,6 +24,8 @@ export function createApiServer(
   config: AppConfig,
   auth?: AuthHandler,
   reseller?: ResellerService,
+  vietqr?: VietQrWebhook,
+  binance?: BinanceMerchantProvider,
 ): Server {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", config.apiUrl).pathname;
@@ -43,6 +47,35 @@ export function createApiServer(
       );
       response.end();
       return;
+    }
+    if (
+      request.method === "POST" &&
+      (path === "/webhooks/payments/vietqr" ||
+        path === "/webhooks/payments/binance")
+    ) {
+      const chunks: any[] = [];
+      for await (const c of request as any) chunks.push(c);
+      const raw = Buffer.concat(chunks).toString("utf8");
+      try {
+        if (path.endsWith("vietqr")) {
+          const sig = String(request.headers["x-webhook-signature"] ?? "");
+          const result = await vietqr!.process(raw, sig);
+          response.statusCode = 200;
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify(result));
+          return;
+        }
+        const sig = String(request.headers["binancepay-signature"] ?? "");
+        if (!binance!.verifyWebhook(raw, sig))
+          throw new Error("SIGNATURE_INVALID");
+        response.statusCode = 202;
+        response.end(JSON.stringify({ accepted: true }));
+        return;
+      } catch {
+        response.statusCode = 401;
+        response.end(JSON.stringify({ error: "Webhook rejected" }));
+        return;
+      }
     }
     if (request.method === "GET" && path === "/health") {
       json(response, 200, {

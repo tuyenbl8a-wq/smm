@@ -82,3 +82,26 @@ export function ordersPage(api: string) {
   const script = `${client(api)};async function load(){try{const [catalog,orders]=await Promise.all([call('/api/v1/customer/catalog?page=1&limit=100'),call('/api/v1/customer/orders?page=1&limit=50')]);service.innerHTML=catalog.services.map(x=>'<option value="'+x.id+'">'+x.name+' · '+x.rate+'/1000</option>').join('');rows.innerHTML=orders.items.length?orders.items.map(x=>'<tr><td>'+x.publicId.slice(0,8)+'</td><td><span class="pill">'+x.status+'</span></td><td>'+x.quantity+'</td><td>'+x.charge+'</td><td>'+new Date(x.createdAt).toLocaleString('vi-VN')+'</td></tr>').join(''):'<tr><td colspan="5" class="empty">Chưa có đơn.</td></tr>'}catch(e){message.textContent=e.message}}form.onsubmit=async e=>{e.preventDefault();try{await call('/api/v1/customer/orders',{method:'POST',headers:{'idempotency-key':'web:'+crypto.randomUUID()},body:JSON.stringify(Object.fromEntries(new FormData(form)))});form.reset();message.textContent='Đặt đơn thành công';load()}catch(e){message.textContent=e.message}};logout.onclick=async e=>{e.preventDefault();await call('/api/v1/auth/logout',{method:'POST',body:'{}'});location.href='/login'};load()`;
   return layout("Orders", body, script);
 }
+export function featurePage(
+  kind: "api" | "deposit" | "support" | "notifications",
+  api: string,
+) {
+  const cfg = {
+    api: ["API v2", "Quản lý API key reseller"],
+    deposit: ["Nạp tiền", "Tạo và theo dõi deposit"],
+    support: ["Hỗ trợ", "Ticket của bạn"],
+    notifications: ["Thông báo", "Notification center"],
+  }[kind];
+  const body = `<div class="shell"><aside class="side"><div class="brand"><span class="mark">N</span>Nexus Panel</div><nav><a href="/dashboard">Dashboard</a><a href="/orders">Orders</a><a href="/deposit">Nạp tiền</a><a href="/api-docs">API</a><a href="/support">Tickets</a><a href="/notifications">Thông báo</a></nav></aside><main><h1>${cfg[0]}</h1><p class="muted">${cfg[1]}</p><section class="card" id="content">Đang tải…</section><div class="error" id="message"></div></main></div>`;
+  const scripts = {
+    api: `async function load(){const keys=await call('/api/v1/customer/api-keys');content.innerHTML='<button id="create">Tạo/regenerate API key</button><pre>POST /api/v2\\naction=services | add | status | balance</pre>'+keys.map(x=>'<p>'+x.keyPrefix+'… '+(x.active?'Active':'Disabled')+'</p>').join('');create.onclick=async()=>{const x=await call('/api/v1/customer/api-keys',{method:'POST',body:'{}'});alert('Lưu key ngay: '+x.key);load()}}`,
+    deposit: `async function load(){const [methods,rows]=await Promise.all([call('/api/v1/customer/payment-methods'),call('/api/v1/customer/deposits')]);content.innerHTML='<select id="method">'+methods.map(x=>'<option value="'+x.id+'">'+x.name+'</option>').join('')+'</select><input id="amount" placeholder="Amount"><button id="create">Tạo deposit</button>'+rows.map(x=>'<p>'+x.code+' · '+x.status+' · '+x.grossAmount+'</p>').join('');create.onclick=async()=>{await call('/api/v1/customer/deposits',{method:'POST',body:JSON.stringify({paymentMethodId:method.value,amount:amount.value})});load()}}`,
+    support: `async function load(){const rows=await call('/api/v1/customer/tickets');content.innerHTML='<input id="subject" placeholder="Subject"><textarea id="body"></textarea><button id="create">Tạo ticket</button>'+rows.map(x=>'<p>#'+x.id+' '+x.subject+' · '+x.status+'</p>').join('');create.onclick=async()=>{await call('/api/v1/customer/tickets',{method:'POST',body:JSON.stringify({subject:subject.value,category:'GENERAL',message:body.value})});load()}}`,
+    notifications: `async function load(){const rows=await call('/api/v1/customer/notifications');content.innerHTML=rows.length?rows.map(x=>'<article><b>'+x.title+'</b><p>'+x.body+'</p><button data-id="'+x.id+'">Đã đọc</button></article>').join(''):'<p class="empty">Không có thông báo</p>';document.querySelectorAll('[data-id]').forEach(b=>b.onclick=async()=>{await call('/api/v1/customer/notifications/'+b.dataset.id+'/read',{method:'POST',body:'{}'});load()})}`,
+  };
+  return layout(
+    cfg[0]!,
+    body,
+    `${client(api)};${scripts[kind]};load().catch(e=>message.textContent=e.message)`,
+  );
+}

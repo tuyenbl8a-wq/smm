@@ -9,6 +9,10 @@ import {
   type ProviderService,
 } from "../provider/service.js";
 import { OrderError, type OrderService } from "../order/service.js";
+import { OrderLifecycleService } from "../order/lifecycle.js";
+import { ResellerService } from "../reseller/service.js";
+import { DepositService } from "../payment/service.js";
+import { SupportService } from "../support/service.js";
 import {
   csrfValue,
   hashPassword,
@@ -35,6 +39,10 @@ export class AuthHandler {
     private readonly catalog?: CatalogService,
     private readonly providers?: ProviderService,
     private readonly orders?: OrderService,
+    private readonly lifecycle?: OrderLifecycleService,
+    private readonly reseller?: ResellerService,
+    private readonly deposits?: DepositService,
+    private readonly support?: SupportService,
   ) {}
   async handle(
     request: IncomingMessage,
@@ -123,6 +131,35 @@ export class AuthHandler {
           ),
         );
       }
+      if (request.method === "GET" && path === "/api/v1/customer/api-keys")
+        return this.ok(response, await this.reseller!.list(auth.user.id));
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/customer/payment-methods"
+      )
+        return this.ok(response, await this.deposits!.methods());
+      if (request.method === "GET" && path === "/api/v1/customer/deposits")
+        return this.ok(response, await this.deposits!.history(auth.user.id));
+      const depositDetail =
+        /^\/api\/v1\/customer\/deposits\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "GET" && depositDetail)
+        return this.ok(
+          response,
+          await this.deposits!.detail(auth.user.id, depositDetail[1]!),
+        );
+      if (request.method === "GET" && path === "/api/v1/customer/tickets")
+        return this.ok(response, await this.support!.list(auth.user.id));
+      const ticketDetail = /^\/api\/v1\/customer\/tickets\/(\d+)$/.exec(path);
+      if (request.method === "GET" && ticketDetail)
+        return this.ok(
+          response,
+          await this.support!.detail(auth.user.id, BigInt(ticketDetail[1]!)),
+        );
+      if (request.method === "GET" && path === "/api/v1/customer/notifications")
+        return this.ok(
+          response,
+          await this.support!.notifications(auth.user.id),
+        );
       if (request.method === "GET" && path === "/api/v1/admin/catalog") {
         if (!canAccessAdmin(auth.access, "services.manage"))
           return this.error(
@@ -198,6 +235,67 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.orders.create(auth.user.id, await this.body(request), key),
+        );
+      }
+      if (request.method === "POST" && path === "/api/v1/customer/api-keys")
+        return this.ok(response, await this.reseller!.generate(auth.user.id));
+      const keyDisable =
+        /^\/api\/v1\/customer\/api-keys\/([0-9a-f-]{36})\/disable$/.exec(path);
+      if (request.method === "POST" && keyDisable)
+        return this.ok(
+          response,
+          await this.reseller!.disable(auth.user.id, keyDisable[1]!),
+        );
+      if (request.method === "POST" && path === "/api/v1/customer/deposits")
+        return this.ok(
+          response,
+          await this.deposits!.create(auth.user.id, await this.body(request)),
+        );
+      if (request.method === "POST" && path === "/api/v1/customer/tickets")
+        return this.ok(
+          response,
+          await this.support!.create(auth.user.id, await this.body(request)),
+        );
+      const ticketReply = /^\/api\/v1\/customer\/tickets\/(\d+)\/reply$/.exec(
+        path,
+      );
+      if (request.method === "POST" && ticketReply)
+        return this.ok(
+          response,
+          await this.support!.reply(
+            auth.user.id,
+            BigInt(ticketReply[1]!),
+            await this.body(request),
+          ),
+        );
+      const notificationRead =
+        /^\/api\/v1\/customer\/notifications\/([0-9a-f-]{36})\/read$/.exec(
+          path,
+        );
+      if (request.method === "POST" && notificationRead)
+        return this.ok(
+          response,
+          await this.support!.markRead(auth.user.id, notificationRead[1]!),
+        );
+      const lifecycle =
+        /^\/api\/v1\/customer\/orders\/([0-9a-f-]{36})\/(refill|cancel)$/.exec(
+          path,
+        );
+      if (request.method === "POST" && lifecycle) {
+        const key = this.header(request, "idempotency-key");
+        if (!key)
+          throw new InputError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Idempotency-Key required",
+          );
+        return this.ok(
+          response,
+          await this.lifecycle!.request(
+            auth.user.id,
+            lifecycle[1]!,
+            lifecycle[2] as any,
+            key,
+          ),
         );
       }
       if (request.method === "POST" && path === "/api/v1/auth/logout") {

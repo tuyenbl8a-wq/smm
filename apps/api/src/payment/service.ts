@@ -57,6 +57,26 @@ export class DepositService {
       },
     });
   }
+  async detail(userId: string, id: string) {
+    const x = await this.db.deposit.findFirst({ where: { id, userId } });
+    if (!x) throw new PaymentError("DEPOSIT_NOT_FOUND", "Deposit not found");
+    return x;
+  }
+  async methods() {
+    return this.db.paymentMethod.findMany({
+      where: { active: true },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        currency: true,
+        minAmount: true,
+        maxAmount: true,
+        feeFixed: true,
+        feePercent: true,
+      },
+    });
+  }
   async history(userId: string) {
     return this.db.deposit.findMany({
       where: { userId },

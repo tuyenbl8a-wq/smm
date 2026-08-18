@@ -9,6 +9,7 @@ import {
   ordersPage,
   servicesPage,
   walletPage,
+  featurePage,
 } from "./page.js";
 const config = loadConfig(process.env, 3000);
 const server = createServer((request, response) => {
@@ -39,6 +40,10 @@ const server = createServer((request, response) => {
       "/orders",
       "/admin/catalog",
       "/admin/providers",
+      "/api-docs",
+      "/deposit",
+      "/support",
+      "/notifications",
     ].includes(path)
   ) {
     response.setHeader("content-type", "text/html; charset=utf-8");
@@ -64,9 +69,21 @@ const server = createServer((request, response) => {
                     ? adminCatalogPage(config.apiUrl.origin)
                     : path === "/admin/providers"
                       ? adminProvidersPage(config.apiUrl.origin)
-                      : path === "/admin/wallet"
-                        ? adminWalletPage(config.apiUrl.origin)
-                        : panelPage(path === "/admin", config.apiUrl.origin);
+                      : [
+                            "/api-docs",
+                            "/deposit",
+                            "/support",
+                            "/notifications",
+                          ].includes(path)
+                        ? featurePage(
+                            path === "/api-docs"
+                              ? "api"
+                              : (path.slice(1) as any),
+                            config.apiUrl.origin,
+                          )
+                        : path === "/admin/wallet"
+                          ? adminWalletPage(config.apiUrl.origin)
+                          : panelPage(path === "/admin", config.apiUrl.origin);
     response.end(page);
     return;
   }

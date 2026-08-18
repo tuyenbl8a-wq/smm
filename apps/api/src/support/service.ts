@@ -49,6 +49,16 @@ export class SupportService {
     });
     return rows.map((x: any) => ({ ...x, id: String(x.id) }));
   }
+  async detail(userId: string, id: bigint, isStaff = false) {
+    const t = await this.db.ticket.findUnique({ where: { id } });
+    if (!t || (!isStaff && t.userId !== userId))
+      throw new SupportError("TICKET_NOT_FOUND", "Ticket not found");
+    const messages = await this.db.ticketMessage.findMany({
+      where: { ticketId: id, ...(!isStaff ? { internal: false } : {}) },
+      orderBy: { createdAt: "asc" },
+    });
+    return { ...t, id: String(t.id), messages };
+  }
   async reply(userId: string, id: bigint, input: any, isStaff = false) {
     return this.db.$transaction(async (tx: any) => {
       const ticket = await tx.ticket.findUnique({ where: { id } });
@@ -79,6 +89,18 @@ export class SupportService {
         });
       return item;
     });
+  }
+  async markRead(userId: string, id: string) {
+    const x = await this.db.notification.updateMany({
+      where: { id, userId },
+      data: { readAt: new Date() },
+    });
+    if (!x.count)
+      throw new SupportError(
+        "NOTIFICATION_NOT_FOUND",
+        "Notification not found",
+      );
+    return { read: true };
   }
   notifications(userId: string) {
     return this.db.notification.findMany({

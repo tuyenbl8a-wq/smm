@@ -15,6 +15,27 @@ export class ResellerService {
     private db: any,
     private orders: OrderService,
   ) {}
+  async list(userId: string) {
+    return this.db.apiKey.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        keyPrefix: true,
+        active: true,
+        rateLimit: true,
+        lastUsedAt: true,
+        createdAt: true,
+      },
+    });
+  }
+  async disable(userId: string, id: string) {
+    const x = await this.db.apiKey.updateMany({
+      where: { id, userId },
+      data: { active: false },
+    });
+    if (!x.count) throw new ResellerError("KEY_NOT_FOUND", "API key not found");
+    return { disabled: true };
+  }
   async generate(userId: string) {
     const raw = `smm_${randomBytes(32).toString("base64url")}`,
       keyHash = hash(raw);

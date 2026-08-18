@@ -7,6 +7,11 @@ import { CatalogService } from "./catalog/service.js";
 import { ProviderService } from "./provider/service.js";
 import { OrderService } from "./order/service.js";
 import { ResellerService } from "./reseller/service.js";
+import { OrderLifecycleService } from "./order/lifecycle.js";
+import { DepositService } from "./payment/service.js";
+import { SupportService } from "./support/service.js";
+import { VietQrWebhook } from "./payment/vietqr.js";
+import { BinanceMerchantProvider } from "./payment/binance.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -14,6 +19,7 @@ const dynamicImport = new Function("specifier", "return import(specifier)") as (
 const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
 const orderService = new OrderService(prisma);
+const resellerService = new ResellerService(prisma, orderService);
 const server = createApiServer(
   config,
   new AuthHandler(
@@ -23,8 +29,22 @@ const server = createApiServer(
     new CatalogService(prisma),
     new ProviderService(prisma, config.encryptionKey),
     orderService,
+    new OrderLifecycleService(prisma),
+    resellerService,
+    new DepositService(prisma),
+    new SupportService(prisma),
   ),
-  new ResellerService(prisma, orderService),
+  resellerService,
+  new VietQrWebhook(
+    prisma,
+    process.env.VIETQR_WEBHOOK_SECRET ?? "disabled-development-secret",
+  ),
+  new BinanceMerchantProvider(
+    "https://bpay.binanceapi.com",
+    process.env.BINANCE_MERCHANT_API_KEY ?? "",
+    process.env.BINANCE_MERCHANT_SECRET ?? "",
+    process.env.BINANCE_WEBHOOK_SECRET ?? "disabled",
+  ),
 );
 server.listen(config.port, config.host, () => {
   console.log(
