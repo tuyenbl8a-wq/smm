@@ -1,0 +1,20 @@
+{
+  "name": "@smm/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsc -p tsconfig.json --watch",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js"
+  },
+  "dependencies": {
+    "@prisma/client": "6.14.0",
+    "@smm/config": "workspace:*",
+    "@smm/health": "workspace:*",
+    "@smm/types": "workspace:*"
+  }
+}

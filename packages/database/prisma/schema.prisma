@@ -1,0 +1,701 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  BANNED
+  DELETED
+}
+
+enum RoleCode {
+  USER
+  RESELLER
+  SUPPORT
+  STAFF
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum TransactionType {
+  DEPOSIT
+  ORDER
+  REFUND
+  ADMIN_ADD
+  ADMIN_SUBTRACT
+  AFFILIATE
+  BONUS
+  ADJUSTMENT
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  IN_PROGRESS
+  COMPLETED
+  PARTIAL
+  CANCELED
+  REFUNDED
+  FAILED
+}
+
+enum DepositStatus {
+  PENDING
+  PAID
+  EXPIRED
+  CANCELED
+  FAILED
+  MANUAL_REVIEW
+}
+
+enum ProviderStatus {
+  ACTIVE
+  DEGRADED
+  INACTIVE
+}
+
+enum TicketStatus {
+  OPEN
+  ANSWERED
+  CUSTOMER_REPLY
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELED
+}
+
+enum RequestStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  UNKNOWN
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  TELEGRAM
+}
+
+model User {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email String @unique @db.VarChar(320)
+  username String @unique @db.VarChar(64)
+  passwordHash String @map("password_hash") @db.VarChar(255)
+  status UserStatus @default(PENDING)
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(3)
+  avatarKey String? @map("avatar_key") @db.VarChar(512)
+  priceGroupId String? @map("price_group_id") @db.Uuid
+  referralCode String @unique @map("referral_code") @db.VarChar(32)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([status, createdAt])
+  @@map("users")
+}
+
+model Role {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code RoleCode @unique
+  name String @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@map("roles")
+}
+model Permission {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code String @unique @db.VarChar(100)
+  description String? @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@map("permissions")
+}
+model UserRole {
+  userId String @map("user_id") @db.Uuid
+  roleId String @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+model RolePermission {
+  roleId String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+model Session {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  tokenHash String @unique @map("token_hash") @db.VarChar(128)
+  ipAddress String? @map("ip_address") @db.Inet
+  userAgent String? @map("user_agent") @db.VarChar(512)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([userId, expiresAt])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.VarChar(128)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([userId, expiresAt])
+  @@map("password_reset_tokens")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.VarChar(128)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([userId, expiresAt])
+  @@map("email_verification_tokens")
+}
+model ApiKey {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  keyPrefix String @map("key_prefix") @db.VarChar(16)
+  keyHash String @unique @map("key_hash") @db.VarChar(128)
+  active Boolean @default(true)
+  rateLimit Int @default(60) @map("rate_limit")
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([userId, active])
+  @@map("api_keys")
+}
+model Wallet {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+  balance Decimal @default(0) @db.Decimal(20, 8)
+  currency String @default("USD") @db.Char(3)
+  version Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@map("wallets")
+}
+model WalletTransaction {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  walletId String @map("wallet_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  type TransactionType
+  amount Decimal @db.Decimal(20, 8)
+  balanceBefore Decimal @map("balance_before") @db.Decimal(20, 8)
+  balanceAfter Decimal @map("balance_after") @db.Decimal(20, 8)
+  referenceId String? @map("reference_id") @db.VarChar(128)
+  idempotencyKey String @unique @map("idempotency_key") @db.VarChar(128)
+  description String? @db.VarChar(500)
+  metadata Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([userId, createdAt])
+  @@index([walletId, createdAt])
+  @@index([type, referenceId])
+  @@map("wallet_transactions")
+}
+model PaymentMethod {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code String @unique @db.VarChar(50)
+  name String @db.VarChar(120)
+  providerType String @map("provider_type") @db.VarChar(50)
+  configEncrypted String? @map("config_encrypted") @db.Text
+  currency String @db.VarChar(10)
+  minAmount Decimal @map("min_amount") @db.Decimal(20, 8)
+  maxAmount Decimal @map("max_amount") @db.Decimal(20, 8)
+  feeFixed Decimal @default(0) @map("fee_fixed") @db.Decimal(20, 8)
+  feePercent Decimal @default(0) @map("fee_percent") @db.Decimal(9, 6)
+  active Boolean @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@map("payment_methods")
+}
+model Deposit {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  paymentMethodId String @map("payment_method_id") @db.Uuid
+  code String @unique @db.VarChar(32)
+  status DepositStatus @default(PENDING)
+  grossAmount Decimal @map("gross_amount") @db.Decimal(20, 8)
+  feeAmount Decimal @map("fee_amount") @db.Decimal(20, 8)
+  netAmount Decimal @map("net_amount") @db.Decimal(20, 8)
+  sourceCurrency String @map("source_currency") @db.VarChar(10)
+  baseCurrency String @map("base_currency") @db.Char(3)
+  exchangeRate Decimal @map("exchange_rate") @db.Decimal(24, 12)
+  externalOrderId String? @unique @map("external_order_id") @db.VarChar(128)
+  externalTransactionId String? @unique @map("external_transaction_id") @db.VarChar(128)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  paidAt DateTime? @map("paid_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([userId, createdAt])
+  @@index([status, expiresAt])
+  @@map("deposits")
+}
+model PaymentWebhook {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentMethodId String @map("payment_method_id") @db.Uuid
+  externalEventId String @map("external_event_id") @db.VarChar(160)
+  signatureValid Boolean @map("signature_valid")
+  status RequestStatus @default(PENDING)
+  payload Json
+  payloadHash String @map("payload_hash") @db.VarChar(128)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(3)
+  errorCode String? @map("error_code") @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([paymentMethodId, externalEventId])
+  @@index([status, createdAt])
+  @@map("payment_webhooks")
+}
+model Provider {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name String @unique @db.VarChar(120)
+  apiUrl String @map("api_url") @db.VarChar(2048)
+  apiKeyEncrypted String @map("api_key_encrypted") @db.Text
+  encryptionKeyVersion Int @map("encryption_key_version")
+  currency String @db.VarChar(10)
+  balance Decimal? @db.Decimal(20, 8)
+  status ProviderStatus @default(ACTIVE)
+  priority Int @default(100)
+  timeoutMs Int @default(15000) @map("timeout_ms")
+  maxRetries Int @default(3) @map("max_retries")
+  lastSuccessAt DateTime? @map("last_success_at") @db.Timestamptz(3)
+  lastFailureAt DateTime? @map("last_failure_at") @db.Timestamptz(3)
+  lastSyncAt DateTime? @map("last_sync_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([status, priority])
+  @@map("providers")
+}
+model ProviderService {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerId String @map("provider_id") @db.Uuid
+  externalId String @map("external_id") @db.VarChar(100)
+  name String @db.VarChar(255)
+  category String @db.VarChar(255)
+  type String @db.VarChar(80)
+  rate Decimal @db.Decimal(20, 8)
+  min Int
+  max Int
+  refill Boolean @default(false)
+  cancel Boolean @default(false)
+  raw Json?
+  active Boolean @default(true)
+  lastSyncedAt DateTime @map("last_synced_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([providerId, externalId])
+  @@index([providerId, active])
+  @@map("provider_services")
+}
+model ServiceCategory {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name String @db.VarChar(160)
+  slug String @unique @db.VarChar(180)
+  description String? @db.Text
+  sortOrder Int @default(0) @map("sort_order")
+  active Boolean @default(true)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([active, sortOrder])
+  @@map("service_categories")
+}
+model Service {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  categoryId String @map("category_id") @db.Uuid
+  name String @db.VarChar(255)
+  description String? @db.Text
+  type String @db.VarChar(80)
+  pricingModel String @default("PER_THOUSAND") @map("pricing_model") @db.VarChar(40)
+  rate Decimal @db.Decimal(20, 8)
+  providerCost Decimal @map("provider_cost") @db.Decimal(20, 8)
+  min Int
+  max Int
+  averageTime String? @map("average_time") @db.VarChar(100)
+  refill Boolean @default(false)
+  cancel Boolean @default(false)
+  customFields Json? @map("custom_fields")
+  sortOrder Int @default(0) @map("sort_order")
+  active Boolean @default(true)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([categoryId, active, sortOrder])
+  @@map("services")
+}
+model ServiceMapping {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceId String @map("service_id") @db.Uuid
+  providerServiceId String @map("provider_service_id") @db.Uuid
+  priority Int @default(100)
+  active Boolean @default(true)
+  markupPercent Decimal? @map("markup_percent") @db.Decimal(9, 6)
+  fixedProfit Decimal? @map("fixed_profit") @db.Decimal(20, 8)
+  minProfit Decimal @default(0) @map("min_profit") @db.Decimal(20, 8)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([serviceId, providerServiceId])
+  @@index([serviceId, active, priority])
+  @@map("service_mappings")
+}
+model Order {
+  id BigInt @id @default(autoincrement())
+  publicId String @unique @default(dbgenerated("gen_random_uuid()")) @map("public_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  serviceId String @map("service_id") @db.Uuid
+  providerId String? @map("provider_id") @db.Uuid
+  providerOrderId String? @map("provider_order_id") @db.VarChar(128)
+  providerSubmitKey String @unique @map("provider_submit_key") @db.VarChar(128)
+  link String @db.Text
+  quantity Int
+  startCount Int? @map("start_count")
+  remains Int?
+  saleRate Decimal @map("sale_rate") @db.Decimal(20, 8)
+  charge Decimal @db.Decimal(20, 8)
+  providerRate Decimal @map("provider_rate") @db.Decimal(20, 8)
+  providerCost Decimal @map("provider_cost") @db.Decimal(20, 8)
+  profit Decimal @db.Decimal(20, 8)
+  status OrderStatus @default(PENDING)
+  input Json?
+  refundedAmount Decimal @default(0) @map("refunded_amount") @db.Decimal(20, 8)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([providerId, providerOrderId])
+  @@index([userId, createdAt])
+  @@index([status, updatedAt])
+  @@index([serviceId, createdAt])
+  @@map("orders")
+}
+model OrderHistory {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId BigInt @map("order_id")
+  fromStatus OrderStatus? @map("from_status")
+  toStatus OrderStatus @map("to_status")
+  details Json?
+  actorId String? @map("actor_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([orderId, createdAt])
+  @@map("order_history")
+}
+model OrderProviderLog {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId BigInt @map("order_id")
+  providerId String @map("provider_id") @db.Uuid
+  operation String @db.VarChar(60)
+  requestId String @map("request_id") @db.VarChar(128)
+  status RequestStatus
+  latencyMs Int? @map("latency_ms")
+  requestMasked Json? @map("request_masked")
+  responseMasked Json? @map("response_masked")
+  errorCode String? @map("error_code") @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([providerId, requestId, operation])
+  @@index([orderId, createdAt])
+  @@map("order_provider_logs")
+}
+model Refill {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId BigInt @map("order_id")
+  providerRefillId String? @map("provider_refill_id") @db.VarChar(128)
+  idempotencyKey String @unique @map("idempotency_key") @db.VarChar(128)
+  status RequestStatus @default(PENDING)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([orderId, createdAt])
+  @@map("refills")
+}
+model Cancellation {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId BigInt @map("order_id")
+  idempotencyKey String @unique @map("idempotency_key") @db.VarChar(128)
+  status RequestStatus @default(PENDING)
+  reason String? @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([orderId, createdAt])
+  @@map("cancellations")
+}
+model Ticket {
+  id BigInt @id @default(autoincrement())
+  userId String @map("user_id") @db.Uuid
+  assigneeId String? @map("assignee_id") @db.Uuid
+  subject String @db.VarChar(255)
+  category String @db.VarChar(80)
+  status TicketStatus @default(OPEN)
+  priority TicketPriority @default(NORMAL)
+  closedAt DateTime? @map("closed_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([userId, status, updatedAt])
+  @@index([assigneeId, status, updatedAt])
+  @@map("tickets")
+}
+model TicketMessage {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId BigInt @map("ticket_id")
+  authorId String @map("author_id") @db.Uuid
+  message String @db.Text
+  internal Boolean @default(false)
+  attachments Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([ticketId, createdAt])
+  @@map("ticket_messages")
+}
+model Notification {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  channel NotificationChannel
+  type String @db.VarChar(80)
+  title String @db.VarChar(255)
+  body String @db.Text
+  data Json?
+  readAt DateTime? @map("read_at") @db.Timestamptz(3)
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(3)
+  deliveryAttempts Int @default(0) @map("delivery_attempts")
+  nextAttemptAt DateTime? @map("next_attempt_at") @db.Timestamptz(3)
+  deliveryError String? @map("delivery_error") @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+model Coupon {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code String @unique @db.VarChar(50)
+  type DiscountType
+  value Decimal @db.Decimal(20, 8)
+  minAmount Decimal? @map("min_amount") @db.Decimal(20, 8)
+  maxDiscount Decimal? @map("max_discount") @db.Decimal(20, 8)
+  usageLimit Int? @map("usage_limit")
+  userLimit Int @default(1) @map("user_limit")
+  startsAt DateTime @map("starts_at") @db.Timestamptz(3)
+  endsAt DateTime @map("ends_at") @db.Timestamptz(3)
+  active Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([active, startsAt, endsAt])
+  @@map("coupons")
+}
+model CouponUsage {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  couponId String @map("coupon_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  referenceId String @map("reference_id") @db.VarChar(128)
+  discount Decimal @db.Decimal(20, 8)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([couponId, userId, referenceId])
+  @@index([userId, createdAt])
+  @@map("coupon_usages")
+}
+model Affiliate {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+  code String @unique @db.VarChar(32)
+  commissionRate Decimal @map("commission_rate") @db.Decimal(9, 6)
+  active Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@map("affiliates")
+}
+model Referral {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  affiliateId String @map("affiliate_id") @db.Uuid
+  referrerId String @map("referrer_id") @db.Uuid
+  referredUserId String @unique @map("referred_user_id") @db.Uuid
+  qualifiedAt DateTime? @map("qualified_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([referrerId, createdAt])
+  @@map("referrals")
+}
+model AffiliateCommission {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  affiliateId String @map("affiliate_id") @db.Uuid
+  referralId String @map("referral_id") @db.Uuid
+  referenceId String @map("reference_id") @db.VarChar(128)
+  amount Decimal @db.Decimal(20, 8)
+  status CommissionStatus @default(PENDING)
+  paidAt DateTime? @map("paid_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([affiliateId, referenceId])
+  @@index([status, createdAt])
+  @@map("affiliate_commissions")
+}
+model PriceGroup {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name String @unique @db.VarChar(100)
+  code String @unique @db.VarChar(50)
+  active Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@map("price_groups")
+}
+model PriceRule {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  priceGroupId String @map("price_group_id") @db.Uuid
+  serviceId String @map("service_id") @db.Uuid
+  fixedRate Decimal? @map("fixed_rate") @db.Decimal(20, 8)
+  markupPercent Decimal? @map("markup_percent") @db.Decimal(9, 6)
+  fixedProfit Decimal? @map("fixed_profit") @db.Decimal(20, 8)
+  minProfit Decimal @default(0) @map("min_profit") @db.Decimal(20, 8)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([priceGroupId, serviceId])
+  @@map("price_rules")
+}
+model AuditLog {
+  id BigInt @id @default(autoincrement())
+  actorId String? @map("actor_id") @db.Uuid
+  action String @db.VarChar(100)
+  resource String @db.VarChar(100)
+  resourceId String? @map("resource_id") @db.VarChar(128)
+  before Json?
+  after Json?
+  ipAddress String? @map("ip_address") @db.Inet
+  userAgent String? @map("user_agent") @db.VarChar(512)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([actorId, createdAt])
+  @@index([resource, resourceId, createdAt])
+  @@map("audit_logs")
+}
+model LoginHistory {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String? @map("user_id") @db.Uuid
+  email String @db.VarChar(320)
+  success Boolean
+  reason String? @db.VarChar(100)
+  ipAddress String? @map("ip_address") @db.Inet
+  userAgent String? @map("user_agent") @db.VarChar(512)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([email, createdAt])
+  @@index([ipAddress, createdAt])
+  @@map("login_history")
+}
+model Setting {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  group String @db.VarChar(80)
+  key String @db.VarChar(120)
+  value Json
+  encrypted Boolean @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([group, key])
+  @@map("settings")
+}
+model CronJobLog {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobName String @map("job_name") @db.VarChar(100)
+  runKey String @unique @map("run_key") @db.VarChar(128)
+  status RequestStatus
+  startedAt DateTime @map("started_at") @db.Timestamptz(3)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(3)
+  details Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([jobName, startedAt])
+  @@map("cron_job_logs")
+}
+model WebhookLog {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source String @db.VarChar(80)
+  externalEventId String @map("external_event_id") @db.VarChar(160)
+  status RequestStatus
+  signatureValid Boolean @map("signature_valid")
+  payloadHash String @map("payload_hash") @db.VarChar(128)
+  responseCode Int? @map("response_code")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([source, externalEventId])
+  @@index([status, createdAt])
+  @@map("webhook_logs")
+}
+model SystemLog {
+  id BigInt @id @default(autoincrement())
+  level String @db.VarChar(20)
+  service String @db.VarChar(80)
+  event String @db.VarChar(120)
+  message String @db.Text
+  context Json?
+  traceId String? @map("trace_id") @db.VarChar(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([service, level, createdAt])
+  @@index([traceId])
+  @@map("system_logs")
+}
+
+model ProviderOutbox {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId BigInt @unique @map("order_id")
+  status String @default("PENDING") @db.VarChar(24)
+  attempts Int @default(0)
+  availableAt DateTime @default(now()) @map("available_at") @db.Timestamptz(3)
+  lockedAt DateTime? @map("locked_at") @db.Timestamptz(3)
+  lastError String? @map("last_error") @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([status, availableAt])
+  @@map("provider_outbox")
+}
+
+model Attachment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId BigInt @map("ticket_id")
+  uploaderId String @map("uploader_id") @db.Uuid
+  storageKey String @unique @map("storage_key") @db.VarChar(255)
+  originalName String @map("original_name") @db.VarChar(255)
+  mime String @db.VarChar(80)
+  size Int
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([ticketId, createdAt])
+  @@map("attachments")
+}
