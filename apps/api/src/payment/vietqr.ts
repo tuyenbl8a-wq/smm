@@ -12,6 +12,7 @@ export class VietQrWebhook {
     private secret: string,
   ) {}
   verify(raw: string, signature: string) {
+    if (!this.secret) return false;
     const expected = createHmac("sha256", this.secret)
       .update(raw)
       .digest("hex");

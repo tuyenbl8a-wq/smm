@@ -42,6 +42,8 @@ declare module "node:http" {
 }
 declare module "node:net" {
   interface Socket {
+    write(data: string): void;
+    on(event: string, listener: (chunk: unknown) => void): void;
     once(event: string, listener: (...args: unknown[]) => void): void;
     setTimeout(timeout: number): void;
     destroy(): void;

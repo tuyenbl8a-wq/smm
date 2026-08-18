@@ -10,7 +10,6 @@ export class ResellerError extends Error {
   }
 }
 export class ResellerService {
-  private hits = new Map<string, number[]>();
   constructor(
     private db: any,
     private orders: OrderService,
@@ -54,20 +53,14 @@ export class ResellerService {
     });
     if (!row || !row.active)
       throw new ResellerError("INVALID_KEY", "Invalid API key");
-    const now = Date.now(),
-      hits = (this.hits.get(row.id) ?? []).filter((x) => x > now - 60000);
-    if (hits.length >= row.rateLimit)
-      throw new ResellerError("RATE_LIMITED", "Rate limit exceeded");
-    hits.push(now);
-    this.hits.set(row.id, hits);
     await this.db.apiKey.update({
       where: { id: row.id },
       data: { lastUsedAt: new Date() },
     });
     return row;
   }
-  async execute(raw: string, input: any) {
-    const key = await this.authenticate(raw),
+  async execute(raw: string, input: any, authenticated?: any) {
+    const key = authenticated ?? (await this.authenticate(raw)),
       action = String(input.action);
     if (action === "balance") {
       const w = await this.db.wallet.findUnique({

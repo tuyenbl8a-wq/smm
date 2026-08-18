@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { normalizeAmount } from "../wallet/service.js";
+import { vietQrUrl } from "./vietqr.js";
 export interface PaymentProvider {
   createPayment(
     deposit: any,
@@ -24,7 +25,15 @@ export class PaymentError extends Error {
   }
 }
 export class DepositService {
-  constructor(private db: any) {}
+  constructor(
+    private db: any,
+    private bank = {
+      bin: process.env.BANK_BIN ?? "",
+      name: process.env.BANK_NAME ?? "",
+      account: process.env.BANK_ACCOUNT_NUMBER ?? "",
+      accountName: process.env.BANK_ACCOUNT_NAME ?? "",
+    },
+  ) {}
   async create(userId: string, input: any) {
     const amount = normalizeAmount(input.amount),
       method = await this.db.paymentMethod.findUnique({
@@ -60,7 +69,35 @@ export class DepositService {
   async detail(userId: string, id: string) {
     const x = await this.db.deposit.findFirst({ where: { id, userId } });
     if (!x) throw new PaymentError("DEPOSIT_NOT_FOUND", "Deposit not found");
-    return x;
+    const paymentMethod = await this.db.paymentMethod.findUnique({
+      where: { id: x.paymentMethodId },
+      select: { code: true, name: true, providerType: true },
+    });
+    const isBank = ["VIETQR", "CASSO", "BANK"].includes(
+      String(paymentMethod?.providerType).toUpperCase(),
+    );
+    return {
+      ...x,
+      paymentMethod,
+      payment: isBank
+        ? {
+            available: Boolean(this.bank.bin && this.bank.account),
+            bankName: this.bank.name,
+            accountNumber: this.bank.account,
+            accountName: this.bank.accountName,
+            transferContent: x.code,
+            qrUrl:
+              this.bank.bin && this.bank.account
+                ? vietQrUrl(
+                    this.bank.bin,
+                    this.bank.account,
+                    String(x.grossAmount),
+                    x.code,
+                  )
+                : null,
+          }
+        : null,
+    };
   }
   async methods() {
     return this.db.paymentMethod.findMany({
@@ -83,5 +120,25 @@ export class DepositService {
       orderBy: { createdAt: "desc" },
       take: 100,
     });
+  }
+  async adminHistory(query: { status?: string; take?: number } = {}) {
+    const rows = await this.db.deposit.findMany({
+      where: query.status ? { status: query.status } : undefined,
+      orderBy: { createdAt: "desc" },
+      take: Math.min(100, Math.max(1, query.take ?? 50)),
+    });
+    return Promise.all(
+      rows.map(async (row: any) => ({
+        ...row,
+        user: await this.db.user.findUnique({
+          where: { id: row.userId },
+          select: { id: true, email: true, username: true },
+        }),
+        paymentMethod: await this.db.paymentMethod.findUnique({
+          where: { id: row.paymentMethodId },
+          select: { code: true, name: true },
+        }),
+      })),
+    );
   }
 }
