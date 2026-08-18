@@ -6,7 +6,7 @@ the architecture and delivery gates are therefore established before runtime cod
 
 ## Status
 
-Phases 1–5 are complete, including the runnable infrastructure, Prisma database,
+Phases 1–6 are complete, including the runnable infrastructure, Prisma database,
 persisted authentication/RBAC, and responsive customer dashboard. See [ROADMAP.md](ROADMAP.md) for the explicit completion criteria
 and current status; no roadmap item is represented as complete without its checks.
 

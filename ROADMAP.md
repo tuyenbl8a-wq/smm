@@ -12,7 +12,7 @@ migration validation, and build checks applicable to the code introduced by it.
 | 3     | Production Prisma schema, indexes, constraints, migration, development seed          | ✅     |
 | 4     | Authentication, sessions, password recovery/verification, RBAC permissions           | ✅     |
 | 5     | Responsive customer shell and dashboard                                              | ✅     |
-| 6     | Responsive protected admin shell and dashboard                                       | ⬜     |
+| 6     | Responsive protected admin shell and dashboard                                       | ✅     |
 | 7     | Atomic wallet service and immutable transaction ledger                               | ⬜     |
 | 8     | Categories, services, price groups, and pricing rules                                | ⬜     |
 | 9     | Encrypted provider configuration and provider adapter contract                       | ⬜     |
@@ -43,6 +43,6 @@ migration validation, and build checks applicable to the code introduced by it.
 
 ## Next phase acceptance criteria
 
-Phase 6 must add a protected responsive admin shell and dashboard backed by
-permission-guarded aggregate APIs. It must not reuse customer authorization or
-expose operational data to ordinary users.
+Phase 7 must implement an atomic wallet mutation service and immutable transaction
+ledger. Balance changes must use database transactions, idempotency keys, guarded
+concurrency, and tests proving two concurrent debits cannot overspend.

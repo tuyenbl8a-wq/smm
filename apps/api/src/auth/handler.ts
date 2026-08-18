@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AppConfig } from "@smm/config";
 import type { AuthStore, AuthUser } from "./store.js";
+import { canAccessAdmin } from "../admin/dashboard.js";
 import {
   csrfValue,
   hashPassword,
@@ -122,10 +123,7 @@ export class AuthHandler {
           dashboard: await this.store.customerDashboard(auth.user.id),
         });
       if (path.startsWith("/api/v1/admin") && request.method === "GET") {
-        if (
-          !auth.access.roles.includes("SUPER_ADMIN") &&
-          !auth.access.permissions.includes("users.read")
-        )
+        if (!canAccessAdmin(auth.access))
           return this.error(
             response,
             403,
@@ -135,6 +133,8 @@ export class AuthHandler {
         return this.ok(response, {
           user: this.publicUser(auth.user),
           area: "admin",
+          access: auth.access,
+          dashboard: await this.store.adminDashboard(),
         });
       }
       return this.error(response, 404, "NOT_FOUND", "Route not found");

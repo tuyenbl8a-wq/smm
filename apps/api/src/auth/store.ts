@@ -30,6 +30,36 @@ export interface CustomerDashboard {
     createdAt: Date;
   }>;
 }
+export interface AdminDashboard {
+  users: { total: number; active: number; today: number; sevenDays: number };
+  orders: { total: number; active: number; completed: number; failed: number };
+  money: {
+    revenue: string;
+    providerCost: string;
+    profit: string;
+    deposits: string;
+    currency: string;
+  };
+  depositsPending: number;
+  openTickets: number;
+  providers: { active: number; inactive: number };
+  services: { active: number; inactive: number };
+  alerts: Array<{ type: string; message: string; count: number }>;
+  activity: Array<{
+    date: string;
+    orders: number;
+    revenue: string;
+    providerCost: string;
+    profit: string;
+  }>;
+  recentOrders: Array<{
+    id: string;
+    status: string;
+    charge: string;
+    profit: string;
+    createdAt: Date;
+  }>;
+}
 export interface AuthStore {
   findUserByEmail(email: string): Promise<AuthUser | null>;
   findUserByUsername(username: string): Promise<AuthUser | null>;
@@ -85,6 +115,7 @@ export interface AuthStore {
     since: Date,
   ): Promise<number>;
   customerDashboard(userId: string): Promise<CustomerDashboard>;
+  adminDashboard(): Promise<AdminDashboard>;
 }
 export class PrismaAuthStore implements AuthStore {
   constructor(private readonly db: any) {}
@@ -279,6 +310,157 @@ export class PrismaAuthStore implements AuthStore {
       unreadNotifications,
       activity: buildActivitySeries(activityRecords),
       notifications,
+    };
+  }
+  async adminDashboard(): Promise<AdminDashboard> {
+    const { buildAdminActivity } = await import("../admin/dashboard.js");
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const sevenDays = new Date(today);
+    sevenDays.setUTCDate(sevenDays.getUTCDate() - 6);
+    const [
+      totalUsers,
+      activeUsers,
+      usersToday,
+      usersSevenDays,
+      totalOrders,
+      activeOrders,
+      completedOrders,
+      failedOrders,
+      financials,
+      paidDeposits,
+      pendingDeposits,
+      openTickets,
+      activeProviders,
+      inactiveProviders,
+      activeServices,
+      inactiveServices,
+      activityRecords,
+      recentOrders,
+    ] = await Promise.all([
+      this.db.user.count({ where: { deletedAt: null } }),
+      this.db.user.count({ where: { status: "ACTIVE", deletedAt: null } }),
+      this.db.user.count({
+        where: { createdAt: { gte: today }, deletedAt: null },
+      }),
+      this.db.user.count({
+        where: { createdAt: { gte: sevenDays }, deletedAt: null },
+      }),
+      this.db.order.count(),
+      this.db.order.count({
+        where: { status: { in: ["PENDING", "PROCESSING", "IN_PROGRESS"] } },
+      }),
+      this.db.order.count({ where: { status: "COMPLETED" } }),
+      this.db.order.count({
+        where: { status: { in: ["FAILED", "CANCELED"] } },
+      }),
+      this.db.order.aggregate({
+        _sum: { charge: true, providerCost: true, profit: true },
+      }),
+      this.db.deposit.aggregate({
+        where: { status: "PAID" },
+        _sum: { netAmount: true },
+      }),
+      this.db.deposit.count({ where: { status: "PENDING" } }),
+      this.db.ticket.count({ where: { status: { not: "CLOSED" } } }),
+      this.db.provider.count({ where: { status: "ACTIVE", deletedAt: null } }),
+      this.db.provider.count({
+        where: { status: { not: "ACTIVE" }, deletedAt: null },
+      }),
+      this.db.service.count({ where: { active: true, deletedAt: null } }),
+      this.db.service.count({ where: { active: false, deletedAt: null } }),
+      this.db.order.findMany({
+        where: { createdAt: { gte: sevenDays } },
+        select: {
+          createdAt: true,
+          charge: true,
+          providerCost: true,
+          profit: true,
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      this.db.order.findMany({
+        select: {
+          id: true,
+          status: true,
+          charge: true,
+          profit: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "desc" },
+        take: 8,
+      }),
+    ]);
+    const alerts = [
+      ...(failedOrders
+        ? [
+            {
+              type: "orders",
+              message: "Đơn lỗi hoặc đã hủy cần kiểm tra",
+              count: failedOrders,
+            },
+          ]
+        : []),
+      ...(pendingDeposits
+        ? [
+            {
+              type: "payments",
+              message: "Giao dịch nạp tiền đang chờ",
+              count: pendingDeposits,
+            },
+          ]
+        : []),
+      ...(inactiveProviders
+        ? [
+            {
+              type: "providers",
+              message: "Provider degraded hoặc inactive",
+              count: inactiveProviders,
+            },
+          ]
+        : []),
+      ...(openTickets
+        ? [
+            {
+              type: "tickets",
+              message: "Ticket hỗ trợ đang mở",
+              count: openTickets,
+            },
+          ]
+        : []),
+    ];
+    return {
+      users: {
+        total: totalUsers,
+        active: activeUsers,
+        today: usersToday,
+        sevenDays: usersSevenDays,
+      },
+      orders: {
+        total: totalOrders,
+        active: activeOrders,
+        completed: completedOrders,
+        failed: failedOrders,
+      },
+      money: {
+        revenue: String(financials._sum.charge ?? "0"),
+        providerCost: String(financials._sum.providerCost ?? "0"),
+        profit: String(financials._sum.profit ?? "0"),
+        deposits: String(paidDeposits._sum.netAmount ?? "0"),
+        currency: "USD",
+      },
+      depositsPending: pendingDeposits,
+      openTickets,
+      providers: { active: activeProviders, inactive: inactiveProviders },
+      services: { active: activeServices, inactive: inactiveServices },
+      alerts,
+      activity: buildAdminActivity(activityRecords),
+      recentOrders: recentOrders.map((order: any) => ({
+        ...order,
+        id: String(order.id),
+        charge: String(order.charge),
+        profit: String(order.profit),
+      })),
     };
   }
 }
