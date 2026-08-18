@@ -160,6 +160,36 @@ export class OrderService {
       throw error;
     }
   }
+  async detail(userId: string, publicId: string) {
+    const order = await this.db.order.findFirst({
+      where: { publicId, userId },
+    });
+    if (!order) throw new OrderError("ORDER_NOT_FOUND", "Order not found");
+    const [history, refills, cancellations] = await Promise.all([
+      this.db.orderHistory.findMany({
+        where: { orderId: order.id },
+        orderBy: { createdAt: "asc" },
+      }),
+      this.db.refill.findMany({
+        where: { orderId: order.id },
+        orderBy: { createdAt: "desc" },
+      }),
+      this.db.cancellation.findMany({
+        where: { orderId: order.id },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+    return {
+      ...this.serialize(order),
+      refundedAmount: String(order.refundedAmount),
+      startCount: order.startCount,
+      remains: order.remains,
+      updatedAt: order.updatedAt,
+      history,
+      refills,
+      cancellations,
+    };
+  }
   async list(userId: string, page: number, limit: number) {
     if (
       !Number.isInteger(page) ||

@@ -50,16 +50,7 @@ export class LifecycleWorker {
               signal: controller.signal,
             });
             const x = await r.json();
-            if (r.ok && x?.status)
-              await this.db.order.update({
-                where: { id: o.id },
-                data: {
-                  status: String(x.status).toUpperCase().replaceAll(" ", "_"),
-                  remains: Number(x.remains ?? 0),
-                  startCount:
-                    x.start_count == null ? undefined : Number(x.start_count),
-                },
-              });
+            if (r.ok && x?.status) await this.apply(o, x);
           } finally {
             clearTimeout(timer);
           }
@@ -73,10 +64,105 @@ export class LifecycleWorker {
       this.running = false;
     }
   }
+
+  private async apply(order: any, x: any) {
+    const status = String(x.status).toUpperCase().replaceAll(" ", "_");
+    const remains = Number(x.remains ?? 0);
+    if (
+      ![
+        "PENDING",
+        "PROCESSING",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "PARTIAL",
+        "CANCELED",
+        "FAILED",
+      ].includes(status) ||
+      !Number.isInteger(remains) ||
+      remains < 0 ||
+      remains > order.quantity
+    )
+      return;
+    await this.db.$transaction(async (tx: any) => {
+      const current = await tx.order.findUnique({ where: { id: order.id } });
+      if (
+        !current ||
+        ["COMPLETED", "CANCELED", "REFUNDED"].includes(current.status)
+      )
+        return;
+      if (
+        status === "PARTIAL" &&
+        String(current.refundedAmount).replace(/\.0+$/, "") === "0"
+      ) {
+        const rate = BigInt(
+            String(current.saleRate).replace(".", "").padEnd(8, "0"),
+          ),
+          refundUnits = (rate * BigInt(remains)) / 1000n,
+          refund = `${refundUnits / 100000000n}.${String(refundUnits % 100000000n).padStart(8, "0")}`;
+        const rows = await tx.$queryRawUnsafe(
+          `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
+          refund,
+          current.userId,
+        );
+        await tx.walletTransaction.create({
+          data: {
+            walletId: rows[0].id,
+            userId: current.userId,
+            type: "REFUND",
+            amount: refund,
+            balanceBefore: rows[0].before,
+            balanceAfter: rows[0].after,
+            referenceId: current.publicId,
+            idempotencyKey: `refund:order:${current.publicId}`,
+          },
+        });
+        await tx.order.update({
+          where: { id: current.id },
+          data: {
+            status,
+            remains,
+            refundedAmount: refund,
+            startCount:
+              x.start_count == null ? undefined : Number(x.start_count),
+          },
+        });
+      } else
+        await tx.order.update({
+          where: { id: current.id },
+          data: {
+            status,
+            remains,
+            startCount:
+              x.start_count == null ? undefined : Number(x.start_count),
+          },
+        });
+      await tx.orderHistory.create({
+        data: {
+          orderId: current.id,
+          fromStatus: current.status,
+          toStatus: status,
+          details: { remains },
+        },
+      });
+    });
+  }
   private async actions(kind: "refill" | "cancel") {
-    const model = kind === "refill" ? this.db.refill : this.db.cancellation,
-      rows = await model.findMany({ where: { status: "PENDING" }, take: 20 });
-    for (const row of rows) {
+    const model = kind === "refill" ? this.db.refill : this.db.cancellation;
+    for (let n = 0; n < 20; n++) {
+      const table = kind === "refill" ? "refills" : "cancellations";
+      const claimed = await this.db.$transaction(async (tx: any) => {
+        const rows = await tx.$queryRawUnsafe(
+          `SELECT * FROM "${table}" WHERE "status"='PENDING' ORDER BY "created_at" FOR UPDATE SKIP LOCKED LIMIT 1`,
+        );
+        if (!rows[0]) return null;
+        await (kind === "refill" ? tx.refill : tx.cancellation).update({
+          where: { id: rows[0].id },
+          data: { status: "PROCESSING" },
+        });
+        return rows[0];
+      });
+      if (!claimed) break;
+      const row = { ...claimed, orderId: claimed.order_id };
       const o = await this.db.order.findUnique({ where: { id: row.orderId } });
       if (!o?.providerOrderId) continue;
       const p = await this.db.provider.findUnique({

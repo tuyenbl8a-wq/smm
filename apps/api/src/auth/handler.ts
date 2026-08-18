@@ -131,6 +131,14 @@ export class AuthHandler {
           ),
         );
       }
+      const orderDetail = /^\/api\/v1\/customer\/orders\/([0-9a-f-]{36})$/.exec(
+        path,
+      );
+      if (request.method === "GET" && orderDetail)
+        return this.ok(
+          response,
+          await this.orders!.detail(auth.user.id, orderDetail[1]!),
+        );
       if (request.method === "GET" && path === "/api/v1/customer/api-keys")
         return this.ok(response, await this.reseller!.list(auth.user.id));
       if (
