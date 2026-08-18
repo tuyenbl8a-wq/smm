@@ -2,6 +2,7 @@ import { loadConfig } from "@smm/config";
 import { createApiServer } from "./server.js";
 import { AuthHandler } from "./auth/handler.js";
 import { PrismaAuthStore } from "./auth/store.js";
+import { WalletService } from "./wallet/service.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -10,7 +11,11 @@ const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
 const server = createApiServer(
   config,
-  new AuthHandler(new PrismaAuthStore(prisma), config),
+  new AuthHandler(
+    new PrismaAuthStore(prisma),
+    config,
+    new WalletService(prisma),
+  ),
 );
 server.listen(config.port, config.host, () => {
   console.log(

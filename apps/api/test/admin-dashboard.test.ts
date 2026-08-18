@@ -19,6 +19,17 @@ test("SUPER_ADMIN and explicitly permitted staff can access admin APIs", () => {
     canAccessAdmin({ roles: ["STAFF"], permissions: ["orders.read"] }),
     false,
   );
+  assert.equal(
+    canAccessAdmin(
+      { roles: ["STAFF"], permissions: ["wallets.adjust"] },
+      "wallets.adjust",
+    ),
+    true,
+  );
+  assert.equal(
+    canAccessAdmin({ roles: ["USER"], permissions: [] }, "wallets.adjust"),
+    false,
+  );
 });
 
 test("admin activity uses order snapshots and exact eight-place decimals", () => {

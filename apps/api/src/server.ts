@@ -34,7 +34,7 @@ export function createApiServer(config: AppConfig, auth?: AuthHandler): Server {
       response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
       response.setHeader(
         "access-control-allow-headers",
-        "content-type,x-csrf-token",
+        "content-type,x-csrf-token,idempotency-key",
       );
       response.end();
       return;

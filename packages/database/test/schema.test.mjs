@@ -59,3 +59,16 @@ test("development seed requires environment credentials and blocks production", 
   assert.match(seed, /required\("DEV_SEED_ADMIN_PASSWORD"\)/);
   assert.doesNotMatch(seed, /password\s*=\s*["'][^"']+["']/i);
 });
+test("wallet migration enforces nonnegative balances and immutable ledger", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260818190000_wallet_guards/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /CHECK \("balance" >= 0\)/);
+  assert.match(migration, /"balance_after" = "balance_before" \+ "amount"/);
+  assert.match(migration, /BEFORE UPDATE ON "wallet_transactions"/);
+  assert.match(migration, /BEFORE DELETE ON "wallet_transactions"/);
+});

@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AppConfig } from "@smm/config";
 import type { AuthStore, AuthUser } from "./store.js";
 import { canAccessAdmin } from "../admin/dashboard.js";
+import { WalletError, type WalletService } from "../wallet/service.js";
 import {
   csrfValue,
   hashPassword,
@@ -24,6 +25,7 @@ export class AuthHandler {
   constructor(
     private readonly store: AuthStore,
     private readonly config: AppConfig,
+    private readonly wallet?: WalletService,
   ) {}
   async handle(
     request: IncomingMessage,
@@ -64,6 +66,51 @@ export class AuthHandler {
         return this.ok(response, {
           sessions: await this.store.listSessions(auth.user.id),
         });
+      if (request.method === "GET" && path === "/api/v1/customer/wallet") {
+        if (!this.wallet) throw new Error("Wallet service unavailable");
+        return this.ok(response, await this.wallet.summary(auth.user.id));
+      }
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/customer/wallet/transactions"
+      ) {
+        if (!this.wallet) throw new Error("Wallet service unavailable");
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.wallet.history(
+            auth.user.id,
+            Number(url.searchParams.get("page") ?? "1"),
+            Number(url.searchParams.get("limit") ?? "20"),
+          ),
+        );
+      }
+      const adminWallet =
+        /^\/api\/v1\/admin\/wallets\/([0-9a-f-]{36})(?:\/transactions|\/mutations)?$/.exec(
+          path,
+        );
+      if (request.method === "GET" && adminWallet) {
+        if (!canAccessAdmin(auth.access))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.wallet) throw new Error("Wallet service unavailable");
+        if (path.endsWith("/transactions")) {
+          const url = new URL(request.url ?? path, this.config.apiUrl);
+          return this.ok(
+            response,
+            await this.wallet.history(
+              adminWallet[1]!,
+              Number(url.searchParams.get("page") ?? "1"),
+              Number(url.searchParams.get("limit") ?? "20"),
+            ),
+          );
+        }
+        return this.ok(response, await this.wallet.summary(adminWallet[1]!));
+      }
       if (request.method === "POST") {
         const csrf = this.cookie(request, "smm_csrf");
         const header = this.header(request, "x-csrf-token");
@@ -83,6 +130,55 @@ export class AuthHandler {
         await this.store.revokeSession(auth.session.id);
         this.clearCookies(response);
         return this.ok(response, { loggedOut: true });
+      }
+      if (
+        request.method === "POST" &&
+        adminWallet &&
+        path.endsWith("/mutations")
+      ) {
+        this.checkBurst(request, "admin-wallet-mutation");
+        if (!canAccessAdmin(auth.access, "wallets.adjust"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.wallet) throw new Error("Wallet service unavailable");
+        const body = await this.body(request);
+        const type = String(body.type ?? "");
+        if (!["ADMIN_ADD", "ADMIN_SUBTRACT", "ADJUSTMENT"].includes(type))
+          throw new InputError(
+            "TRANSACTION_TYPE_INVALID",
+            "Invalid admin transaction type",
+          );
+        const key = this.header(request, "idempotency-key");
+        if (!key)
+          throw new InputError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Idempotency-Key header is required",
+          );
+        return this.ok(
+          response,
+          await this.wallet.mutate({
+            userId: adminWallet[1]!,
+            amount: String(body.amount ?? ""),
+            type: type as "ADMIN_ADD" | "ADMIN_SUBTRACT" | "ADJUSTMENT",
+            direction:
+              type === "ADMIN_SUBTRACT" || body.direction === "debit"
+                ? "debit"
+                : "credit",
+            idempotencyKey: key,
+            actorId: auth.user.id,
+            audit: true,
+            ...(body.referenceId
+              ? { referenceId: String(body.referenceId).slice(0, 128) }
+              : {}),
+            ...(body.description
+              ? { description: String(body.description) }
+              : {}),
+          }),
+        );
       }
       if (request.method === "POST" && path === "/api/v1/auth/change-password")
         return await this.changePassword(
@@ -139,6 +235,15 @@ export class AuthHandler {
       }
       return this.error(response, 404, "NOT_FOUND", "Route not found");
     } catch (error) {
+      if (error instanceof WalletError) {
+        const status =
+          error.code === "INSUFFICIENT_BALANCE"
+            ? 409
+            : error.code === "WALLET_NOT_FOUND"
+              ? 404
+              : 422;
+        return this.error(response, status, error.code, error.message);
+      }
       if (error instanceof InputError)
         return this.error(
           response,
