@@ -72,3 +72,15 @@ test("wallet migration enforces nonnegative balances and immutable ledger", () =
   assert.match(migration, /BEFORE UPDATE ON "wallet_transactions"/);
   assert.match(migration, /BEFORE DELETE ON "wallet_transactions"/);
 });
+
+test("provider outbox migration prevents duplicate jobs and bounds attempts", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260818230000_provider_outbox/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /UNIQUE \("order_id"\)/);
+  assert.match(sql, /FOR UPDATE|attempts_check|attempts.*<= 5/s);
+});

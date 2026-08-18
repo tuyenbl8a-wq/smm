@@ -5,6 +5,11 @@ import { canAccessAdmin } from "../admin/dashboard.js";
 import { WalletError, type WalletService } from "../wallet/service.js";
 import { CatalogError, type CatalogService } from "../catalog/service.js";
 import {
+  ProviderConfigError,
+  type ProviderService,
+} from "../provider/service.js";
+import { OrderError, type OrderService } from "../order/service.js";
+import {
   csrfValue,
   hashPassword,
   opaqueToken,
@@ -28,6 +33,8 @@ export class AuthHandler {
     private readonly config: AppConfig,
     private readonly wallet?: WalletService,
     private readonly catalog?: CatalogService,
+    private readonly providers?: ProviderService,
+    private readonly orders?: OrderService,
   ) {}
   async handle(
     request: IncomingMessage,
@@ -104,6 +111,18 @@ export class AuthHandler {
           ),
         );
       }
+      if (request.method === "GET" && path === "/api/v1/customer/orders") {
+        if (!this.orders) throw new Error("Order service unavailable");
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.orders.list(
+            auth.user.id,
+            Number(url.searchParams.get("page") ?? "1"),
+            Number(url.searchParams.get("limit") ?? "20"),
+          ),
+        );
+      }
       if (request.method === "GET" && path === "/api/v1/admin/catalog") {
         if (!canAccessAdmin(auth.access, "services.manage"))
           return this.error(
@@ -114,6 +133,17 @@ export class AuthHandler {
           );
         if (!this.catalog) throw new Error("Catalog service unavailable");
         return this.ok(response, await this.catalog.adminOverview());
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/providers") {
+        if (!canAccessAdmin(auth.access, "providers.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.providers) throw new Error("Provider service unavailable");
+        return this.ok(response, await this.providers.list());
       }
       const adminWallet =
         /^\/api\/v1\/admin\/wallets\/([0-9a-f-]{36})(?:\/transactions|\/mutations)?$/.exec(
@@ -155,6 +185,20 @@ export class AuthHandler {
             "CSRF_INVALID",
             "Invalid CSRF token",
           );
+      }
+      if (request.method === "POST" && path === "/api/v1/customer/orders") {
+        this.checkBurst(request, "customer-order-create");
+        if (!this.orders) throw new Error("Order service unavailable");
+        const key = this.header(request, "idempotency-key");
+        if (!key)
+          throw new InputError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Idempotency-Key header is required",
+          );
+        return this.ok(
+          response,
+          await this.orders.create(auth.user.id, await this.body(request), key),
+        );
       }
       if (request.method === "POST" && path === "/api/v1/auth/logout") {
         await this.store.revokeSession(auth.session.id);
@@ -212,6 +256,36 @@ export class AuthHandler {
           return this.ok(
             response,
             await this.catalog.updateService(auth.user.id, service[1]!, body),
+          );
+      }
+      if (
+        request.method === "POST" &&
+        path.startsWith("/api/v1/admin/providers")
+      ) {
+        this.checkBurst(request, "admin-provider-mutation");
+        if (!canAccessAdmin(auth.access, "providers.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.providers) throw new Error("Provider service unavailable");
+        if (path === "/api/v1/admin/providers")
+          return this.ok(
+            response,
+            await this.providers.create(auth.user.id, await this.body(request)),
+          );
+        const action =
+          /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})\/(test|sync)$/.exec(
+            path,
+          );
+        if (action)
+          return this.ok(
+            response,
+            action[2] === "test"
+              ? await this.providers.test(action[1]!)
+              : await this.providers.sync(auth.user.id, action[1]!),
           );
       }
       if (
@@ -320,6 +394,15 @@ export class AuthHandler {
     } catch (error) {
       if (error instanceof CatalogError)
         return this.error(response, 422, error.code, error.message);
+      if (error instanceof ProviderConfigError)
+        return this.error(response, 422, error.code, error.message);
+      if (error instanceof OrderError)
+        return this.error(
+          response,
+          error.code === "INSUFFICIENT_BALANCE" ? 409 : 422,
+          error.code,
+          error.message,
+        );
       if (error instanceof WalletError) {
         const status =
           error.code === "INSUFFICIENT_BALANCE"

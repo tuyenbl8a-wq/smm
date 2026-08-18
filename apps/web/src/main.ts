@@ -2,9 +2,11 @@ import { createServer } from "node:http";
 import { loadConfig } from "@smm/config";
 import {
   adminCatalogPage,
+  adminProvidersPage,
   adminWalletPage,
   authPage,
   panelPage,
+  ordersPage,
   servicesPage,
   walletPage,
 } from "./page.js";
@@ -34,7 +36,9 @@ const server = createServer((request, response) => {
       "/wallet",
       "/admin/wallet",
       "/services",
+      "/orders",
       "/admin/catalog",
+      "/admin/providers",
     ].includes(path)
   ) {
     response.setHeader("content-type", "text/html; charset=utf-8");
@@ -54,11 +58,15 @@ const server = createServer((request, response) => {
               ? walletPage(config.apiUrl.origin)
               : path === "/services"
                 ? servicesPage(config.apiUrl.origin)
-                : path === "/admin/catalog"
-                  ? adminCatalogPage(config.apiUrl.origin)
-                  : path === "/admin/wallet"
-                    ? adminWalletPage(config.apiUrl.origin)
-                    : panelPage(path === "/admin", config.apiUrl.origin);
+                : path === "/orders"
+                  ? ordersPage(config.apiUrl.origin)
+                  : path === "/admin/catalog"
+                    ? adminCatalogPage(config.apiUrl.origin)
+                    : path === "/admin/providers"
+                      ? adminProvidersPage(config.apiUrl.origin)
+                      : path === "/admin/wallet"
+                        ? adminWalletPage(config.apiUrl.origin)
+                        : panelPage(path === "/admin", config.apiUrl.origin);
     response.end(page);
     return;
   }

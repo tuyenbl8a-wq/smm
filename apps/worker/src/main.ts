@@ -1,7 +1,35 @@
 import { createServer } from "node:http";
 import { loadConfig } from "@smm/config";
 import { endpointFromUrl, probeTcp } from "@smm/health";
+import { SubmitWorker } from "./provider-submit.js";
+import { ProviderSyncWorker } from "./provider-sync.js";
 const config = loadConfig(process.env, 4100);
+const dynamicImport = new Function("specifier", "return import(specifier)") as (
+  specifier: string,
+) => Promise<any>;
+const { PrismaClient } = await dynamicImport("@prisma/client");
+const prisma = new PrismaClient();
+const submitWorker = new SubmitWorker(prisma, config.encryptionKey);
+const syncWorker = new ProviderSyncWorker(prisma, config.encryptionKey);
+void syncWorker.once();
+const syncPoll = setInterval(
+  () => void syncWorker.once().catch(() => undefined),
+  15 * 60 * 1000,
+);
+const poll = setInterval(
+  () =>
+    void submitWorker.once().catch((error: any) =>
+      console.error(
+        JSON.stringify({
+          level: "error",
+          service: "worker",
+          event: "provider_submit_failed",
+          message: error?.message ?? "unknown",
+        }),
+      ),
+    ),
+  2000,
+);
 const server = createServer(async (request, response) => {
   const path = new URL(
     request.url ?? "/",
@@ -51,6 +79,9 @@ server.listen(config.port, config.host, () =>
   ),
 );
 function shutdown(): void {
+  clearInterval(poll);
+  clearInterval(syncPoll);
+  void prisma.$disconnect();
   server.close((error) => {
     if (error) {
       console.error(error);

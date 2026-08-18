@@ -15,10 +15,10 @@ migration validation, and build checks applicable to the code introduced by it.
 | 6     | Responsive protected admin shell and dashboard                                       | ✅     |
 | 7     | Atomic wallet service and immutable transaction ledger                               | ✅     |
 | 8     | Categories, services, price groups, and pricing rules                                | ✅     |
-| 9     | Encrypted provider configuration and provider adapter contract                       | ⬜     |
-| 10    | Idempotent provider service import and scheduled synchronization                     | ⬜     |
-| 11    | Validated, server-priced, transactional order creation                               | ⬜     |
-| 12    | Outbox and safe provider submission worker                                           | ⬜     |
+| 9     | Encrypted provider configuration and provider adapter contract                       | ✅     |
+| 10    | Idempotent provider service import and scheduled synchronization                     | ✅     |
+| 11    | Validated, server-priced, transactional order creation                               | ✅     |
+| 12    | Outbox and safe provider submission worker                                           | ✅     |
 | 13    | Status reconciliation, partial refund, refill, and cancellation                      | ⬜     |
 | 14    | Rate-limited reseller compatibility API v2                                           | ⬜     |
 | 15    | Deposit model and payment provider abstraction                                       | ⬜     |

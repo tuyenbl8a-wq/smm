@@ -12,7 +12,8 @@ declare const process: {
 };
 declare const Buffer: {
   byteLength(value: string): number;
-  from(value: string, encoding?: string): unknown;
+  from(value: unknown, encoding?: string): any;
+  concat(values: any[]): any;
 };
 declare module "node:http" {
   export interface IncomingMessage {
@@ -74,11 +75,13 @@ declare module "node:fs" {
   ): Array<{ name: string; isDirectory(): boolean }>;
 }
 declare module "node:crypto" {
+  export function createCipheriv(...args: any[]): any;
+  export function createDecipheriv(...args: any[]): any;
   export function randomBytes(size: number): {
     toString(encoding: string): string;
   };
   export function createHash(algorithm: string): {
-    update(value: string): { digest(encoding: string): string };
+    update(value: string): { digest(encoding?: string): any };
   };
   export function createHmac(
     algorithm: string,

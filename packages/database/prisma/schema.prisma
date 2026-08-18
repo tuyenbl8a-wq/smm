@@ -668,3 +668,17 @@ model SystemLog {
   @@index([traceId])
   @@map("system_logs")
 }
+
+model ProviderOutbox {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId BigInt @unique @map("order_id")
+  status String @default("PENDING") @db.VarChar(24)
+  attempts Int @default(0)
+  availableAt DateTime @default(now()) @map("available_at") @db.Timestamptz(3)
+  lockedAt DateTime? @map("locked_at") @db.Timestamptz(3)
+  lastError String? @map("last_error") @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([status, availableAt])
+  @@map("provider_outbox")
+}

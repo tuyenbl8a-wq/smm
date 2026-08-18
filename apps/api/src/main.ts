@@ -4,6 +4,8 @@ import { AuthHandler } from "./auth/handler.js";
 import { PrismaAuthStore } from "./auth/store.js";
 import { WalletService } from "./wallet/service.js";
 import { CatalogService } from "./catalog/service.js";
+import { ProviderService } from "./provider/service.js";
+import { OrderService } from "./order/service.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -17,6 +19,8 @@ const server = createApiServer(
     config,
     new WalletService(prisma),
     new CatalogService(prisma),
+    new ProviderService(prisma, config.encryptionKey),
+    new OrderService(prisma),
   ),
 );
 server.listen(config.port, config.host, () => {
