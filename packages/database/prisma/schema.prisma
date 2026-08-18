@@ -495,6 +495,9 @@ model Notification {
   data Json?
   readAt DateTime? @map("read_at") @db.Timestamptz(3)
   deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(3)
+  deliveryAttempts Int @default(0) @map("delivery_attempts")
+  nextAttemptAt DateTime? @map("next_attempt_at") @db.Timestamptz(3)
+  deliveryError String? @map("delivery_error") @db.VarChar(255)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([userId, readAt, createdAt])
@@ -681,4 +684,18 @@ model ProviderOutbox {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([status, availableAt])
   @@map("provider_outbox")
+}
+
+model Attachment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId BigInt @map("ticket_id")
+  uploaderId String @map("uploader_id") @db.Uuid
+  storageKey String @unique @map("storage_key") @db.VarChar(255)
+  originalName String @map("original_name") @db.VarChar(255)
+  mime String @db.VarChar(80)
+  size Int
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([ticketId, createdAt])
+  @@map("attachments")
 }

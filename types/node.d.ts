@@ -106,3 +106,8 @@ declare module "node:path" {
   export function dirname(path: string): string;
   export function join(...parts: string[]): string;
 }
+declare module "node:fs/promises" {
+  export function mkdir(...args: any[]): Promise<any>;
+  export function readFile(...args: any[]): Promise<any>;
+  export function writeFile(...args: any[]): Promise<any>;
+}
