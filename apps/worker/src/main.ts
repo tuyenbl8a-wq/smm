@@ -4,6 +4,7 @@ import { endpointFromUrl, probeTcp } from "@smm/health";
 import { SubmitWorker } from "./provider-submit.js";
 import { ProviderSyncWorker } from "./provider-sync.js";
 import { EmailWorker } from "./email.js";
+import { LifecycleWorker } from "./lifecycle.js";
 const config = loadConfig(process.env, 4100);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -13,6 +14,8 @@ const prisma = new PrismaClient();
 const submitWorker = new SubmitWorker(prisma, config.encryptionKey);
 const syncWorker = new ProviderSyncWorker(prisma, config.encryptionKey);
 const emailWorker = new EmailWorker(prisma, null);
+const lifecycleWorker = new LifecycleWorker(prisma, config.encryptionKey);
+const lifecyclePoll = setInterval(() => void lifecycleWorker.run(), 30000);
 let emailRunning = false;
 const emailPoll = setInterval(async () => {
   if (emailRunning) return;
@@ -94,6 +97,7 @@ function shutdown(): void {
   clearInterval(poll);
   clearInterval(syncPoll);
   clearInterval(emailPoll);
+  clearInterval(lifecyclePoll);
   void prisma.$disconnect();
   server.close((error) => {
     if (error) {

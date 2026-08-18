@@ -160,6 +160,38 @@ export class AuthHandler {
           response,
           await this.support!.notifications(auth.user.id),
         );
+      if (request.method === "GET" && path === "/api/v1/admin/tickets") {
+        if (!canAccessAdmin(auth.access, "tickets.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const u = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.support!.adminInbox(Object.fromEntries(u.searchParams)),
+        );
+      }
+      const adminTicket = /^\/api\/v1\/admin\/tickets\/(\d+)$/.exec(path);
+      if (request.method === "GET" && adminTicket) {
+        if (!canAccessAdmin(auth.access, "tickets.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.support!.detail(
+            auth.user.id,
+            BigInt(adminTicket[1]!),
+            true,
+          ),
+        );
+      }
       if (request.method === "GET" && path === "/api/v1/admin/catalog") {
         if (!canAccessAdmin(auth.access, "services.manage"))
           return this.error(

@@ -17,6 +17,60 @@ const message = (v: unknown) => {
 };
 export class SupportService {
   constructor(private db: any) {}
+  async adminInbox(query: any) {
+    const where = {
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.search
+        ? {
+            subject: {
+              contains: String(query.search).slice(0, 100),
+              mode: "insensitive",
+            },
+          }
+        : {}),
+    };
+    const page = Math.max(1, Number(query.page) || 1),
+      limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const [total, items] = await Promise.all([
+      this.db.ticket.count({ where }),
+      this.db.ticket.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { updatedAt: "desc" },
+      }),
+    ]);
+    return {
+      page,
+      limit,
+      total,
+      items: items.map((x: any) => ({ ...x, id: String(x.id) })),
+    };
+  }
+  async adminStatus(actorId: string, id: bigint, status: string) {
+    if (!["OPEN", "ANSWERED", "CUSTOMER_REPLY", "CLOSED"].includes(status))
+      throw new SupportError("STATUS_INVALID", "Invalid status");
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.ticket.findUnique({ where: { id } });
+      if (!before)
+        throw new SupportError("TICKET_NOT_FOUND", "Ticket not found");
+      const item = await tx.ticket.update({
+        where: { id },
+        data: { status, closedAt: status === "CLOSED" ? new Date() : null },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "TICKET_STATUS",
+          resource: "ticket",
+          resourceId: String(id),
+          before: { status: before.status },
+          after: { status },
+        },
+      });
+      return item;
+    });
+  }
   async create(userId: string, input: any) {
     const subject = String(input.subject ?? "").trim();
     if (subject.length < 3 || subject.length > 255)
