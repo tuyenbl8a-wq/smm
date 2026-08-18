@@ -6,6 +6,8 @@ import type { AuthHandler } from "./auth/handler.js";
 import type { ResellerService } from "./reseller/service.js";
 import type { VietQrWebhook } from "./payment/vietqr.js";
 import type { BinanceWebhookProcessor } from "./payment/binance.js";
+import type { DistributedRateLimiter } from "./reseller/rate-limit.js";
+import type { CassoWebhook } from "./payment/casso.js";
 
 function json(
   response: ServerResponse,
@@ -26,6 +28,8 @@ export function createApiServer(
   reseller?: ResellerService,
   vietqr?: VietQrWebhook,
   binance?: BinanceWebhookProcessor,
+  limiter?: DistributedRateLimiter,
+  casso?: CassoWebhook,
 ): Server {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", config.apiUrl).pathname;
@@ -51,7 +55,8 @@ export function createApiServer(
     if (
       request.method === "POST" &&
       (path === "/webhooks/payments/vietqr" ||
-        path === "/webhooks/payments/binance")
+        path === "/webhooks/payments/binance" ||
+        path === "/webhooks/payments/casso")
     ) {
       const chunks: any[] = [];
       for await (const c of request as any) chunks.push(c);
@@ -60,6 +65,18 @@ export function createApiServer(
         if (path.endsWith("vietqr")) {
           const sig = String(request.headers["x-webhook-signature"] ?? "");
           const result = await vietqr!.process(raw, sig);
+          response.statusCode = 200;
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify(result));
+          return;
+        }
+        if (path.endsWith("casso")) {
+          const token = String(
+            request.headers["secure-token"] ??
+              request.headers["x-casso-token"] ??
+              "",
+          );
+          const result = await casso!.process(raw, token);
           response.statusCode = 200;
           response.setHeader("content-type", "application/json");
           response.end(JSON.stringify(result));
@@ -93,16 +110,38 @@ export function createApiServer(
           input = raw.trim().startsWith("{")
             ? JSON.parse(raw)
             : Object.fromEntries(new URLSearchParams(raw));
-        const data = await reseller.execute(
-          String(input.key ?? request.headers["x-api-key"] ?? ""),
-          input,
-        );
+        const rawKey = String(input.key ?? request.headers["x-api-key"] ?? ""),
+          identity = await reseller.authenticate(rawKey);
+        if (limiter) {
+          const result = await limiter.consume(
+            `${identity.id}:${request.socket.remoteAddress ?? "unknown"}`,
+            Number(identity.rateLimit ?? 60),
+          );
+          response.setHeader("x-ratelimit-remaining", String(result.remaining));
+          if (!result.allowed) {
+            response.statusCode = 429;
+            response.setHeader("retry-after", String(result.retryAfter));
+            response.setHeader("content-type", "application/json");
+            response.end(
+              JSON.stringify({
+                error: "Rate limit exceeded",
+                code: "RATE_LIMITED",
+              }),
+            );
+            return;
+          }
+        }
+        const data = await reseller.execute(rawKey, input, identity);
         response.statusCode = 200;
         response.setHeader("content-type", "application/json");
         response.end(JSON.stringify(data));
         return;
       } catch (error: any) {
-        response.statusCode = error?.code === "RATE_LIMITED" ? 429 : 400;
+        response.statusCode = String(error?.message).startsWith("REDIS_")
+          ? 503
+          : error?.code === "RATE_LIMITED"
+            ? 429
+            : 400;
         response.setHeader("content-type", "application/json");
         response.end(
           JSON.stringify({ error: error?.message ?? "Request failed" }),

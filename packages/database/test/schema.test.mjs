@@ -84,3 +84,17 @@ test("provider outbox migration prevents duplicate jobs and bounds attempts", ()
   assert.match(sql, /UNIQUE \("order_id"\)/);
   assert.match(sql, /FOR UPDATE|attempts_check|attempts.*<= 5/s);
 });
+
+test("lifecycle action migration persists bounded retry and stale claims", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260819030000_lifecycle_retry/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /"attempts" BETWEEN 0 AND 5/);
+  assert.match(sql, /"next_attempt_at"/);
+  assert.match(sql, /"claimed_at"/);
+  assert.match(sql, /status_next_attempt_at_index/);
+});

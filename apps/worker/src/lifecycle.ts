@@ -148,26 +148,60 @@ export class LifecycleWorker {
   }
   private async actions(kind: "refill" | "cancel") {
     const model = kind === "refill" ? this.db.refill : this.db.cancellation;
+    const table = kind === "refill" ? "refills" : "cancellations";
+    // A worker dying after an external request leaves an unknowable outcome.
+    // Recover it to UNKNOWN for manual/provider reconciliation rather than
+    // risking a duplicate external mutation.
+    await this.db.$executeRawUnsafe(
+      `UPDATE "${table}" SET "status"='UNKNOWN',"last_error"='STALE_CLAIM_UNKNOWN' WHERE "status"='PROCESSING' AND "claimed_at" < NOW() - INTERVAL '5 minutes'`,
+    );
     for (let n = 0; n < 20; n++) {
-      const table = kind === "refill" ? "refills" : "cancellations";
       const claimed = await this.db.$transaction(async (tx: any) => {
         const rows = await tx.$queryRawUnsafe(
-          `SELECT * FROM "${table}" WHERE "status"='PENDING' ORDER BY "created_at" FOR UPDATE SKIP LOCKED LIMIT 1`,
+          `SELECT * FROM "${table}" WHERE "status"='PENDING' AND "attempts" < 5 AND "next_attempt_at" <= NOW() ORDER BY "created_at" FOR UPDATE SKIP LOCKED LIMIT 1`,
         );
         if (!rows[0]) return null;
         await (kind === "refill" ? tx.refill : tx.cancellation).update({
           where: { id: rows[0].id },
-          data: { status: "PROCESSING" },
+          data: {
+            status: "PROCESSING",
+            claimedAt: new Date(),
+            attempts: { increment: 1 },
+            lastError: null,
+          },
         });
         return rows[0];
       });
       if (!claimed) break;
       const row = { ...claimed, orderId: claimed.order_id };
       const o = await this.db.order.findUnique({ where: { id: row.orderId } });
-      if (!o?.providerOrderId) continue;
+      if (!o?.providerOrderId) {
+        await model.update({
+          where: { id: row.id },
+          data: {
+            status: "FAILED",
+            claimedAt: null,
+            lastError: "PROVIDER_ORDER_MISSING",
+          },
+        });
+        continue;
+      }
       const p = await this.db.provider.findUnique({
         where: { id: o.providerId },
       });
+      if (!p) {
+        await model.update({
+          where: { id: row.id },
+          data: {
+            status: "FAILED",
+            claimedAt: null,
+            lastError: "PROVIDER_MISSING",
+          },
+        });
+        continue;
+      }
+      const controller = new AbortController(),
+        timer = setTimeout(() => controller.abort(), p.timeoutMs);
       try {
         const r = await fetch(p.apiUrl, {
           method: "POST",
@@ -175,24 +209,50 @@ export class LifecycleWorker {
             key: dec(p.apiKeyEncrypted, this.key),
             action: kind,
             order: o.providerOrderId,
+            request_id: row.idempotency_key,
           }),
+          signal: controller.signal,
         });
         const x = await r.json();
         if (!r.ok || x?.error) throw Error("REJECTED");
         await model.update({
           where: { id: row.id },
           data: {
-            status: "SUCCEEDED",
+            status: "COMPLETED",
+            claimedAt: null,
             ...(kind === "refill" && x.refill
               ? { providerRefillId: String(x.refill) }
               : {}),
           },
         });
-      } catch {
+      } catch (error: any) {
+        const unknown = error?.name === "AbortError";
+        const attempts = Number(claimed.attempts ?? 0) + 1;
         await model.update({
           where: { id: row.id },
-          data: { status: "FAILED" },
+          data: unknown
+            ? {
+                status: "UNKNOWN",
+                claimedAt: null,
+                lastError: "PROVIDER_TIMEOUT_UNKNOWN",
+              }
+            : attempts >= 5
+              ? {
+                  status: "FAILED",
+                  claimedAt: null,
+                  lastError: "PROVIDER_REJECTED",
+                }
+              : {
+                  status: "PENDING",
+                  claimedAt: null,
+                  lastError: "PROVIDER_REJECTED",
+                  nextAttemptAt: new Date(
+                    Date.now() + Math.min(300000, 1000 * 2 ** attempts),
+                  ),
+                },
         });
+      } finally {
+        clearTimeout(timer);
       }
     }
   }

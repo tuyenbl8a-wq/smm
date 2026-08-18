@@ -7,6 +7,8 @@ import { CatalogService } from "./catalog/service.js";
 import { ProviderService } from "./provider/service.js";
 import { OrderService } from "./order/service.js";
 import { ResellerService } from "./reseller/service.js";
+import { DistributedRateLimiter } from "./reseller/rate-limit.js";
+import { RedisCounterClient } from "./reseller/redis.js";
 import { OrderLifecycleService } from "./order/lifecycle.js";
 import { DepositService } from "./payment/service.js";
 import { SupportService } from "./support/service.js";
@@ -15,6 +17,7 @@ import {
   BinanceMerchantProvider,
   BinanceWebhookProcessor,
 } from "./payment/binance.js";
+import { CassoWebhook } from "./payment/casso.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -38,10 +41,7 @@ const server = createApiServer(
     new SupportService(prisma),
   ),
   resellerService,
-  new VietQrWebhook(
-    prisma,
-    process.env.VIETQR_WEBHOOK_SECRET ?? "disabled-development-secret",
-  ),
+  new VietQrWebhook(prisma, process.env.VIETQR_WEBHOOK_SECRET ?? ""),
   new BinanceWebhookProcessor(
     prisma,
     new BinanceMerchantProvider(
@@ -51,6 +51,8 @@ const server = createApiServer(
       process.env.BINANCE_WEBHOOK_SECRET ?? "disabled",
     ),
   ),
+  new DistributedRateLimiter(new RedisCounterClient(new URL(config.redisUrl))),
+  new CassoWebhook(prisma, process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? ""),
 );
 server.listen(config.port, config.host, () => {
   console.log(

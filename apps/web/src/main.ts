@@ -13,6 +13,7 @@ import {
   orderDetailPage,
   depositDetailPage,
   adminSupportPage,
+  adminDepositsPage,
 } from "./page.js";
 const config = loadConfig(process.env, 3000);
 const server = createServer((request, response) => {
@@ -59,12 +60,13 @@ const server = createServer((request, response) => {
       "/support",
       "/notifications",
       "/admin/support",
+      "/admin/deposits",
     ].includes(path)
   ) {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.setHeader(
       "content-security-policy",
-      `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${config.apiUrl.origin}; img-src data:; base-uri 'none'; frame-ancestors 'none'`,
+      `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${config.apiUrl.origin}; img-src data: https://img.vietqr.io; base-uri 'none'; frame-ancestors 'none'`,
     );
     response.setHeader("x-content-type-options", "nosniff");
     const page =
@@ -84,27 +86,28 @@ const server = createServer((request, response) => {
                     ? adminCatalogPage(config.apiUrl.origin)
                     : path === "/admin/providers"
                       ? adminProvidersPage(config.apiUrl.origin)
-                      : [
-                            "/api-docs",
-                            "/deposit",
-                            "/support",
-                            "/notifications",
-                            "/admin/support",
-                          ].includes(path)
-                        ? featurePage(
-                            path === "/api-docs"
-                              ? "api"
-                              : (path.slice(1) as any),
-                            config.apiUrl.origin,
-                          )
-                        : path === "/admin/support"
-                          ? adminSupportPage(config.apiUrl.origin)
-                          : path === "/admin/wallet"
-                            ? adminWalletPage(config.apiUrl.origin)
-                            : panelPage(
-                                path === "/admin",
+                      : path === "/admin/support"
+                        ? adminSupportPage(config.apiUrl.origin)
+                        : path === "/admin/deposits"
+                          ? adminDepositsPage(config.apiUrl.origin)
+                          : [
+                                "/api-docs",
+                                "/deposit",
+                                "/support",
+                                "/notifications",
+                              ].includes(path)
+                            ? featurePage(
+                                path === "/api-docs"
+                                  ? "api"
+                                  : (path.slice(1) as any),
                                 config.apiUrl.origin,
-                              );
+                              )
+                            : path === "/admin/wallet"
+                              ? adminWalletPage(config.apiUrl.origin)
+                              : panelPage(
+                                  path === "/admin",
+                                  config.apiUrl.origin,
+                                );
     response.end(page);
     return;
   }

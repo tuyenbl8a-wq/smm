@@ -182,6 +182,25 @@ export class AuthHandler {
           await this.support!.adminInbox(Object.fromEntries(u.searchParams)),
         );
       }
+      if (request.method === "GET" && path === "/api/v1/admin/deposits") {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const u = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.deposits!.adminHistory({
+            ...(u.searchParams.get("status")
+              ? { status: u.searchParams.get("status")! }
+              : {}),
+            take: Number(u.searchParams.get("limit") ?? "50"),
+          }),
+        );
+      }
       const adminTicket = /^\/api\/v1\/admin\/tickets\/(\d+)$/.exec(path);
       if (request.method === "GET" && adminTicket) {
         if (!canAccessAdmin(auth.access, "tickets.manage"))
