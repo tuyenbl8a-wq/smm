@@ -1,0 +1,133 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { canAccessAdmin } from "../src/admin/dashboard.js";
+import { calculateSaleRate, decimalInput } from "../src/catalog/pricing.js";
+import { CatalogService } from "../src/catalog/service.js";
+
+test("pricing uses exact eight-place fixed-point arithmetic", () => {
+  assert.equal(decimalInput("10.00000001"), "10.00000001");
+  assert.equal(
+    calculateSaleRate({
+      baseRate: "10",
+      providerCost: "7",
+      markupPercent: "10",
+      fixedProfit: "0.00000001",
+    }),
+    "11.00000001",
+  );
+  assert.equal(
+    calculateSaleRate({ baseRate: "8", providerCost: "9", minProfit: "2" }),
+    "11.00000000",
+  );
+  assert.equal(
+    calculateSaleRate({
+      baseRate: "10",
+      providerCost: "7",
+      fixedRate: "12.34567891",
+      markupPercent: "50",
+    }),
+    "12.34567891",
+  );
+  assert.throws(() => decimalInput("1.000000001"), /INVALID_DECIMAL/);
+  assert.throws(() => decimalInput("0"), /INVALID_DECIMAL/);
+});
+
+test("catalog administration requires services.manage", () => {
+  assert.equal(
+    canAccessAdmin({ roles: ["USER"], permissions: [] }, "services.manage"),
+    false,
+  );
+  assert.equal(
+    canAccessAdmin(
+      { roles: ["STAFF"], permissions: ["services.manage"] },
+      "services.manage",
+    ),
+    true,
+  );
+  assert.equal(
+    canAccessAdmin(
+      { roles: ["SUPER_ADMIN"], permissions: [] },
+      "services.manage",
+    ),
+    true,
+  );
+});
+
+test("customer catalog is scoped to active categories and never exposes provider cost", async () => {
+  const category = { id: "category-1", name: "Social", slug: "social" };
+  let serviceWhere: any;
+  const db = {
+    serviceCategory: { findMany: async () => [category] },
+    user: {
+      findUnique: async ({ where }: any) => {
+        assert.equal(where.id, "customer-1");
+        return { priceGroupId: "group-1" };
+      },
+    },
+    service: {
+      count: async ({ where }: any) => {
+        serviceWhere = where;
+        return 1;
+      },
+      findMany: async (query: any) =>
+        query.select.providerCost
+          ? [{ id: "service-1", providerCost: "5", rate: "10" }]
+          : [
+              {
+                id: "service-1",
+                categoryId: category.id,
+                name: "Followers",
+                description: null,
+                type: "DEFAULT",
+                rate: "10",
+                min: 100,
+                max: 1000,
+                averageTime: null,
+                refill: true,
+                cancel: false,
+                customFields: null,
+              },
+            ],
+    },
+    priceRule: {
+      findMany: async () => [
+        {
+          serviceId: "service-1",
+          markupPercent: "10",
+          fixedRate: null,
+          fixedProfit: null,
+          minProfit: "0",
+        },
+      ],
+    },
+  };
+  const result = await new CatalogService(db).customerCatalog("customer-1", {
+    page: 1,
+    limit: 20,
+  });
+  assert.deepEqual(serviceWhere.categoryId, { in: [category.id] });
+  assert.equal(result.services[0].rate, "11.00000000");
+  assert.equal("providerCost" in result.services[0], false);
+});
+
+test("catalog mutations create an audit record in the same transaction", async () => {
+  const audits: any[] = [];
+  const tx = {
+    serviceCategory: {
+      create: async ({ data }: any) => ({ id: "category-1", ...data }),
+    },
+    auditLog: {
+      create: async ({ data }: any) => {
+        audits.push(data);
+        return data;
+      },
+    },
+  };
+  const db = { $transaction: async (work: any) => work(tx) };
+  await new CatalogService(db).createCategory("admin-1", {
+    name: "Social Media",
+    slug: "social-media",
+  });
+  assert.equal(audits[0].actorId, "admin-1");
+  assert.equal(audits[0].action, "CATEGORY_CREATE");
+});
