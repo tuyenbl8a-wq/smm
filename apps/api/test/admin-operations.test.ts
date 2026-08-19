@@ -65,3 +65,15 @@ test("general settings never return encrypted values", async () => {
   assert.deepEqual(query.where, { encrypted: false });
   assert.equal(query.select.value, true);
 });
+
+test("report CSV neutralizes spreadsheet formulas", async () => {
+  const service = new AdminOperationsService({});
+  (service as any).reports = async () => ({
+    orders: { total: "=1+1", failed: 0, partial: 0, refunded: 0 },
+    users: 0,
+    money: { revenue: "+10", providerCost: 0, profit: 0, deposits: 0 },
+  });
+  const csv = await service.reportsCsv();
+  assert.match(csv, /"'=1\+1"/);
+  assert.match(csv, /"'\+10"/);
+});

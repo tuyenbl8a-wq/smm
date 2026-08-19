@@ -167,6 +167,20 @@ export class SupportService {
       );
     return { read: true };
   }
+  async markAllRead(userId: string) {
+    const result = await this.db.notification.updateMany({
+      where: { userId, readAt: null },
+      data: { readAt: new Date() },
+    });
+    return { read: result.count };
+  }
+  async unreadCount(userId: string) {
+    return {
+      unread: await this.db.notification.count({
+        where: { userId, readAt: null },
+      }),
+    };
+  }
   notifications(userId: string) {
     return this.db.notification.findMany({
       where: { userId },

@@ -20,6 +20,7 @@ import {
   adminPaymentsPage,
   adminProviderDetailPage,
   resetPasswordPage,
+  ticketDetailPage,
 } from "./page.js";
 const config = loadConfig(process.env, 3000);
 const server = createServer((request, response) => {
@@ -38,6 +39,7 @@ const server = createServer((request, response) => {
   }
   const orderMatch = /^\/orders\/([0-9a-f-]{36})$/.exec(path),
     depositMatch = /^\/deposit\/([0-9a-f-]{36})$/.exec(path),
+    ticketMatch = /^\/support\/(\d+)$/.exec(path),
     adminRecord = /^\/admin\/(users|orders)\/([0-9a-f-]{36})$/.exec(path),
     providerRecord = /^\/admin\/providers\/([0-9a-f-]{36})$/.exec(path);
   if (request.method === "GET" && providerRecord) {
@@ -65,6 +67,11 @@ const server = createServer((request, response) => {
         ? orderDetailPage(config.apiUrl.origin, orderMatch[1]!)
         : depositDetailPage(config.apiUrl.origin, depositMatch![1]!),
     );
+    return;
+  }
+  if (request.method === "GET" && ticketMatch) {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(ticketDetailPage(config.apiUrl.origin, ticketMatch[1]!));
     return;
   }
   if (
