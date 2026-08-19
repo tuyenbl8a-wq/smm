@@ -1167,7 +1167,7 @@ export class AuthHandler {
     response.statusCode = status;
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.setHeader("cache-control", "no-store");
-    response.end(JSON.stringify({ success: true, data }));
+    response.end(JSON.stringify({ success: true, data }, (_key, value) => typeof value === 'bigint' ? value.toString() : value));
     return true;
   }
   private error(
