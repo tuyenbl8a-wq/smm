@@ -31,7 +31,10 @@ export class AdminOperationError extends Error {
 }
 
 export class AdminOperationsService {
-  constructor(private db: any) {}
+  private snapshots: DailySnapshotService;
+  constructor(private db: any) {
+    this.snapshots = new DailySnapshotService(db);
+  }
 
   async users(query: any) {
     const page = Math.max(1, Number(query.page) || 1),
@@ -417,6 +420,37 @@ export class AdminOperationsService {
     return rows.map((row) => row.map(safe).join(",")).join("\r\n");
   }
 
+  async reportTrend(from: string, to: string) {
+    const setting = await this.db.setting.findUnique({
+      where: { group_key: { group: "general", key: "timezone" } },
+    });
+    const timezone =
+      typeof setting?.value === "string" ? setting.value : "Asia/Ho_Chi_Minh";
+    return {
+      timezone,
+      items: await this.snapshots.trend(timezone, from, to),
+    };
+  }
+
+  async rebuildReport(actorId: string, date: string) {
+    const setting = await this.db.setting.findUnique({
+      where: { group_key: { group: "general", key: "timezone" } },
+    });
+    const timezone =
+        typeof setting?.value === "string" ? setting.value : "Asia/Ho_Chi_Minh",
+      snapshot = await this.snapshots.build(date, timezone);
+    await this.db.auditLog.create({
+      data: {
+        actorId,
+        action: "REPORT_SNAPSHOT_REBUILD",
+        resource: "DailyReportSnapshot",
+        resourceId: snapshot.id,
+        after: { date, timezone },
+      },
+    });
+    return snapshot;
+  }
+
   async logs(kind: string, page = 1, limit = 50) {
     const model =
       kind === "system"
@@ -491,3 +525,4 @@ export class AdminOperationsService {
     };
   }
 }
+import { DailySnapshotService } from "@smm/database";

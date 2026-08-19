@@ -6,6 +6,8 @@ import { ProviderSyncWorker } from "./provider-sync.js";
 import { EmailWorker } from "./email.js";
 import { LifecycleWorker } from "./lifecycle.js";
 import { smtpConfig, SmtpTransport } from "./smtp.js";
+import { ReportSnapshotWorker } from "./report-snapshot.js";
+import { PaymentReconciliationWorker } from "./payment-reconcile.js";
 const config = loadConfig(process.env, 4100);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -21,7 +23,57 @@ const smtp = smtpConfig(process.env),
     smtpTransport ? (message) => smtpTransport.send(message) : null,
   );
 const lifecycleWorker = new LifecycleWorker(prisma, config.encryptionKey);
+const reportWorker = new ReportSnapshotWorker(prisma);
+const binanceModule = await dynamicImport(
+    new URL("../../api/dist/payment/binance.js", import.meta.url).href,
+  ),
+  binanceProvider = new binanceModule.BinanceMerchantProvider(
+    "https://bpay.binanceapi.com",
+    process.env.BINANCE_MERCHANT_API_KEY ?? "",
+    process.env.BINANCE_MERCHANT_SECRET ?? "",
+    process.env.BINANCE_WEBHOOK_SECRET ?? "",
+  ),
+  binanceProcessor = new binanceModule.BinanceWebhookProcessor(
+    prisma,
+    binanceProvider,
+  ),
+  paymentWorker = new PaymentReconciliationWorker(
+    prisma,
+    async (externalOrderId) => {
+      const value = await binanceProvider.queryTransaction(externalOrderId),
+        status = String(
+          value.status ?? value.bizStatus ?? "UNKNOWN",
+        ).toUpperCase();
+      return {
+        status:
+          status === "PAID" || status === "PAY_SUCCESS"
+            ? "PAID"
+            : status === "PENDING" || status === "INITIAL"
+              ? "PENDING"
+              : status === "EXPIRED"
+                ? "EXPIRED"
+                : status === "FAILED" || status === "CANCELED"
+                  ? "FAILED"
+                  : "UNKNOWN",
+        transactionId: value.transactionId ?? value.prepayId,
+        amount: value.totalFee ?? value.orderAmount,
+        currency: value.currency,
+      };
+    },
+    (event) =>
+      binanceProcessor.reconcile(event, { source: "scheduled-reconciliation" }),
+  );
 const lifecyclePoll = setInterval(() => void lifecycleWorker.run(), 30000);
+let paymentRunning = false;
+const paymentPoll = setInterval(async () => {
+  if (paymentRunning) return;
+  paymentRunning = true;
+  try {
+    await paymentWorker.once();
+  } finally {
+    paymentRunning = false;
+  }
+}, 15000);
 let emailRunning = false;
 const emailPoll = setInterval(async () => {
   if (emailRunning) return;
@@ -33,6 +85,11 @@ const emailPoll = setInterval(async () => {
   }
 }, 10000);
 void syncWorker.once();
+void reportWorker.once().catch(() => undefined);
+const reportPoll = setInterval(
+  () => void reportWorker.once().catch(() => undefined),
+  15 * 60 * 1000,
+);
 const syncPoll = setInterval(
   () => void syncWorker.once().catch(() => undefined),
   15 * 60 * 1000,
@@ -104,6 +161,8 @@ function shutdown(): void {
   clearInterval(syncPoll);
   clearInterval(emailPoll);
   clearInterval(lifecyclePoll);
+  clearInterval(reportPoll);
+  clearInterval(paymentPoll);
   void prisma.$disconnect();
   server.close((error) => {
     if (error) {

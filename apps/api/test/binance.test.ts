@@ -78,6 +78,48 @@ test("Binance only credits a pending, exact payment once", async () => {
   assert.equal(state.credits, 1);
 });
 
+test("webhook and reconciliation share the exact-once settlement path", async () => {
+  let credits = 0,
+    paid = false;
+  const tx: any = {
+      deposit: {
+        findUnique: async () => ({
+          id: "d",
+          userId: "u",
+          paymentMethodId: "m",
+          status: paid ? "PAID" : "PENDING",
+          grossAmount: "5",
+          netAmount: "5",
+          sourceCurrency: "USDT",
+        }),
+        update: async () => ((paid = true), undefined),
+      },
+      paymentWebhook: {
+        create: async () => ({ id: "w" }),
+        update: async () => undefined,
+      },
+      $queryRawUnsafe: async () => (
+        (credits += 1),
+        [{ id: "wallet", before: "0", after: "5" }]
+      ),
+      walletTransaction: { create: async () => undefined },
+    },
+    processor = new BinanceWebhookProcessor(
+      { $transaction: async (fn: any) => fn(tx) },
+      {} as any,
+    ),
+    event = {
+      eventId: "reconcile:tx",
+      transactionId: "tx",
+      depositCode: "NAP",
+      amount: "5",
+      currency: "USDT",
+    };
+  assert.equal((await processor.reconcile(event)).status, "PAID");
+  assert.equal((await processor.reconcile(event)).status, "DUPLICATE");
+  assert.equal(credits, 1);
+});
+
 test("Binance rejects failed, expired, and mismatched payment events", async () => {
   const provider: any = {
     verifyWebhook: () => true,

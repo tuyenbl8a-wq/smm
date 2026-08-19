@@ -20,6 +20,7 @@ import {
 import { PaymentSettingsService } from "../payment/settings.js";
 import { stringifyJson } from "../http/json.js";
 import type { LocalStorage } from "../storage/local.js";
+import { PromotionError, PromotionService } from "../promotion/service.js";
 import { endpointFromUrl, probeTcp } from "@smm/health";
 import {
   csrfValue,
@@ -54,6 +55,7 @@ export class AuthHandler {
     private readonly admin?: AdminOperationsService,
     private readonly paymentSettings?: PaymentSettingsService,
     private readonly storage?: LocalStorage,
+    private readonly promotions?: PromotionService,
   ) {}
   async handle(
     request: IncomingMessage,
@@ -128,6 +130,37 @@ export class AuthHandler {
               : {}),
           }),
         );
+      }
+      if (request.method === "GET" && path === "/api/v1/customer/referral")
+        return this.ok(
+          response,
+          await this.promotions!.referralSummary(auth.user.id),
+        );
+      if (request.method === "GET" && path === "/api/v1/admin/coupons") {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const query = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.promotions!.listCoupons(
+            query.searchParams.get("search") ?? "",
+          ),
+        );
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/referrals") {
+        if (!canAccessAdmin(auth.access, "reports.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.promotions!.adminReferrals());
       }
       if (
         request.method === "GET" &&
@@ -270,6 +303,24 @@ export class AuthHandler {
               : undefined,
           ),
         );
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/reports/trend") {
+        if (!canAccessAdmin(auth.access, "reports.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const query = new URL(request.url ?? path, this.config.apiUrl),
+          from = query.searchParams.get("from") ?? "",
+          to = query.searchParams.get("to") ?? "";
+        if (
+          !/^\d{4}-\d{2}-\d{2}$/.test(from) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(to)
+        )
+          throw new InputError("REPORT_RANGE_INVALID", "Invalid report range");
+        return this.ok(response, await this.admin!.reportTrend(from, to));
       }
       if (request.method === "GET" && path === "/api/v1/admin/reports.csv") {
         if (!canAccessAdmin(auth.access, "reports.read"))
@@ -655,6 +706,72 @@ export class AuthHandler {
           response,
           await this.deposits!.create(auth.user.id, await this.body(request)),
         );
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/customer/coupons/preview"
+      ) {
+        const body = await this.body(request);
+        return this.ok(
+          response,
+          await this.promotions!.preview(auth.user.id, body.code, body.amount),
+        );
+      }
+      if (request.method === "POST" && path === "/api/v1/admin/coupons") {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.promotions!.saveCoupon(
+            auth.user.id,
+            await this.body(request),
+          ),
+        );
+      }
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/admin/reports/rebuild"
+      ) {
+        if (!canAccessAdmin(auth.access, "reports.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const body = await this.body(request),
+          date = String(body.date ?? "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+          throw new InputError("REPORT_DATE_INVALID", "Invalid report date");
+        return this.ok(
+          response,
+          await this.admin!.rebuildReport(auth.user.id, date),
+        );
+      }
+      const couponUpdate = /^\/api\/v1\/admin\/coupons\/([0-9a-f-]{36})$/.exec(
+        path,
+      );
+      if (request.method === "POST" && couponUpdate) {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.promotions!.saveCoupon(
+            auth.user.id,
+            await this.body(request),
+            couponUpdate[1]!,
+          ),
+        );
+      }
       if (request.method === "POST" && path === "/api/v1/customer/tickets")
         return this.ok(
           response,
@@ -993,7 +1110,8 @@ export class AuthHandler {
       if (
         error instanceof AdminOperationError ||
         error instanceof SupportError ||
-        error instanceof PaymentError
+        error instanceof PaymentError ||
+        error instanceof PromotionError
       )
         return this.error(response, 422, error.code, error.message);
       if (error instanceof InputError)
@@ -1031,12 +1149,25 @@ export class AuthHandler {
       throw new InputError("EMAIL_IN_USE", "Email is already registered");
     if (await this.store.findUserByUsername(username))
       throw new InputError("USERNAME_IN_USE", "Username is already registered");
-    const user = await this.store.createUser({
-      email,
-      username,
-      passwordHash: await hashPassword(password),
-      referralCode: opaqueToken(9).toUpperCase(),
-    });
+    let user: AuthUser;
+    try {
+      user = await this.store.createUser({
+        email,
+        username,
+        passwordHash: await hashPassword(password),
+        referralCode: opaqueToken(9).toUpperCase(),
+        ...(body.referralCode
+          ? { referredByCode: String(body.referralCode).trim().toUpperCase() }
+          : {}),
+      });
+    } catch (error: any) {
+      if (error?.message === "REFERRAL_CODE_INVALID")
+        throw new InputError(
+          "REFERRAL_CODE_INVALID",
+          "Mã giới thiệu không hợp lệ.",
+        );
+      throw error;
+    }
     return this.issueSession(response, request, user, 201);
   }
   private async login(

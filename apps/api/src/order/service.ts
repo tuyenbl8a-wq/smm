@@ -1,4 +1,5 @@
 import { calculateSaleRate } from "../catalog/pricing.js";
+import { PromotionService } from "../promotion/service.js";
 export class OrderError extends Error {
   constructor(
     readonly code: string,
@@ -13,12 +14,18 @@ const units = (v: unknown) => {
   if (!m) throw new OrderError("PRICE_INVALID", "Invalid price");
   return BigInt(m[1]!) * SCALE + BigInt((m[2] ?? "").padEnd(8, "0"));
 };
-const text = (v: bigint) =>
-  `${v / SCALE}.${String(v % SCALE).padStart(8, "0")}`;
+const text = (value: bigint) => {
+  const sign = value < 0n ? "-" : "",
+    absolute = value < 0n ? -value : value;
+  return `${sign}${absolute / SCALE}.${String(absolute % SCALE).padStart(8, "0")}`;
+};
 export const orderAmount = (rate: unknown, quantity: number) =>
   text((units(rate) * BigInt(quantity)) / 1000n);
 export class OrderService {
-  constructor(private readonly db: any) {}
+  private readonly promotions: PromotionService;
+  constructor(private readonly db: any) {
+    this.promotions = new PromotionService(db);
+  }
   async create(userId: string, input: any, key: string) {
     if (!/^[A-Za-z0-9:_-]{12,128}$/.test(key))
       throw new OrderError(
@@ -97,8 +104,18 @@ export class OrderService {
           fixedProfit: rule?.fixedProfit,
           minProfit: rule?.minProfit ?? mapping.minProfit,
         });
-        const charge = orderAmount(saleRate, quantity),
+        const originalCharge = orderAmount(saleRate, quantity),
           providerCost = orderAmount(ps.rate, quantity),
+          coupon = input.couponCode
+            ? await this.promotions.reserve(
+                tx,
+                userId,
+                input.couponCode,
+                originalCharge,
+              )
+            : null,
+          charge = coupon?.total ?? originalCharge,
+          discountAmount = coupon?.discount ?? "0.00000000",
           profit = text(units(charge) - units(providerCost));
         const order = await tx.order.create({
           data: {
@@ -110,6 +127,9 @@ export class OrderService {
             quantity,
             saleRate,
             charge,
+            originalCharge,
+            discountAmount,
+            couponCode: coupon?.coupon.code,
             providerRate: String(ps.rate),
             providerCost,
             profit,
@@ -120,6 +140,15 @@ export class OrderService {
             },
           },
         });
+        if (coupon)
+          await tx.couponUsage.create({
+            data: {
+              couponId: coupon.coupon.id,
+              userId,
+              referenceId: order.publicId,
+              discount: discountAmount,
+            },
+          });
         const rows = await tx.$queryRawUnsafe(
           `UPDATE "wallets" SET "balance"="balance"-$1::numeric,"version"="version"+1,"updated_at"=CURRENT_TIMESTAMP WHERE "user_id"=$2::uuid AND "balance">=$1::numeric RETURNING "id","balance"+$1::numeric AS "before","balance" AS "after"`,
           charge,
@@ -224,6 +253,9 @@ export class OrderService {
       link: x.link,
       quantity: x.quantity,
       charge: String(x.charge),
+      originalCharge: String(x.originalCharge ?? x.charge),
+      discountAmount: String(x.discountAmount ?? 0),
+      couponCode: x.couponCode,
       saleRate: String(x.saleRate),
       profit: String(x.profit),
       status: x.status,
