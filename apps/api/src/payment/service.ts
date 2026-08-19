@@ -27,7 +27,14 @@ export class PaymentError extends Error {
 export class DepositService {
   constructor(
     private db: any,
-    private bank = {
+    private bank:
+      | { bin: string; name: string; account: string; accountName: string }
+      | (() => Promise<{
+          bin: string;
+          name: string;
+          account: string;
+          accountName: string;
+        }>) = {
       bin: process.env.BANK_BIN ?? "",
       name: process.env.BANK_NAME ?? "",
       account: process.env.BANK_ACCOUNT_NUMBER ?? "",
@@ -67,30 +74,43 @@ export class DepositService {
     });
   }
   async detail(userId: string, id: string) {
-    const x = await this.db.deposit.findFirst({ where: { id, userId } });
+    let x = await this.db.deposit.findFirst({ where: { id, userId } });
     if (!x) throw new PaymentError("DEPOSIT_NOT_FOUND", "Deposit not found");
+    if (x.status === "PENDING" && x.expiresAt <= new Date()) {
+      await this.db.deposit.updateMany({
+        where: {
+          id,
+          userId,
+          status: "PENDING",
+          expiresAt: { lte: new Date() },
+        },
+        data: { status: "EXPIRED" },
+      });
+      x = await this.db.deposit.findFirst({ where: { id, userId } });
+    }
     const paymentMethod = await this.db.paymentMethod.findUnique({
       where: { id: x.paymentMethodId },
       select: { code: true, name: true, providerType: true },
     });
     const isBank = ["VIETQR", "CASSO", "BANK"].includes(
-      String(paymentMethod?.providerType).toUpperCase(),
-    );
+        String(paymentMethod?.providerType).toUpperCase(),
+      ),
+      bank = typeof this.bank === "function" ? await this.bank() : this.bank;
     return {
       ...x,
       paymentMethod,
       payment: isBank
         ? {
-            available: Boolean(this.bank.bin && this.bank.account),
-            bankName: this.bank.name,
-            accountNumber: this.bank.account,
-            accountName: this.bank.accountName,
+            available: Boolean(bank.bin && bank.account),
+            bankName: bank.name,
+            accountNumber: bank.account,
+            accountName: bank.accountName,
             transferContent: x.code,
             qrUrl:
-              this.bank.bin && this.bank.account
+              bank.bin && bank.account
                 ? vietQrUrl(
-                    this.bank.bin,
-                    this.bank.account,
+                    bank.bin,
+                    bank.account,
                     String(x.grossAmount),
                     x.code,
                   )

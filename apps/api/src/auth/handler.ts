@@ -13,6 +13,7 @@ import { OrderLifecycleService } from "../order/lifecycle.js";
 import { ResellerService } from "../reseller/service.js";
 import { DepositService } from "../payment/service.js";
 import { SupportService } from "../support/service.js";
+import { AdminOperationsService } from "../admin/operations.js";
 import { PaymentSettingsService } from "../payment/settings.js";
 import {
   csrfValue,
@@ -44,6 +45,7 @@ export class AuthHandler {
     private readonly reseller?: ResellerService,
     private readonly deposits?: DepositService,
     private readonly support?: SupportService,
+    private readonly admin?: AdminOperationsService,
     private readonly paymentSettings?: PaymentSettingsService,
   ) {}
   async handle(
@@ -170,6 +172,123 @@ export class AuthHandler {
           response,
           await this.support!.notifications(auth.user.id),
         );
+      if (request.method === "GET" && path === "/api/v1/admin/users") {
+        if (!canAccessAdmin(auth.access, "users.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.users(Object.fromEntries(url.searchParams)),
+        );
+      }
+      const adminUser = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "GET" && adminUser) {
+        if (!canAccessAdmin(auth.access, "users.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.admin!.user(adminUser[1]!));
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/orders") {
+        if (!canAccessAdmin(auth.access, "orders.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.orders(Object.fromEntries(url.searchParams)),
+        );
+      }
+      const adminOrder = /^\/api\/v1\/admin\/orders\/([0-9a-f-]{36})$/.exec(
+        path,
+      );
+      if (request.method === "GET" && adminOrder) {
+        if (!canAccessAdmin(auth.access, "orders.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.admin!.order(adminOrder[1]!));
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/reports") {
+        if (!canAccessAdmin(auth.access, "reports.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.reports(
+            url.searchParams.get("from")
+              ? new Date(url.searchParams.get("from")!)
+              : undefined,
+            url.searchParams.get("to")
+              ? new Date(url.searchParams.get("to")!)
+              : undefined,
+          ),
+        );
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/logs") {
+        if (
+          !canAccessAdmin(auth.access, "logs.read") &&
+          !canAccessAdmin(auth.access, "audit.read")
+        )
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.logs(
+            url.searchParams.get("kind") ?? "audit",
+            Number(url.searchParams.get("page") ?? 1),
+            Number(url.searchParams.get("limit") ?? 50),
+          ),
+        );
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/settings") {
+        if (!canAccessAdmin(auth.access, "settings.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.admin!.settings());
+      }
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/admin/payment-settings"
+      ) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.paymentSettings!.adminView());
+      }
       if (request.method === "GET" && path === "/api/v1/admin/tickets") {
         if (!canAccessAdmin(auth.access, "tickets.manage"))
           return this.error(
@@ -184,26 +303,6 @@ export class AuthHandler {
           await this.support!.adminInbox(Object.fromEntries(u.searchParams)),
         );
       }
-
-      if (
-        request.method === "GET" &&
-        path === "/api/v1/admin/payment-settings"
-      ) {
-        if (!canAccessAdmin(auth.access, "settings.manage"))
-          return this.error(
-            response,
-            403,
-            "PERMISSION_DENIED",
-            "Permission denied",
-          );
-        if (!this.paymentSettings)
-          throw new Error("Payment settings service unavailable");
-        return this.ok(
-          response,
-          await this.paymentSettings.getAdminSettings(),
-        );
-      }
-
       if (request.method === "GET" && path === "/api/v1/admin/deposits") {
         if (!canAccessAdmin(auth.access, "payments.manage"))
           return this.error(
@@ -213,14 +312,11 @@ export class AuthHandler {
             "Permission denied",
           );
         const u = new URL(request.url ?? path, this.config.apiUrl);
-        const depositStatus = u.searchParams.get("status");
         return this.ok(
           response,
           await this.deposits!.adminHistory({
-            ...(depositStatus &&
-            depositStatus !== "undefined" &&
-            depositStatus !== "null"
-              ? { status: depositStatus }
+            ...(u.searchParams.get("status")
+              ? { status: u.searchParams.get("status")! }
               : {}),
             take: Number(u.searchParams.get("limit") ?? "50"),
           }),
@@ -266,6 +362,21 @@ export class AuthHandler {
         if (!this.providers) throw new Error("Provider service unavailable");
         return this.ok(response, await this.providers.list());
       }
+      const providerDetail =
+        /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "GET" && providerDetail) {
+        if (!canAccessAdmin(auth.access, "providers.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.providers!.detail(providerDetail[1]!),
+        );
+      }
       const adminWallet =
         /^\/api\/v1\/admin\/wallets\/([0-9a-f-]{36})(?:\/transactions|\/mutations)?$/.exec(
           path,
@@ -307,28 +418,6 @@ export class AuthHandler {
             "Invalid CSRF token",
           );
       }
-
-      if (
-        request.method === "POST" &&
-        path === "/api/v1/admin/payment-settings"
-      ) {
-        if (!canAccessAdmin(auth.access, "settings.manage"))
-          return this.error(
-            response,
-            403,
-            "PERMISSION_DENIED",
-            "Permission denied",
-          );
-        if (!this.paymentSettings)
-          throw new Error("Payment settings service unavailable");
-        return this.ok(
-          response,
-          await this.paymentSettings.updateAdminSettings(
-            await this.body(request),
-          ),
-        );
-      }
-
       if (request.method === "POST" && path === "/api/v1/customer/orders") {
         this.checkBurst(request, "customer-order-create");
         if (!this.orders) throw new Error("Order service unavailable");
@@ -341,6 +430,101 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.orders.create(auth.user.id, await this.body(request), key),
+        );
+      }
+      const userUpdate = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(
+          path,
+        ),
+        userRoles = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/roles$/.exec(
+          path,
+        ),
+        userSessions =
+          /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/revoke-sessions$/.exec(
+            path,
+          );
+      if (request.method === "POST" && userUpdate) {
+        if (
+          !canAccessAdmin(auth.access, "users.update") &&
+          !canAccessAdmin(auth.access, "users.ban")
+        )
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.admin!.updateUser(
+            auth.user.id,
+            userUpdate[1]!,
+            await this.body(request),
+          ),
+        );
+      }
+      if (request.method === "POST" && userRoles) {
+        if (!canAccessAdmin(auth.access, "users.update"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const body = await this.body(request);
+        const roles = Array.isArray(body.roles)
+          ? body.roles.map((role) => String(role))
+          : [];
+        return this.ok(
+          response,
+          await this.admin!.roles(auth.user.id, userRoles[1]!, roles),
+        );
+      }
+      if (request.method === "POST" && userSessions) {
+        if (!canAccessAdmin(auth.access, "users.update"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.admin!.revokeSessions(auth.user.id, userSessions[1]!),
+        );
+      }
+      if (request.method === "POST" && path === "/api/v1/admin/settings") {
+        if (!canAccessAdmin(auth.access, "settings.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.admin!.updateSettings(
+            auth.user.id,
+            await this.body(request),
+          ),
+        );
+      }
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/admin/payment-settings"
+      ) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.paymentSettings!.update(
+            auth.user.id,
+            await this.body(request),
+          ),
         );
       }
       if (request.method === "POST" && path === "/api/v1/customer/api-keys")
@@ -443,6 +627,11 @@ export class AuthHandler {
             response,
             await this.catalog.upsertPriceRule(auth.user.id, body),
           );
+        if (path === "/api/v1/admin/catalog/mappings")
+          return this.ok(
+            response,
+            await this.catalog.upsertMapping(auth.user.id, body),
+          );
         const category =
           /^\/api\/v1\/admin\/catalog\/categories\/([0-9a-f-]{36})\/update$/.exec(
             path,
@@ -460,6 +649,19 @@ export class AuthHandler {
           return this.ok(
             response,
             await this.catalog.updateService(auth.user.id, service[1]!, body),
+          );
+        const priceGroup =
+          /^\/api\/v1\/admin\/catalog\/price-groups\/([0-9a-f-]{36})\/update$/.exec(
+            path,
+          );
+        if (priceGroup)
+          return this.ok(
+            response,
+            await this.catalog.updatePriceGroup(
+              auth.user.id,
+              priceGroup[1]!,
+              body,
+            ),
           );
       }
       if (
@@ -479,6 +681,18 @@ export class AuthHandler {
           return this.ok(
             response,
             await this.providers.create(auth.user.id, await this.body(request)),
+          );
+        const update = /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})$/.exec(
+          path,
+        );
+        if (update)
+          return this.ok(
+            response,
+            await this.providers.update(
+              auth.user.id,
+              update[1]!,
+              await this.body(request),
+            ),
           );
         const action =
           /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})\/(test|sync)$/.exec(
@@ -548,6 +762,10 @@ export class AuthHandler {
           auth.user,
           auth.session.id,
         );
+      if (request.method === "POST" && path === "/api/v1/auth/logout-others") {
+        await this.store.revokeOtherSessions(auth.user.id, auth.session.id);
+        return this.ok(response, { revoked: true });
+      }
       if (
         request.method === "POST" &&
         path.startsWith("/api/v1/auth/sessions/") &&

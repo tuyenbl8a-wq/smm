@@ -18,20 +18,25 @@ import {
   BinanceWebhookProcessor,
 } from "./payment/binance.js";
 import { CassoWebhook } from "./payment/casso.js";
+import { AdminOperationsService } from "./admin/operations.js";
 import { PaymentSettingsService } from "./payment/settings.js";
-
 const config = loadConfig(process.env, 4000);
-
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
 ) => Promise<any>;
-
 const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
-
 const orderService = new OrderService(prisma);
-const resellerService = new ResellerService(prisma, orderService);
-
+const lifecycleService = new OrderLifecycleService(prisma);
+const resellerService = new ResellerService(
+  prisma,
+  orderService,
+  lifecycleService,
+);
+const paymentSettings = new PaymentSettingsService(
+  prisma,
+  config.encryptionKey,
+);
 const server = createApiServer(
   config,
   new AuthHandler(
@@ -41,11 +46,12 @@ const server = createApiServer(
     new CatalogService(prisma),
     new ProviderService(prisma, config.encryptionKey),
     orderService,
-    new OrderLifecycleService(prisma),
+    lifecycleService,
     resellerService,
-    new DepositService(prisma),
+    new DepositService(prisma, () => paymentSettings.publicBank()),
     new SupportService(prisma),
-    new PaymentSettingsService(prisma, config.encryptionKey),
+    new AdminOperationsService(prisma),
+    paymentSettings,
   ),
   resellerService,
   new VietQrWebhook(prisma, process.env.VIETQR_WEBHOOK_SECRET ?? ""),
@@ -59,13 +65,10 @@ const server = createApiServer(
     ),
   ),
   new DistributedRateLimiter(new RedisCounterClient(new URL(config.redisUrl))),
- new CassoWebhook(
-  prisma,
-  process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? "",
-  config.encryptionKey,
-),
+  new CassoWebhook(prisma, process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? "", () =>
+    paymentSettings.webhookToken(process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? ""),
+  ),
 );
-
 server.listen(config.port, config.host, () => {
   console.log(
     JSON.stringify({
@@ -76,7 +79,6 @@ server.listen(config.port, config.host, () => {
     }),
   );
 });
-
 function shutdown(): void {
   server.close((error) => {
     if (error) {
@@ -86,6 +88,5 @@ function shutdown(): void {
     void prisma.$disconnect();
   });
 }
-
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
