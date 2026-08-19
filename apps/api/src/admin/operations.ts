@@ -1,5 +1,25 @@
 const clamp = (value: unknown, fallback = 20) =>
   Math.min(100, Math.max(1, Number(value) || fallback));
+const optional = (value: unknown) => {
+  const text = String(value ?? "").trim();
+  return text && text !== "undefined" && text !== "null" ? text : undefined;
+};
+const enumFilter = (
+  value: unknown,
+  allowed: readonly string[],
+  code: string,
+) => {
+  const text = optional(value);
+  if (text && !allowed.includes(text))
+    throw new AdminOperationError(code, "Invalid filter value");
+  return text;
+};
+const uuidFilter = (value: unknown, code: string) => {
+  const text = optional(value);
+  if (text && !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(text))
+    throw new AdminOperationError(code, "Invalid identifier filter");
+  return text;
+};
 
 export class AdminOperationError extends Error {
   constructor(
@@ -16,9 +36,14 @@ export class AdminOperationsService {
   async users(query: any) {
     const page = Math.max(1, Number(query.page) || 1),
       limit = clamp(query.limit),
-      search = String(query.search ?? "").trim(),
+      search = optional(query.search) ?? "",
+      status = enumFilter(
+        query.status,
+        ["PENDING", "ACTIVE", "BANNED", "DELETED"],
+        "USER_STATUS_INVALID",
+      ),
       where: any = {
-        ...(query.status ? { status: String(query.status) } : {}),
+        ...(status ? { status } : {}),
         ...(search
           ? {
               OR: [
@@ -29,9 +54,10 @@ export class AdminOperationsService {
             }
           : {}),
       };
-    if (query.role) {
+    const roleCode = optional(query.role);
+    if (roleCode) {
       const role = await this.db.role.findUnique({
-        where: { code: String(query.role) },
+        where: { code: roleCode },
       });
       const links = role
         ? await this.db.userRole.findMany({ where: { roleId: role.id } })
@@ -206,16 +232,34 @@ export class AdminOperationsService {
   async orders(query: any) {
     const page = Math.max(1, Number(query.page) || 1),
       limit = clamp(query.limit),
+      status = enumFilter(
+        query.status,
+        [
+          "PENDING",
+          "PROCESSING",
+          "IN_PROGRESS",
+          "COMPLETED",
+          "PARTIAL",
+          "CANCELED",
+          "REFUNDED",
+          "FAILED",
+        ],
+        "ORDER_STATUS_INVALID",
+      ),
+      provider = uuidFilter(query.provider, "PROVIDER_FILTER_INVALID"),
+      user = uuidFilter(query.user, "USER_FILTER_INVALID"),
+      service = uuidFilter(query.service, "SERVICE_FILTER_INVALID"),
+      search = optional(query.search),
       where: any = {
-        ...(query.status ? { status: String(query.status) } : {}),
-        ...(query.provider ? { providerId: String(query.provider) } : {}),
-        ...(query.user ? { userId: String(query.user) } : {}),
-        ...(query.service ? { serviceId: String(query.service) } : {}),
-        ...(query.search
+        ...(status ? { status } : {}),
+        ...(provider ? { providerId: provider } : {}),
+        ...(user ? { userId: user } : {}),
+        ...(service ? { serviceId: service } : {}),
+        ...(search
           ? {
               OR: [
-                { publicId: { equals: String(query.search) } },
-                { link: { contains: String(query.search) } },
+                { publicId: { equals: search } },
+                { link: { contains: search } },
               ],
             }
           : {}),

@@ -18,12 +18,23 @@ const message = (v: unknown) => {
 export class SupportService {
   constructor(private db: any) {}
   async adminInbox(query: any) {
+    const rawStatus = String(query.status ?? "").trim(),
+      status = ["", "undefined", "null"].includes(rawStatus)
+        ? undefined
+        : rawStatus;
+    if (
+      status &&
+      !["OPEN", "ANSWERED", "CUSTOMER_REPLY", "CLOSED"].includes(status)
+    )
+      throw new SupportError("STATUS_INVALID", "Invalid ticket status filter");
+    const rawSearch = String(query.search ?? "").trim(),
+      search = ["undefined", "null"].includes(rawSearch) ? "" : rawSearch;
     const where = {
-      ...(query.status ? { status: query.status } : {}),
-      ...(query.search
+      ...(status ? { status } : {}),
+      ...(search
         ? {
             subject: {
-              contains: String(query.search).slice(0, 100),
+              contains: search.slice(0, 100),
               mode: "insensitive",
             },
           }

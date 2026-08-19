@@ -19,10 +19,12 @@ import {
   accountPage,
   adminPaymentsPage,
   adminProviderDetailPage,
+  resetPasswordPage,
 } from "./page.js";
 const config = loadConfig(process.env, 3000);
 const server = createServer((request, response) => {
   const path = new URL(request.url ?? "/", config.appUrl).pathname;
+  const requestUrl = new URL(request.url ?? "/", config.appUrl);
   if (request.method === "GET" && path === "/health") {
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.end(
@@ -74,6 +76,7 @@ const server = createServer((request, response) => {
       "/login",
       "/register",
       "/forgot-password",
+      "/reset-password",
       "/wallet",
       "/admin/wallet",
       "/services",
@@ -108,53 +111,58 @@ const server = createServer((request, response) => {
           ? authPage("register", config.apiUrl.origin)
           : path === "/forgot-password"
             ? authPage("forgot", config.apiUrl.origin)
-            : path === "/wallet"
-              ? walletPage(config.apiUrl.origin)
-              : path === "/account"
-                ? accountPage(config.apiUrl.origin)
-                : path === "/services"
-                  ? servicesPage(config.apiUrl.origin)
-                  : path === "/orders"
-                    ? ordersPage(config.apiUrl.origin)
-                    : path === "/admin/catalog"
-                      ? adminCatalogPage(config.apiUrl.origin)
-                      : path === "/admin/providers"
-                        ? adminProvidersPage(config.apiUrl.origin)
-                        : path === "/admin/support"
-                          ? adminSupportPage(config.apiUrl.origin)
-                          : path === "/admin/payments"
-                            ? adminPaymentsPage(config.apiUrl.origin)
-                            : path === "/admin/deposits"
-                              ? adminDepositsPage(config.apiUrl.origin)
-                              : [
-                                    "/admin/users",
-                                    "/admin/orders",
-                                    "/admin/reports",
-                                    "/admin/logs",
-                                    "/admin/settings",
-                                  ].includes(path)
-                                ? adminModulePage(
-                                    config.apiUrl.origin,
-                                    path.split("/").at(-1) as any,
-                                  )
+            : path === "/reset-password"
+              ? resetPasswordPage(
+                  config.apiUrl.origin,
+                  requestUrl.searchParams.get("token") ?? "",
+                )
+              : path === "/wallet"
+                ? walletPage(config.apiUrl.origin)
+                : path === "/account"
+                  ? accountPage(config.apiUrl.origin)
+                  : path === "/services"
+                    ? servicesPage(config.apiUrl.origin)
+                    : path === "/orders"
+                      ? ordersPage(config.apiUrl.origin)
+                      : path === "/admin/catalog"
+                        ? adminCatalogPage(config.apiUrl.origin)
+                        : path === "/admin/providers"
+                          ? adminProvidersPage(config.apiUrl.origin)
+                          : path === "/admin/support"
+                            ? adminSupportPage(config.apiUrl.origin)
+                            : path === "/admin/payments"
+                              ? adminPaymentsPage(config.apiUrl.origin)
+                              : path === "/admin/deposits"
+                                ? adminDepositsPage(config.apiUrl.origin)
                                 : [
-                                      "/api-docs",
-                                      "/deposit",
-                                      "/support",
-                                      "/notifications",
+                                      "/admin/users",
+                                      "/admin/orders",
+                                      "/admin/reports",
+                                      "/admin/logs",
+                                      "/admin/settings",
                                     ].includes(path)
-                                  ? featurePage(
-                                      path === "/api-docs"
-                                        ? "api"
-                                        : (path.slice(1) as any),
+                                  ? adminModulePage(
                                       config.apiUrl.origin,
+                                      path.split("/").at(-1) as any,
                                     )
-                                  : path === "/admin/wallet"
-                                    ? adminWalletPage(config.apiUrl.origin)
-                                    : panelPage(
-                                        path === "/admin",
+                                  : [
+                                        "/api-docs",
+                                        "/deposit",
+                                        "/support",
+                                        "/notifications",
+                                      ].includes(path)
+                                    ? featurePage(
+                                        path === "/api-docs"
+                                          ? "api"
+                                          : (path.slice(1) as any),
                                         config.apiUrl.origin,
-                                      );
+                                      )
+                                    : path === "/admin/wallet"
+                                      ? adminWalletPage(config.apiUrl.origin)
+                                      : panelPage(
+                                          path === "/admin",
+                                          config.apiUrl.origin,
+                                        );
     response.end(page);
     return;
   }
