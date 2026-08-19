@@ -326,31 +326,55 @@ export class AdminOperationsService {
       },
       orderWhere = from || to ? { createdAt } : {},
       depositWhere = { ...(from || to ? { createdAt } : {}), status: "PAID" };
-    const [orders, money, deposits, failed, manual, services] =
-      await Promise.all([
-        this.db.order.count({ where: orderWhere }),
-        this.db.order.aggregate({
-          where: orderWhere,
-          _sum: { charge: true, providerCost: true, profit: true },
-        }),
-        this.db.deposit.aggregate({
-          where: depositWhere,
-          _sum: { netAmount: true },
-          _count: true,
-        }),
-        this.db.order.count({ where: { ...orderWhere, status: "FAILED" } }),
-        this.db.deposit.count({ where: { status: "MANUAL_REVIEW" } }),
-        this.db.order.groupBy({
-          by: ["serviceId"],
-          where: orderWhere,
-          _count: true,
-          _sum: { charge: true },
-          orderBy: { _count: { serviceId: "desc" } },
-          take: 10,
-        }),
-      ]);
+    const [
+      orders,
+      money,
+      deposits,
+      failed,
+      partial,
+      refunded,
+      users,
+      manual,
+      services,
+      providers,
+    ] = await Promise.all([
+      this.db.order.count({ where: orderWhere }),
+      this.db.order.aggregate({
+        where: orderWhere,
+        _sum: { charge: true, providerCost: true, profit: true },
+      }),
+      this.db.deposit.aggregate({
+        where: depositWhere,
+        _sum: { netAmount: true },
+        _count: true,
+      }),
+      this.db.order.count({ where: { ...orderWhere, status: "FAILED" } }),
+      this.db.order.count({ where: { ...orderWhere, status: "PARTIAL" } }),
+      this.db.order.count({ where: { ...orderWhere, status: "REFUNDED" } }),
+      this.db.user.count({
+        where: from || to ? { createdAt } : undefined,
+      }),
+      this.db.deposit.count({ where: { status: "MANUAL_REVIEW" } }),
+      this.db.order.groupBy({
+        by: ["serviceId"],
+        where: orderWhere,
+        _count: true,
+        _sum: { charge: true },
+        orderBy: { _count: { serviceId: "desc" } },
+        take: 10,
+      }),
+      this.db.order.groupBy({
+        by: ["providerId"],
+        where: { ...orderWhere, providerId: { not: null } },
+        _count: true,
+        _sum: { providerCost: true, profit: true },
+        orderBy: { _count: { providerId: "desc" } },
+        take: 10,
+      }),
+    ]);
     return {
-      orders: { total: orders, failed },
+      orders: { total: orders, failed, partial, refunded },
+      users,
       money: {
         revenue: String(money._sum.charge ?? 0),
         providerCost: String(money._sum.providerCost ?? 0),
@@ -359,10 +383,38 @@ export class AdminOperationsService {
       },
       deposits: { paid: deposits._count, manualReview: manual },
       topServices: services.map((x: any) => ({
-        ...x,
+        serviceId: x.serviceId,
+        orders: Number(x._count?.serviceId ?? x._count ?? 0),
         charge: String(x._sum.charge ?? 0),
       })),
+      providerPerformance: providers.map((x: any) => ({
+        providerId: x.providerId,
+        orders: Number(x._count?.providerId ?? x._count ?? 0),
+        cost: String(x._sum.providerCost ?? 0),
+        profit: String(x._sum.profit ?? 0),
+      })),
     };
+  }
+
+  async reportsCsv(from?: Date, to?: Date) {
+    const report = await this.reports(from, to),
+      safe = (value: unknown) => {
+        const text = String(value ?? "").replaceAll('"', '""');
+        return `"${/^[=+\-@]/.test(text) ? `'${text}` : text}"`;
+      },
+      rows = [
+        ["Chỉ số", "Giá trị"],
+        ["Tổng đơn", report.orders.total],
+        ["Đơn thất bại", report.orders.failed],
+        ["Đơn một phần", report.orders.partial],
+        ["Đơn hoàn tiền", report.orders.refunded],
+        ["Người dùng mới", report.users],
+        ["Doanh thu", report.money.revenue],
+        ["Chi phí nhà cung cấp", report.money.providerCost],
+        ["Lợi nhuận", report.money.profit],
+        ["Tiền nạp", report.money.deposits],
+      ];
+    return rows.map((row) => row.map(safe).join(",")).join("\r\n");
   }
 
   async logs(kind: string, page = 1, limit = 50) {

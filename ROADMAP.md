@@ -26,11 +26,11 @@ migration validation, and build checks applicable to the code introduced by it.
 | 17    | Official Binance merchant adapter, webhook, and reconciliation                       | 🚧     |
 | 18    | Tickets, secure attachments, notification center, queued email                       | 🚧     |
 | 19    | Coupon rules and abuse-resistant affiliate/referral ledger                           | ⬜     |
-| 20    | Snapshot-based reports, charts, filters, and safe CSV export                         | ⬜     |
-| 21    | Security hardening, audit/search/logging, maintenance and system status              | ⬜     |
-| 22    | Critical integration, authorization, idempotency, and concurrency tests              | ⬜     |
-| 23    | Production images, Compose, reverse proxy, backup and deployment runbooks            | ⬜     |
-| 24    | Final functional/security/infrastructure audit and `FINAL_AUDIT.md`                  | ⬜     |
+| 20    | Snapshot-based reports, charts, filters, and safe CSV export                         | 🚧     |
+| 21    | Security hardening, audit/search/logging, maintenance and system status              | 🚧     |
+| 22    | Critical integration, authorization, idempotency, and concurrency tests              | 🚧     |
+| 23    | Production images, Compose, reverse proxy, backup and deployment runbooks            | 🚧     |
+| 24    | Final functional/security/infrastructure audit and `FINAL_AUDIT.md`                  | 🚧     |
 
 ## Phase 1 evidence
 
@@ -41,7 +41,19 @@ migration validation, and build checks applicable to the code introduced by it.
 - Architecture: PostgreSQL-backed modular monolith with independently deployable
   Next.js web, NestJS API, and BullMQ worker processes.
 
-## Next phase acceptance criteria
+## Current completion evidence and gaps
 
-Phase 9 must implement encrypted provider configuration and the provider adapter
-contract without coupling provider-specific behavior to catalog or order services.
+- Phase 17 verifies official Binance webhook signatures, exact amount/currency and
+  exact-once settlement. Scheduled Binance reconciliation still requires live
+  merchant API credentials and a production adapter contract.
+- Phase 18 provides customer/admin ticket conversations, private internal notes,
+  notification unread/read-all operations and bounded email jobs. Durable private
+  attachment delivery and a live SMTP transport remain incomplete.
+- Phase 19 has database entities only; coupon redemption and affiliate commission
+  settlement are intentionally not presented as complete without atomic services.
+- Phase 20 now has database-backed range reports and formula-safe CSV export;
+  persisted report snapshots and time-series charts remain incomplete.
+- Phases 21–23 have substantial security, regression-test, Docker and runbook
+  foundations. Maintenance-mode orchestration, live dependency E2E and a supplied
+  reverse-proxy deployment still require operator acceptance.
+- Phase 24 evidence and limitations are recorded in `docs/FINAL_AUDIT.md`.

@@ -37,14 +37,50 @@ export class ProviderError extends Error {
     super(message);
   }
 }
-const decimal = (value: unknown) => {
-  const text = String(value);
-  if (!/^\d{1,12}(?:\.\d{1,8})?$/.test(text))
+export const normalizeProviderDecimal = (value: unknown) => {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "number" && !Number.isFinite(value))
+  )
     throw new ProviderError(
       "PROVIDER_RESPONSE_INVALID",
       "Invalid provider decimal",
     );
-  return text;
+  const input = String(value).trim();
+  if (!input || input.startsWith("-"))
+    throw new ProviderError(
+      "PROVIDER_RESPONSE_INVALID",
+      "Invalid provider decimal",
+    );
+  const match = /^(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(input);
+  if (!match)
+    throw new ProviderError(
+      "PROVIDER_RESPONSE_INVALID",
+      "Invalid provider decimal",
+    );
+  const coefficient = `${match[1]}${match[2] ?? ""}`,
+    decimalAt = match[1]!.length + Number(match[3] ?? 0);
+  if (!Number.isSafeInteger(decimalAt) || Math.abs(decimalAt) > 100)
+    throw new ProviderError(
+      "PROVIDER_RESPONSE_INVALID",
+      "Provider decimal overflow",
+    );
+  const expanded =
+      decimalAt <= 0
+        ? `0.${"0".repeat(-decimalAt)}${coefficient}`
+        : decimalAt >= coefficient.length
+          ? `${coefficient}${"0".repeat(decimalAt - coefficient.length)}`
+          : `${coefficient.slice(0, decimalAt)}.${coefficient.slice(decimalAt)}`,
+    [wholeRaw, fractionRaw = ""] = expanded.split("."),
+    whole = (wholeRaw ?? "0").replace(/^0+(?=\d)/, ""),
+    fraction = fractionRaw.replace(/0+$/, "");
+  if (whole.length > 12 || fraction.length > 8)
+    throw new ProviderError(
+      "PROVIDER_RESPONSE_INVALID",
+      "Provider decimal precision exceeds limits",
+    );
+  return fraction ? `${whole}.${fraction}` : whole;
 };
 export class StandardSmmAdapter implements ProviderAdapter {
   constructor(
@@ -103,7 +139,7 @@ export class StandardSmmAdapter implements ProviderAdapter {
       name: String(x.name),
       category: String(x.category),
       type: String(x.type ?? "Default"),
-      rate: decimal(x.rate),
+      rate: normalizeProviderDecimal(x.rate),
       min: Number(x.min),
       max: Number(x.max),
       refill: Boolean(x.refill),
@@ -137,6 +173,9 @@ export class StandardSmmAdapter implements ProviderAdapter {
   cancelOrder = (id: string) => this.call("cancel", { order: id });
   async getBalance() {
     const x = await this.call("balance");
-    return { balance: decimal(x.balance), currency: String(x.currency) };
+    return {
+      balance: normalizeProviderDecimal(x.balance),
+      currency: String(x.currency),
+    };
   }
 }

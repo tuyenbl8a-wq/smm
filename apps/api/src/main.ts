@@ -61,7 +61,7 @@ const server = createApiServer(
       "https://bpay.binanceapi.com",
       process.env.BINANCE_MERCHANT_API_KEY ?? "",
       process.env.BINANCE_MERCHANT_SECRET ?? "",
-      process.env.BINANCE_WEBHOOK_SECRET ?? "disabled",
+      process.env.BINANCE_WEBHOOK_SECRET ?? "",
     ),
   ),
   new DistributedRateLimiter(new RedisCounterClient(new URL(config.redisUrl))),

@@ -27,3 +27,23 @@ test("attachments enforce MIME and size", () => {
     true,
   );
 });
+
+test("notification unread operations stay scoped to the customer", async () => {
+  const calls: any[] = [];
+  const service = new SupportService({
+    notification: {
+      count: async (input: any) => {
+        calls.push(input);
+        return 2;
+      },
+      updateMany: async (input: any) => {
+        calls.push(input);
+        return { count: 2 };
+      },
+    },
+  });
+  assert.deepEqual(await service.unreadCount("customer"), { unread: 2 });
+  assert.deepEqual(await service.markAllRead("customer"), { read: 2 });
+  assert.deepEqual(calls[0].where, { userId: "customer", readAt: null });
+  assert.deepEqual(calls[1].where, { userId: "customer", readAt: null });
+});

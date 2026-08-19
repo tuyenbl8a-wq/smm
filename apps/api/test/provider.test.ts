@@ -1,7 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decryptSecret, encryptSecret } from "../src/provider/crypto.js";
-import { ProviderError, StandardSmmAdapter } from "../src/provider/adapter.js";
+import {
+  normalizeProviderDecimal,
+  ProviderError,
+  StandardSmmAdapter,
+} from "../src/provider/adapter.js";
+test("provider decimals normalize exact standard and scientific values", () => {
+  assert.equal(normalizeProviderDecimal(12), "12");
+  assert.equal(normalizeProviderDecimal(12.5), "12.5");
+  assert.equal(normalizeProviderDecimal("0012.50000000"), "12.5");
+  assert.equal(normalizeProviderDecimal("1.25e3"), "1250");
+  assert.equal(normalizeProviderDecimal("1e-8"), "0.00000001");
+  for (const invalid of [
+    null,
+    undefined,
+    "",
+    "NaN",
+    Infinity,
+    -1,
+    "1.000000001",
+    "1000000000000",
+    "1e999",
+  ])
+    assert.throws(
+      () => normalizeProviderDecimal(invalid),
+      /provider decimal|precision|overflow/i,
+    );
+});
 test("provider credentials encrypt with authenticated randomized ciphertext", () => {
   const key = "01234567890123456789012345678901",
     a = encryptSecret("secret-api-key", key),

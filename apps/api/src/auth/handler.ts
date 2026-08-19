@@ -176,6 +176,11 @@ export class AuthHandler {
           response,
           await this.support!.notifications(auth.user.id),
         );
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/customer/notifications/unread-count"
+      )
+        return this.ok(response, await this.support!.unreadCount(auth.user.id));
       if (request.method === "GET" && path === "/api/v1/admin/users") {
         if (!canAccessAdmin(auth.access, "users.read"))
           return this.error(
@@ -248,6 +253,32 @@ export class AuthHandler {
               : undefined,
           ),
         );
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/reports.csv") {
+        if (!canAccessAdmin(auth.access, "reports.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl),
+          from = url.searchParams.get("from"),
+          to = url.searchParams.get("to");
+        response.statusCode = 200;
+        response.setHeader("content-type", "text/csv; charset=utf-8");
+        response.setHeader(
+          "content-disposition",
+          'attachment; filename="bao-cao-smm.csv"',
+        );
+        response.setHeader("cache-control", "no-store");
+        response.end(
+          await this.admin!.reportsCsv(
+            from ? new Date(from) : undefined,
+            to ? new Date(to) : undefined,
+          ),
+        );
+        return true;
       }
       if (request.method === "GET" && path === "/api/v1/admin/logs") {
         if (
@@ -566,6 +597,11 @@ export class AuthHandler {
         /^\/api\/v1\/customer\/notifications\/([0-9a-f-]{36})\/read$/.exec(
           path,
         );
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/customer/notifications/read-all"
+      )
+        return this.ok(response, await this.support!.markAllRead(auth.user.id));
       if (request.method === "POST" && notificationRead)
         return this.ok(
           response,
