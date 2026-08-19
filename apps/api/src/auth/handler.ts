@@ -11,10 +11,14 @@ import {
 import { OrderError, type OrderService } from "../order/service.js";
 import { OrderLifecycleService } from "../order/lifecycle.js";
 import { ResellerService } from "../reseller/service.js";
-import { DepositService } from "../payment/service.js";
-import { SupportService } from "../support/service.js";
-import { AdminOperationsService } from "../admin/operations.js";
+import { DepositService, PaymentError } from "../payment/service.js";
+import { SupportError, SupportService } from "../support/service.js";
+import {
+  AdminOperationError,
+  AdminOperationsService,
+} from "../admin/operations.js";
 import { PaymentSettingsService } from "../payment/settings.js";
+import { stringifyJson } from "../http/json.js";
 import {
   csrfValue,
   hashPassword,
@@ -834,6 +838,12 @@ export class AuthHandler {
               : 422;
         return this.error(response, status, error.code, error.message);
       }
+      if (
+        error instanceof AdminOperationError ||
+        error instanceof SupportError ||
+        error instanceof PaymentError
+      )
+        return this.error(response, 422, error.code, error.message);
       if (error instanceof InputError)
         return this.error(
           response,
@@ -1167,7 +1177,7 @@ export class AuthHandler {
     response.statusCode = status;
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.setHeader("cache-control", "no-store");
-    response.end(JSON.stringify({ success: true, data }));
+    response.end(stringifyJson({ success: true, data }));
     return true;
   }
   private error(
@@ -1179,7 +1189,7 @@ export class AuthHandler {
     response.statusCode = status;
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.setHeader("cache-control", "no-store");
-    response.end(JSON.stringify({ success: false, error: { code, message } }));
+    response.end(stringifyJson({ success: false, error: { code, message } }));
     return true;
   }
 }

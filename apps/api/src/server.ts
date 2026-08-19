@@ -8,6 +8,18 @@ import type { VietQrWebhook } from "./payment/vietqr.js";
 import type { BinanceWebhookProcessor } from "./payment/binance.js";
 import type { DistributedRateLimiter } from "./reseller/rate-limit.js";
 import type { CassoWebhook } from "./payment/casso.js";
+import { sendJson, stringifyJson } from "./http/json.js";
+
+async function readBody(request: any, limit = 1_048_576): Promise<string> {
+  const chunks: any[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > limit) throw new Error("PAYLOAD_TOO_LARGE");
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 function json(
   response: ServerResponse,
@@ -16,11 +28,7 @@ function json(
     | HealthCheck
     | { success: false; error: { code: string; message: string } },
 ): void {
-  response.statusCode = status;
-  response.setHeader("content-type", "application/json; charset=utf-8");
-  response.setHeader("cache-control", "no-store");
-  response.setHeader("x-content-type-options", "nosniff");
-  response.end(JSON.stringify(payload));
+  sendJson(response, status, payload);
 }
 export function createApiServer(
   config: AppConfig,
@@ -58,16 +66,14 @@ export function createApiServer(
         path === "/webhooks/payments/binance" ||
         path === "/webhooks/payments/casso")
     ) {
-      const chunks: any[] = [];
-      for await (const c of request as any) chunks.push(c);
-      const raw = Buffer.concat(chunks).toString("utf8");
       try {
+        const raw = await readBody(request);
         if (path.endsWith("vietqr")) {
           const sig = String(request.headers["x-webhook-signature"] ?? "");
           const result = await vietqr!.process(raw, sig);
           response.statusCode = 200;
           response.setHeader("content-type", "application/json");
-          response.end(JSON.stringify(result));
+          response.end(stringifyJson(result));
           return;
         }
         if (path.endsWith("casso")) {
@@ -79,18 +85,26 @@ export function createApiServer(
           const result = await casso!.process(raw, token);
           response.statusCode = 200;
           response.setHeader("content-type", "application/json");
-          response.end(JSON.stringify(result));
+          response.end(stringifyJson(result));
           return;
         }
         const sig = String(request.headers["binancepay-signature"] ?? "");
         const result = await binance!.process(raw, sig);
         response.statusCode = 200;
         response.setHeader("content-type", "application/json");
-        response.end(JSON.stringify(result));
+        response.end(stringifyJson(result));
         return;
-      } catch {
-        response.statusCode = 401;
-        response.end(JSON.stringify({ error: "Webhook rejected" }));
+      } catch (error: any) {
+        response.statusCode =
+          error?.message === "PAYLOAD_TOO_LARGE" ? 413 : 401;
+        response.end(
+          stringifyJson({
+            error:
+              error?.message === "PAYLOAD_TOO_LARGE"
+                ? "Payload too large"
+                : "Webhook rejected",
+          }),
+        );
         return;
       }
     }
@@ -104,9 +118,7 @@ export function createApiServer(
     }
     if (request.method === "POST" && path === "/api/v2" && reseller) {
       try {
-        const chunks: any[] = [];
-        for await (const chunk of request as any) chunks.push(chunk);
-        const raw = Buffer.concat(chunks).toString("utf8"),
+        const raw = await readBody(request, 65_536),
           input = raw.trim().startsWith("{")
             ? JSON.parse(raw)
             : Object.fromEntries(new URLSearchParams(raw));
@@ -123,7 +135,7 @@ export function createApiServer(
             response.setHeader("retry-after", String(result.retryAfter));
             response.setHeader("content-type", "application/json");
             response.end(
-              JSON.stringify({
+              stringifyJson({
                 error: "Rate limit exceeded",
                 code: "RATE_LIMITED",
               }),
@@ -134,17 +146,20 @@ export function createApiServer(
         const data = await reseller.execute(rawKey, input, identity);
         response.statusCode = 200;
         response.setHeader("content-type", "application/json");
-        response.end(JSON.stringify(data));
+        response.end(stringifyJson(data));
         return;
       } catch (error: any) {
-        response.statusCode = String(error?.message).startsWith("REDIS_")
-          ? 503
-          : error?.code === "RATE_LIMITED"
-            ? 429
-            : 400;
+        response.statusCode =
+          error?.message === "PAYLOAD_TOO_LARGE"
+            ? 413
+            : String(error?.message).startsWith("REDIS_")
+              ? 503
+              : error?.code === "RATE_LIMITED"
+                ? 429
+                : 400;
         response.setHeader("content-type", "application/json");
         response.end(
-          JSON.stringify({ error: error?.message ?? "Request failed" }),
+          stringifyJson({ error: error?.message ?? "Request failed" }),
         );
         return;
       }

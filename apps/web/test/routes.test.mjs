@@ -57,3 +57,10 @@ test("catalog and provider audit controls are wired to authenticated APIs", () =
   assert.match(page, /data-mapping/);
   assert.match(page, /admin\/providers\/\$\{id\}/);
 });
+test("rendered scripts bind DOM nodes explicitly and omit empty enum filters", () => {
+  assert.match(page, /document\.getElementById/);
+  assert.match(page, /const search=byId\('search'\),status=byId\('status'\)/);
+  assert.match(page, /if\(status\.value\)q\.set\('status',status\.value\)/);
+  assert.doesNotMatch(page, /status='\+status\.value/);
+  assert.match(page, /document\.getElementById\(\$\{JSON\.stringify\(id\)\}\)/);
+});

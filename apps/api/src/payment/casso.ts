@@ -58,6 +58,20 @@ export class CassoWebhook {
           },
         });
         if (deposit.status === "PAID") return { status: "DUPLICATE" };
+        if (
+          deposit.status !== "PENDING" ||
+          (deposit.expiresAt && new Date(deposit.expiresAt) <= new Date())
+        ) {
+          await tx.paymentWebhook.update({
+            where: { id: webhook.id },
+            data: {
+              status: "FAILED",
+              errorCode: "DEPOSIT_NOT_PAYABLE",
+              processedAt: new Date(),
+            },
+          });
+          return { status: "MANUAL_REVIEW", reason: "DEPOSIT_NOT_PAYABLE" };
+        }
         const amount = normalizeAmount(
             String(item.amount ?? item.creditAmount ?? ""),
           ),

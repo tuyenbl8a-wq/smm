@@ -142,8 +142,27 @@ export class DepositService {
     });
   }
   async adminHistory(query: { status?: string; take?: number } = {}) {
+    const rawStatus = String(query.status ?? "").trim(),
+      status = ["", "undefined", "null"].includes(rawStatus)
+        ? undefined
+        : rawStatus;
+    if (
+      status &&
+      ![
+        "PENDING",
+        "PAID",
+        "EXPIRED",
+        "CANCELED",
+        "FAILED",
+        "MANUAL_REVIEW",
+      ].includes(status)
+    )
+      throw new PaymentError(
+        "DEPOSIT_STATUS_INVALID",
+        "Invalid deposit status",
+      );
     const rows = await this.db.deposit.findMany({
-      where: query.status ? { status: query.status } : undefined,
+      where: status ? { status } : undefined,
       orderBy: { createdAt: "desc" },
       take: Math.min(100, Math.max(1, query.take ?? 50)),
     });
