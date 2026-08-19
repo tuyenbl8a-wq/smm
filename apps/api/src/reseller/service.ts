@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { OrderService } from "../order/service.js";
+import { OrderLifecycleService } from "../order/lifecycle.js";
 const hash = (x: string) => createHash("sha256").update(x).digest("hex");
 export class ResellerError extends Error {
   constructor(
@@ -13,6 +14,7 @@ export class ResellerService {
   constructor(
     private db: any,
     private orders: OrderService,
+    private lifecycle?: OrderLifecycleService,
   ) {}
   async list(userId: string) {
     return this.db.apiKey.findMany({
@@ -102,6 +104,29 @@ export class ResellerService {
         )
         .then((x) => ({ order: x.id }));
     if (action === "status") {
+      const ids = String(input.orders ?? input.order ?? "")
+        .split(",")
+        .filter(Boolean)
+        .slice(0, 100);
+      if (ids.length > 1) {
+        const rows = await this.db.order.findMany({
+          where: {
+            id: { in: ids.map((id) => BigInt(id)) },
+            userId: key.userId,
+          },
+        });
+        return Object.fromEntries(
+          rows.map((o: any) => [
+            String(o.id),
+            {
+              charge: String(o.charge),
+              start_count: o.startCount,
+              status: o.status,
+              remains: o.remains,
+            },
+          ]),
+        );
+      }
       const o = await this.db.order.findFirst({
         where: { id: BigInt(input.order), userId: key.userId },
       });
@@ -112,6 +137,39 @@ export class ResellerService {
         status: o.status,
         remains: o.remains,
       };
+    }
+    if (action === "refill" || action === "cancel") {
+      if (!this.lifecycle)
+        throw new ResellerError("ACTION_UNAVAILABLE", "Lifecycle unavailable");
+      const order = await this.db.order.findFirst({
+        where: { id: BigInt(input.order), userId: key.userId },
+      });
+      if (!order) throw new ResellerError("ORDER_NOT_FOUND", "Order not found");
+      const request = await this.lifecycle.request(
+        key.userId,
+        order.publicId,
+        action,
+        String(
+          input.idempotency_key ??
+            `api:${action}:${hash(JSON.stringify(input)).slice(0, 24)}`,
+        ),
+      );
+      return action === "refill"
+        ? { refill: request.id }
+        : { cancel: request.id };
+    }
+    if (action === "refill_status") {
+      const refill = await this.db.refill.findUnique({
+        where: { id: String(input.refill) },
+      });
+      if (!refill)
+        throw new ResellerError("REFILL_NOT_FOUND", "Refill not found");
+      const order = await this.db.order.findFirst({
+        where: { id: refill.orderId, userId: key.userId },
+      });
+      if (!order)
+        throw new ResellerError("REFILL_NOT_FOUND", "Refill not found");
+      return { status: refill.status };
     }
     throw new ResellerError("ACTION_INVALID", "Invalid action");
   }

@@ -23,14 +23,14 @@ migration validation, and build checks applicable to the code introduced by it.
 | 14    | Rate-limited reseller compatibility API v2                                           | ✅     |
 | 15    | Deposit model and payment provider abstraction                                       | ✅     |
 | 16    | VietQR display plus verified, idempotent bank webhook processing                     | ✅     |
-| 17    | Official Binance merchant adapter, webhook, and reconciliation                       | 🚧     |
+| 17    | Official Binance merchant adapter, webhook, and reconciliation                       | ✅     |
 | 18    | Tickets, secure attachments, notification center, queued email                       | 🚧     |
-| 19    | Coupon rules and abuse-resistant affiliate/referral ledger                           | ⬜     |
-| 20    | Snapshot-based reports, charts, filters, and safe CSV export                         | ⬜     |
-| 21    | Security hardening, audit/search/logging, maintenance and system status              | ⬜     |
-| 22    | Critical integration, authorization, idempotency, and concurrency tests              | ⬜     |
-| 23    | Production images, Compose, reverse proxy, backup and deployment runbooks            | ⬜     |
-| 24    | Final functional/security/infrastructure audit and `FINAL_AUDIT.md`                  | ⬜     |
+| 19    | Coupon rules and abuse-resistant affiliate/referral ledger                           | ✅     |
+| 20    | Snapshot-based reports, charts, filters, and safe CSV export                         | ✅     |
+| 21    | Security hardening, audit/search/logging, maintenance and system status              | 🚧     |
+| 22    | Critical integration, authorization, idempotency, and concurrency tests              | 🚧     |
+| 23    | Production images, Compose, reverse proxy, backup and deployment runbooks            | 🚧     |
+| 24    | Final functional/security/infrastructure audit and `FINAL_AUDIT.md`                  | 🚧     |
 
 ## Phase 1 evidence
 
@@ -41,7 +41,20 @@ migration validation, and build checks applicable to the code introduced by it.
 - Architecture: PostgreSQL-backed modular monolith with independently deployable
   Next.js web, NestJS API, and BullMQ worker processes.
 
-## Next phase acceptance criteria
+## Current completion evidence and gaps
 
-Phase 9 must implement encrypted provider configuration and the provider adapter
-contract without coupling provider-specific behavior to catalog or order services.
+- Phase 17 includes durable `SKIP LOCKED` reconciliation jobs, bounded retry,
+  stale-claim recovery and the same exact-once settlement path as webhooks. Code is
+  complete; live Binance Merchant acceptance requires external credentials.
+- Phase 18 provides customer/admin ticket conversations, private internal notes,
+  notification unread/read-all operations, authenticated private attachment routes,
+  an implicit-TLS SMTP transport and bounded email retries. A production durable
+  object-storage adapter and live SMTP acceptance remain incomplete.
+- Phase 19 has atomic coupon validation/reservation, order discount snapshots,
+  referral registration, exact-once commission wallet settlement, APIs and usable UI.
+- Phase 20 has timezone-aware daily snapshots, idempotent worker/rebuild APIs,
+  ordered trends, lightweight charts and formula-safe CSV export.
+- Phases 21–23 now include enforced customer/API maintenance mode, bounded dependency
+  status checks, security regressions, Docker/runbook foundations and an Nginx TLS
+  example. Live dependency E2E and production deployment require operator acceptance.
+- Phase 24 evidence and limitations are recorded in `docs/FINAL_AUDIT.md`.

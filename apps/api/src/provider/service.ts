@@ -85,6 +85,93 @@ export class ProviderService {
       return { id: item.id, name: item.name };
     });
   }
+  async detail(id: string) {
+    const provider = await this.db.provider.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!provider)
+      throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
+    const [services, logs] = await Promise.all([
+      this.db.providerService.findMany({
+        where: { providerId: id },
+        orderBy: { name: "asc" },
+        take: 500,
+      }),
+      this.db.orderProviderLog.findMany({
+        where: { providerId: id },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+    ]);
+    const { apiKeyEncrypted, ...safe } = provider;
+    return {
+      ...safe,
+      balance: provider.balance == null ? null : String(provider.balance),
+      apiKeyMasked: maskSecret(
+        decryptSecret(apiKeyEncrypted, this.encryptionKey),
+      ),
+      services: services.map((service: any) => ({
+        ...service,
+        rate: String(service.rate),
+      })),
+      logs,
+    };
+  }
+  async update(actorId: string, id: string, input: any) {
+    const before = await this.db.provider.findUnique({ where: { id } });
+    if (!before)
+      throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
+    const data: any = {
+      ...(input.name != null
+        ? { name: String(input.name).trim().slice(0, 120) }
+        : {}),
+      ...(input.currency != null
+        ? { currency: String(input.currency).trim().toUpperCase().slice(0, 10) }
+        : {}),
+      ...(input.status != null ? { status: String(input.status) } : {}),
+      ...(input.priority != null ? { priority: Number(input.priority) } : {}),
+      ...(input.timeoutMs != null
+        ? { timeoutMs: Number(input.timeoutMs) }
+        : {}),
+      ...(input.maxRetries != null
+        ? { maxRetries: Number(input.maxRetries) }
+        : {}),
+    };
+    if (input.apiUrl != null) {
+      const url = new URL(String(input.apiUrl));
+      if (
+        url.protocol !== "https:" &&
+        !(process.env.NODE_ENV === "development" && url.protocol === "http:")
+      )
+        throw new ProviderConfigError(
+          "PROVIDER_URL_INVALID",
+          "Provider URL must be HTTPS",
+        );
+      data.apiUrl = url.toString();
+    }
+    if (String(input.apiKey ?? "").trim())
+      data.apiKeyEncrypted = encryptSecret(
+        String(input.apiKey).trim(),
+        this.encryptionKey,
+      );
+    return this.db.$transaction(async (tx: any) => {
+      const item = await tx.provider.update({ where: { id }, data });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "PROVIDER_UPDATE",
+          resource: "provider",
+          resourceId: id,
+          before: { ...before, apiKeyEncrypted: "[REDACTED]" },
+          after: {
+            ...data,
+            ...(data.apiKeyEncrypted ? { apiKeyEncrypted: "[REDACTED]" } : {}),
+          },
+        },
+      });
+      return { id: item.id, status: item.status };
+    });
+  }
   async sync(actorId: string, id: string) {
     const provider = await this.db.provider.findUnique({ where: { id } });
     if (!provider)

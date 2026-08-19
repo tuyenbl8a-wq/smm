@@ -18,12 +18,23 @@ const message = (v: unknown) => {
 export class SupportService {
   constructor(private db: any) {}
   async adminInbox(query: any) {
+    const rawStatus = String(query.status ?? "").trim(),
+      status = ["", "undefined", "null"].includes(rawStatus)
+        ? undefined
+        : rawStatus;
+    if (
+      status &&
+      !["OPEN", "ANSWERED", "CUSTOMER_REPLY", "CLOSED"].includes(status)
+    )
+      throw new SupportError("STATUS_INVALID", "Invalid ticket status filter");
+    const rawSearch = String(query.search ?? "").trim(),
+      search = ["undefined", "null"].includes(rawSearch) ? "" : rawSearch;
     const where = {
-      ...(query.status ? { status: query.status } : {}),
-      ...(query.search
+      ...(status ? { status } : {}),
+      ...(search
         ? {
             subject: {
-              contains: String(query.search).slice(0, 100),
+              contains: search.slice(0, 100),
               mode: "insensitive",
             },
           }
@@ -156,6 +167,20 @@ export class SupportService {
       );
     return { read: true };
   }
+  async markAllRead(userId: string) {
+    const result = await this.db.notification.updateMany({
+      where: { userId, readAt: null },
+      data: { readAt: new Date() },
+    });
+    return { read: result.count };
+  }
+  async unreadCount(userId: string) {
+    return {
+      unread: await this.db.notification.count({
+        where: { userId, readAt: null },
+      }),
+    };
+  }
   notifications(userId: string) {
     return this.db.notification.findMany({
       where: { userId },
@@ -163,8 +188,45 @@ export class SupportService {
       take: 100,
     });
   }
+  async addAttachment(
+    userId: string,
+    ticketId: bigint,
+    input: {
+      storageKey: string;
+      originalName: string;
+      mime: string;
+      size: number;
+    },
+    isStaff = false,
+  ) {
+    const ticket = await this.db.ticket.findUnique({ where: { id: ticketId } });
+    if (!ticket || (!isStaff && ticket.userId !== userId))
+      throw new SupportError("TICKET_NOT_FOUND", "Ticket not found");
+    return this.db.attachment.create({
+      data: { ticketId, uploaderId: userId, ...input },
+      select: {
+        id: true,
+        originalName: true,
+        mime: true,
+        size: true,
+        createdAt: true,
+      },
+    });
+  }
+  async attachment(userId: string, id: string, isStaff = false) {
+    const item = await this.db.attachment.findUnique({ where: { id } });
+    if (!item)
+      throw new SupportError("ATTACHMENT_NOT_FOUND", "Attachment not found");
+    const ticket = await this.db.ticket.findUnique({
+      where: { id: item.ticketId },
+    });
+    if (!ticket || (!isStaff && ticket.userId !== userId))
+      throw new SupportError("ATTACHMENT_NOT_FOUND", "Attachment not found");
+    return item;
+  }
   validateAttachment(x: { name: string; mime: string; size: number }) {
     if (
+      x.size <= 0 ||
       x.size > 5 * 1024 * 1024 ||
       ![/^image\/(png|jpeg|webp)$/, /^application\/pdf$/].some((r) =>
         r.test(x.mime),

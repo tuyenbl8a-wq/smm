@@ -1,4 +1,5 @@
 import { orderAmount } from "./service.js";
+import { settleReferral } from "../promotion/service.js";
 export class LifecycleError extends Error {
   constructor(
     readonly code: string,
@@ -85,7 +86,9 @@ export class OrderLifecycleService {
           details: { remains, startCount },
         },
       });
-      return tx.order.findUnique({ where: { id: orderId } });
+      const updated = await tx.order.findUnique({ where: { id: orderId } });
+      if (updated) await settleReferral(tx, updated);
+      return updated;
     });
   }
   async request(

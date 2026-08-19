@@ -69,6 +69,7 @@ export interface AuthStore {
     username: string;
     passwordHash: string;
     referralCode: string;
+    referredByCode?: string;
   }): Promise<AuthUser>;
   updatePassword(userId: string, passwordHash: string): Promise<void>;
   createSession(input: {
@@ -133,17 +134,50 @@ export class PrismaAuthStore implements AuthStore {
     username: string;
     passwordHash: string;
     referralCode: string;
+    referredByCode?: string;
   }) {
     return this.db.$transaction(async (tx: any) => {
       const role = await tx.role.findUniqueOrThrow({ where: { code: "USER" } });
       const group = await tx.priceGroup.findUniqueOrThrow({
         where: { code: "NORMAL" },
       });
+      const { referredByCode, ...userInput } = input;
+      const referrer = referredByCode
+        ? await tx.user.findUnique({
+            where: { referralCode: referredByCode.trim().toUpperCase() },
+          })
+        : null;
+      if (referredByCode && !referrer) throw new Error("REFERRAL_CODE_INVALID");
       const user = await tx.user.create({
-        data: { ...input, status: "ACTIVE", priceGroupId: group.id },
+        data: { ...userInput, status: "ACTIVE", priceGroupId: group.id },
       });
       await tx.userRole.create({ data: { userId: user.id, roleId: role.id } });
       await tx.wallet.create({ data: { userId: user.id, currency: "USD" } });
+      await tx.affiliate.create({
+        data: {
+          userId: user.id,
+          code: user.referralCode,
+          commissionRate: "10.000000",
+        },
+      });
+      if (referrer) {
+        const affiliate = await tx.affiliate.upsert({
+          where: { userId: referrer.id },
+          create: {
+            userId: referrer.id,
+            code: referrer.referralCode,
+            commissionRate: "10.000000",
+          },
+          update: {},
+        });
+        await tx.referral.create({
+          data: {
+            affiliateId: affiliate.id,
+            referrerId: referrer.id,
+            referredUserId: user.id,
+          },
+        });
+      }
       return user;
     });
   }

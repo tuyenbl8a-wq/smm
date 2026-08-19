@@ -11,9 +11,17 @@ import {
 import { OrderError, type OrderService } from "../order/service.js";
 import { OrderLifecycleService } from "../order/lifecycle.js";
 import { ResellerService } from "../reseller/service.js";
-import { DepositService } from "../payment/service.js";
-import { SupportService } from "../support/service.js";
+import { DepositService, PaymentError } from "../payment/service.js";
+import { SupportError, SupportService } from "../support/service.js";
+import {
+  AdminOperationError,
+  AdminOperationsService,
+} from "../admin/operations.js";
 import { PaymentSettingsService } from "../payment/settings.js";
+import { stringifyJson } from "../http/json.js";
+import type { LocalStorage } from "../storage/local.js";
+import { PromotionError, PromotionService } from "../promotion/service.js";
+import { endpointFromUrl, probeTcp } from "@smm/health";
 import {
   csrfValue,
   hashPassword,
@@ -44,7 +52,10 @@ export class AuthHandler {
     private readonly reseller?: ResellerService,
     private readonly deposits?: DepositService,
     private readonly support?: SupportService,
+    private readonly admin?: AdminOperationsService,
     private readonly paymentSettings?: PaymentSettingsService,
+    private readonly storage?: LocalStorage,
+    private readonly promotions?: PromotionService,
   ) {}
   async handle(
     request: IncomingMessage,
@@ -76,6 +87,20 @@ export class AuthHandler {
           "AUTHENTICATION_REQUIRED",
           "Authentication required",
         );
+      if (
+        path.startsWith("/api/v1/customer") &&
+        this.admin &&
+        !canAccessAdmin(auth.access, "settings.manage")
+      ) {
+        const maintenance = await this.admin.maintenance();
+        if (maintenance.enabled)
+          return this.error(
+            response,
+            503,
+            "MAINTENANCE_MODE",
+            maintenance.message,
+          );
+      }
       if (request.method === "GET" && path === "/api/v1/me")
         return this.ok(response, {
           user: this.publicUser(auth.user),
@@ -105,6 +130,37 @@ export class AuthHandler {
               : {}),
           }),
         );
+      }
+      if (request.method === "GET" && path === "/api/v1/customer/referral")
+        return this.ok(
+          response,
+          await this.promotions!.referralSummary(auth.user.id),
+        );
+      if (request.method === "GET" && path === "/api/v1/admin/coupons") {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const query = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.promotions!.listCoupons(
+            query.searchParams.get("search") ?? "",
+          ),
+        );
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/referrals") {
+        if (!canAccessAdmin(auth.access, "reports.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.promotions!.adminReferrals());
       }
       if (
         request.method === "GET" &&
@@ -170,6 +226,172 @@ export class AuthHandler {
           response,
           await this.support!.notifications(auth.user.id),
         );
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/customer/notifications/unread-count"
+      )
+        return this.ok(response, await this.support!.unreadCount(auth.user.id));
+      if (request.method === "GET" && path === "/api/v1/admin/users") {
+        if (!canAccessAdmin(auth.access, "users.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.users(Object.fromEntries(url.searchParams)),
+        );
+      }
+      const adminUser = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "GET" && adminUser) {
+        if (!canAccessAdmin(auth.access, "users.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.admin!.user(adminUser[1]!));
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/orders") {
+        if (!canAccessAdmin(auth.access, "orders.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.orders(Object.fromEntries(url.searchParams)),
+        );
+      }
+      const adminOrder = /^\/api\/v1\/admin\/orders\/([0-9a-f-]{36})$/.exec(
+        path,
+      );
+      if (request.method === "GET" && adminOrder) {
+        if (!canAccessAdmin(auth.access, "orders.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.admin!.order(adminOrder[1]!));
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/reports") {
+        if (!canAccessAdmin(auth.access, "reports.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.reports(
+            url.searchParams.get("from")
+              ? new Date(url.searchParams.get("from")!)
+              : undefined,
+            url.searchParams.get("to")
+              ? new Date(url.searchParams.get("to")!)
+              : undefined,
+          ),
+        );
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/reports/trend") {
+        if (!canAccessAdmin(auth.access, "reports.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const query = new URL(request.url ?? path, this.config.apiUrl),
+          from = query.searchParams.get("from") ?? "",
+          to = query.searchParams.get("to") ?? "";
+        if (
+          !/^\d{4}-\d{2}-\d{2}$/.test(from) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(to)
+        )
+          throw new InputError("REPORT_RANGE_INVALID", "Invalid report range");
+        return this.ok(response, await this.admin!.reportTrend(from, to));
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/reports.csv") {
+        if (!canAccessAdmin(auth.access, "reports.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl),
+          from = url.searchParams.get("from"),
+          to = url.searchParams.get("to");
+        response.statusCode = 200;
+        response.setHeader("content-type", "text/csv; charset=utf-8");
+        response.setHeader(
+          "content-disposition",
+          'attachment; filename="bao-cao-smm.csv"',
+        );
+        response.setHeader("cache-control", "no-store");
+        response.end(
+          await this.admin!.reportsCsv(
+            from ? new Date(from) : undefined,
+            to ? new Date(to) : undefined,
+          ),
+        );
+        return true;
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/logs") {
+        if (
+          !canAccessAdmin(auth.access, "logs.read") &&
+          !canAccessAdmin(auth.access, "audit.read")
+        )
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.logs(
+            url.searchParams.get("kind") ?? "audit",
+            Number(url.searchParams.get("page") ?? 1),
+            Number(url.searchParams.get("limit") ?? 50),
+          ),
+        );
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/settings") {
+        if (!canAccessAdmin(auth.access, "settings.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.admin!.settings());
+      }
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/admin/payment-settings"
+      ) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.paymentSettings!.adminView());
+      }
       if (request.method === "GET" && path === "/api/v1/admin/tickets") {
         if (!canAccessAdmin(auth.access, "tickets.manage"))
           return this.error(
@@ -184,11 +406,7 @@ export class AuthHandler {
           await this.support!.adminInbox(Object.fromEntries(u.searchParams)),
         );
       }
-
-      if (
-        request.method === "GET" &&
-        path === "/api/v1/admin/payment-settings"
-      ) {
+      if (request.method === "GET" && path === "/api/v1/admin/system-status") {
         if (!canAccessAdmin(auth.access, "settings.manage"))
           return this.error(
             response,
@@ -196,14 +414,43 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
-        if (!this.paymentSettings)
-          throw new Error("Payment settings service unavailable");
-        return this.ok(
-          response,
-          await this.paymentSettings.getAdminSettings(),
-        );
+        const [database, redis] = await Promise.all([
+          probeTcp(
+            endpointFromUrl(this.config.databaseUrl),
+            this.config.healthTimeoutMs,
+          ),
+          probeTcp(
+            endpointFromUrl(this.config.redisUrl),
+            this.config.healthTimeoutMs,
+          ),
+        ]);
+        return this.ok(response, {
+          checkedAt: new Date(),
+          api: { status: "healthy", message: "API đang hoạt động" },
+          database: { status: database ? "healthy" : "down" },
+          redis: { status: redis ? "healthy" : "down" },
+          email: {
+            status: process.env.SMTP_HOST ? "healthy" : "not_configured",
+            message: process.env.SMTP_HOST
+              ? "SMTP đã cấu hình"
+              : "SMTP chưa cấu hình",
+          },
+          storage: {
+            status: this.storage ? "healthy" : "not_configured",
+            message: this.storage
+              ? "Kho tệp riêng tư khả dụng"
+              : "Cần cấu hình lưu trữ bền vững",
+          },
+          payments: {
+            casso: process.env.CASSO_WEBHOOK_SECURE_TOKEN
+              ? "healthy"
+              : "not_configured",
+            binance: process.env.BINANCE_MERCHANT_API_KEY
+              ? "healthy"
+              : "not_configured",
+          },
+        });
       }
-
       if (request.method === "GET" && path === "/api/v1/admin/deposits") {
         if (!canAccessAdmin(auth.access, "payments.manage"))
           return this.error(
@@ -213,14 +460,11 @@ export class AuthHandler {
             "Permission denied",
           );
         const u = new URL(request.url ?? path, this.config.apiUrl);
-        const depositStatus = u.searchParams.get("status");
         return this.ok(
           response,
           await this.deposits!.adminHistory({
-            ...(depositStatus &&
-            depositStatus !== "undefined" &&
-            depositStatus !== "null"
-              ? { status: depositStatus }
+            ...(u.searchParams.get("status")
+              ? { status: u.searchParams.get("status")! }
               : {}),
             take: Number(u.searchParams.get("limit") ?? "50"),
           }),
@@ -244,6 +488,23 @@ export class AuthHandler {
           ),
         );
       }
+      const adminAttachmentDownload =
+        /^\/api\/v1\/admin\/attachments\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "GET" && adminAttachmentDownload) {
+        if (!canAccessAdmin(auth.access, "tickets.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return await this.downloadAttachment(
+          response,
+          auth.user.id,
+          adminAttachmentDownload[1]!,
+          true,
+        );
+      }
       if (request.method === "GET" && path === "/api/v1/admin/catalog") {
         if (!canAccessAdmin(auth.access, "services.manage"))
           return this.error(
@@ -265,6 +526,21 @@ export class AuthHandler {
           );
         if (!this.providers) throw new Error("Provider service unavailable");
         return this.ok(response, await this.providers.list());
+      }
+      const providerDetail =
+        /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "GET" && providerDetail) {
+        if (!canAccessAdmin(auth.access, "providers.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.providers!.detail(providerDetail[1]!),
+        );
       }
       const adminWallet =
         /^\/api\/v1\/admin\/wallets\/([0-9a-f-]{36})(?:\/transactions|\/mutations)?$/.exec(
@@ -307,28 +583,6 @@ export class AuthHandler {
             "Invalid CSRF token",
           );
       }
-
-      if (
-        request.method === "POST" &&
-        path === "/api/v1/admin/payment-settings"
-      ) {
-        if (!canAccessAdmin(auth.access, "settings.manage"))
-          return this.error(
-            response,
-            403,
-            "PERMISSION_DENIED",
-            "Permission denied",
-          );
-        if (!this.paymentSettings)
-          throw new Error("Payment settings service unavailable");
-        return this.ok(
-          response,
-          await this.paymentSettings.updateAdminSettings(
-            await this.body(request),
-          ),
-        );
-      }
-
       if (request.method === "POST" && path === "/api/v1/customer/orders") {
         this.checkBurst(request, "customer-order-create");
         if (!this.orders) throw new Error("Order service unavailable");
@@ -341,6 +595,101 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.orders.create(auth.user.id, await this.body(request), key),
+        );
+      }
+      const userUpdate = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(
+          path,
+        ),
+        userRoles = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/roles$/.exec(
+          path,
+        ),
+        userSessions =
+          /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/revoke-sessions$/.exec(
+            path,
+          );
+      if (request.method === "POST" && userUpdate) {
+        if (
+          !canAccessAdmin(auth.access, "users.update") &&
+          !canAccessAdmin(auth.access, "users.ban")
+        )
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.admin!.updateUser(
+            auth.user.id,
+            userUpdate[1]!,
+            await this.body(request),
+          ),
+        );
+      }
+      if (request.method === "POST" && userRoles) {
+        if (!canAccessAdmin(auth.access, "users.update"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const body = await this.body(request);
+        const roles = Array.isArray(body.roles)
+          ? body.roles.map((role) => String(role))
+          : [];
+        return this.ok(
+          response,
+          await this.admin!.roles(auth.user.id, userRoles[1]!, roles),
+        );
+      }
+      if (request.method === "POST" && userSessions) {
+        if (!canAccessAdmin(auth.access, "users.update"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.admin!.revokeSessions(auth.user.id, userSessions[1]!),
+        );
+      }
+      if (request.method === "POST" && path === "/api/v1/admin/settings") {
+        if (!canAccessAdmin(auth.access, "settings.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.admin!.updateSettings(
+            auth.user.id,
+            await this.body(request),
+          ),
+        );
+      }
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/admin/payment-settings"
+      ) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.paymentSettings!.update(
+            auth.user.id,
+            await this.body(request),
+          ),
         );
       }
       if (request.method === "POST" && path === "/api/v1/customer/api-keys")
@@ -357,10 +706,113 @@ export class AuthHandler {
           response,
           await this.deposits!.create(auth.user.id, await this.body(request)),
         );
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/customer/coupons/preview"
+      ) {
+        const body = await this.body(request);
+        return this.ok(
+          response,
+          await this.promotions!.preview(auth.user.id, body.code, body.amount),
+        );
+      }
+      if (request.method === "POST" && path === "/api/v1/admin/coupons") {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.promotions!.saveCoupon(
+            auth.user.id,
+            await this.body(request),
+          ),
+        );
+      }
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/admin/reports/rebuild"
+      ) {
+        if (!canAccessAdmin(auth.access, "reports.read"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const body = await this.body(request),
+          date = String(body.date ?? "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+          throw new InputError("REPORT_DATE_INVALID", "Invalid report date");
+        return this.ok(
+          response,
+          await this.admin!.rebuildReport(auth.user.id, date),
+        );
+      }
+      const couponUpdate = /^\/api\/v1\/admin\/coupons\/([0-9a-f-]{36})$/.exec(
+        path,
+      );
+      if (request.method === "POST" && couponUpdate) {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.promotions!.saveCoupon(
+            auth.user.id,
+            await this.body(request),
+            couponUpdate[1]!,
+          ),
+        );
+      }
       if (request.method === "POST" && path === "/api/v1/customer/tickets")
         return this.ok(
           response,
           await this.support!.create(auth.user.id, await this.body(request)),
+        );
+      const adminAttachmentUpload =
+        /^\/api\/v1\/admin\/tickets\/(\d+)\/attachments$/.exec(path);
+      if (request.method === "POST" && adminAttachmentUpload) {
+        if (!canAccessAdmin(auth.access, "tickets.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return await this.uploadAttachment(
+          request,
+          response,
+          auth.user.id,
+          BigInt(adminAttachmentUpload[1]!),
+          true,
+        );
+      }
+      const customerAttachmentUpload =
+          /^\/api\/v1\/customer\/tickets\/(\d+)\/attachments$/.exec(path),
+        customerAttachmentDownload =
+          /^\/api\/v1\/customer\/attachments\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "POST" && customerAttachmentUpload)
+        return await this.uploadAttachment(
+          request,
+          response,
+          auth.user.id,
+          BigInt(customerAttachmentUpload[1]!),
+          false,
+        );
+      if (request.method === "GET" && customerAttachmentDownload)
+        return await this.downloadAttachment(
+          response,
+          auth.user.id,
+          customerAttachmentDownload[1]!,
+          false,
         );
       const ticketReply = /^\/api\/v1\/customer\/tickets\/(\d+)\/reply$/.exec(
         path,
@@ -378,6 +830,11 @@ export class AuthHandler {
         /^\/api\/v1\/customer\/notifications\/([0-9a-f-]{36})\/read$/.exec(
           path,
         );
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/customer/notifications/read-all"
+      )
+        return this.ok(response, await this.support!.markAllRead(auth.user.id));
       if (request.method === "POST" && notificationRead)
         return this.ok(
           response,
@@ -443,6 +900,11 @@ export class AuthHandler {
             response,
             await this.catalog.upsertPriceRule(auth.user.id, body),
           );
+        if (path === "/api/v1/admin/catalog/mappings")
+          return this.ok(
+            response,
+            await this.catalog.upsertMapping(auth.user.id, body),
+          );
         const category =
           /^\/api\/v1\/admin\/catalog\/categories\/([0-9a-f-]{36})\/update$/.exec(
             path,
@@ -460,6 +922,19 @@ export class AuthHandler {
           return this.ok(
             response,
             await this.catalog.updateService(auth.user.id, service[1]!, body),
+          );
+        const priceGroup =
+          /^\/api\/v1\/admin\/catalog\/price-groups\/([0-9a-f-]{36})\/update$/.exec(
+            path,
+          );
+        if (priceGroup)
+          return this.ok(
+            response,
+            await this.catalog.updatePriceGroup(
+              auth.user.id,
+              priceGroup[1]!,
+              body,
+            ),
           );
       }
       if (
@@ -479,6 +954,18 @@ export class AuthHandler {
           return this.ok(
             response,
             await this.providers.create(auth.user.id, await this.body(request)),
+          );
+        const update = /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})$/.exec(
+          path,
+        );
+        if (update)
+          return this.ok(
+            response,
+            await this.providers.update(
+              auth.user.id,
+              update[1]!,
+              await this.body(request),
+            ),
           );
         const action =
           /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})\/(test|sync)$/.exec(
@@ -548,6 +1035,10 @@ export class AuthHandler {
           auth.user,
           auth.session.id,
         );
+      if (request.method === "POST" && path === "/api/v1/auth/logout-others") {
+        await this.store.revokeOtherSessions(auth.user.id, auth.session.id);
+        return this.ok(response, { revoked: true });
+      }
       if (
         request.method === "POST" &&
         path.startsWith("/api/v1/auth/sessions/") &&
@@ -616,6 +1107,13 @@ export class AuthHandler {
               : 422;
         return this.error(response, status, error.code, error.message);
       }
+      if (
+        error instanceof AdminOperationError ||
+        error instanceof SupportError ||
+        error instanceof PaymentError ||
+        error instanceof PromotionError
+      )
+        return this.error(response, 422, error.code, error.message);
       if (error instanceof InputError)
         return this.error(
           response,
@@ -651,12 +1149,25 @@ export class AuthHandler {
       throw new InputError("EMAIL_IN_USE", "Email is already registered");
     if (await this.store.findUserByUsername(username))
       throw new InputError("USERNAME_IN_USE", "Username is already registered");
-    const user = await this.store.createUser({
-      email,
-      username,
-      passwordHash: await hashPassword(password),
-      referralCode: opaqueToken(9).toUpperCase(),
-    });
+    let user: AuthUser;
+    try {
+      user = await this.store.createUser({
+        email,
+        username,
+        passwordHash: await hashPassword(password),
+        referralCode: opaqueToken(9).toUpperCase(),
+        ...(body.referralCode
+          ? { referredByCode: String(body.referralCode).trim().toUpperCase() }
+          : {}),
+      });
+    } catch (error: any) {
+      if (error?.message === "REFERRAL_CODE_INVALID")
+        throw new InputError(
+          "REFERRAL_CODE_INVALID",
+          "Mã giới thiệu không hợp lệ.",
+        );
+      throw error;
+    }
     return this.issueSession(response, request, user, 201);
   }
   private async login(
@@ -867,7 +1378,10 @@ export class AuthHandler {
       let data = "";
       request.on("data", (chunk) => {
         data += String(chunk ?? "");
-        if (Buffer.byteLength(data) > 32_768) {
+        const attachment = /\/attachments$/.test(
+          new URL(request.url ?? "/", this.config.apiUrl).pathname,
+        );
+        if (Buffer.byteLength(data) > (attachment ? 7_100_000 : 32_768)) {
           request.destroy();
           reject(new InputError("PAYLOAD_TOO_LARGE", "Payload too large"));
         }
@@ -890,6 +1404,66 @@ export class AuthHandler {
         ),
       );
     });
+  }
+  private async uploadAttachment(
+    request: IncomingMessage,
+    response: ServerResponse,
+    userId: string,
+    ticketId: bigint,
+    isStaff: boolean,
+  ): Promise<true> {
+    if (!this.storage)
+      return this.error(
+        response,
+        503,
+        "STORAGE_UNAVAILABLE",
+        "Storage unavailable",
+      );
+    const body = await this.body(request),
+      name = String(body.name ?? ""),
+      mime = String(body.mime ?? ""),
+      encoded = String(body.data ?? "");
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
+      throw new SupportError("ATTACHMENT_INVALID", "Invalid attachment");
+    const data = Buffer.from(encoded, "base64");
+    this.support!.validateAttachment({ name, mime, size: data.length });
+    const stored = await this.storage.put(name, mime, data);
+    return this.ok(
+      response,
+      await this.support!.addAttachment(
+        userId,
+        ticketId,
+        { storageKey: stored.key, originalName: name, mime, size: stored.size },
+        isStaff,
+      ),
+    );
+  }
+  private async downloadAttachment(
+    response: ServerResponse,
+    userId: string,
+    id: string,
+    isStaff: boolean,
+  ): Promise<true> {
+    if (!this.storage)
+      return this.error(
+        response,
+        503,
+        "STORAGE_UNAVAILABLE",
+        "Storage unavailable",
+      );
+    const item = await this.support!.attachment(userId, id, isStaff),
+      data = await this.storage.read(item.storageKey),
+      filename = String(item.originalName).replace(/[^A-Za-z0-9._-]/g, "_");
+    response.statusCode = 200;
+    response.setHeader("content-type", item.mime);
+    response.setHeader("content-length", String(data.length));
+    response.setHeader(
+      "content-disposition",
+      `attachment; filename="${filename || "attachment"}"`,
+    );
+    response.setHeader("cache-control", "private, no-store");
+    response.end(data);
+    return true;
   }
   private email(value: unknown) {
     const email = String(value ?? "")
@@ -949,7 +1523,7 @@ export class AuthHandler {
     response.statusCode = status;
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.setHeader("cache-control", "no-store");
-    response.end(JSON.stringify({ success: true, data }));
+    response.end(stringifyJson({ success: true, data }));
     return true;
   }
   private error(
@@ -961,7 +1535,7 @@ export class AuthHandler {
     response.statusCode = status;
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.setHeader("cache-control", "no-store");
-    response.end(JSON.stringify({ success: false, error: { code, message } }));
+    response.end(stringifyJson({ success: false, error: { code, message } }));
     return true;
   }
 }

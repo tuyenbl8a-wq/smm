@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { PaymentProvider } from "./service.js";
+import { normalizeAmount } from "../wallet/service.js";
 export class BinanceMerchantProvider implements PaymentProvider {
   constructor(
     private baseUrl: string,
@@ -61,6 +62,7 @@ export class BinanceMerchantProvider implements PaymentProvider {
   queryTransaction = (id: string) =>
     this.call("/binancepay/openapi/v2/order/query", { prepayId: id });
   verifyWebhook(raw: string, signature: string) {
+    if (!this.webhookSecret || !signature) return false;
     const x = createHmac("sha512", this.webhookSecret)
       .update(raw)
       .digest("hex");
@@ -70,6 +72,13 @@ export class BinanceMerchantProvider implements PaymentProvider {
     );
   }
 }
+export interface BinancePaymentEvent {
+  eventId: string;
+  transactionId: string;
+  depositCode: string;
+  amount: string;
+  currency: string;
+}
 export class BinanceWebhookProcessor {
   constructor(
     private db: any,
@@ -78,7 +87,23 @@ export class BinanceWebhookProcessor {
   async process(raw: string, signature: string) {
     if (!this.provider.verifyWebhook(raw, signature))
       throw new Error("SIGNATURE_INVALID");
-    const event = await this.provider.handleWebhook(JSON.parse(raw));
+    const payload = JSON.parse(raw),
+      event = await this.provider.handleWebhook(payload),
+      eventStatus = String(
+        payload.bizStatus ?? payload.data?.bizStatus ?? "PAY_SUCCESS",
+      );
+    if (eventStatus !== "PAY_SUCCESS")
+      return { status: "IGNORED", reason: "PAYMENT_NOT_SUCCESSFUL" };
+    return this.settle(event, payload, true);
+  }
+  reconcile(event: BinancePaymentEvent, payload: Record<string, unknown> = {}) {
+    return this.settle(event, payload, false);
+  }
+  private async settle(
+    event: BinancePaymentEvent,
+    payload: Record<string, unknown>,
+    signatureValid: boolean,
+  ) {
     try {
       return await this.db.$transaction(async (tx: any) => {
         const deposit = await tx.deposit.findUnique({
@@ -89,23 +114,47 @@ export class BinanceWebhookProcessor {
           data: {
             paymentMethodId: deposit.paymentMethodId,
             externalEventId: event.eventId,
-            signatureValid: true,
+            signatureValid,
             status: "PENDING",
-            payload: JSON.parse(raw),
+            payload,
             payloadHash: createHmac("sha256", "binance-payload")
-              .update(raw)
+              .update(JSON.stringify(payload))
               .digest("hex"),
           },
         });
+        if (deposit.status === "PAID") return { status: "DUPLICATE" };
         if (
-          String(deposit.grossAmount) !== event.amount ||
-          deposit.sourceCurrency !== event.currency
+          deposit.status !== "PENDING" ||
+          (deposit.expiresAt && new Date(deposit.expiresAt) <= new Date())
+        ) {
+          await tx.paymentWebhook.update({
+            where: { id: webhook.id },
+            data: {
+              status: "FAILED",
+              errorCode: "DEPOSIT_NOT_PAYABLE",
+              processedAt: new Date(),
+            },
+          });
+          return { status: "MANUAL_REVIEW" };
+        }
+        if (
+          normalizeAmount(String(deposit.grossAmount)) !==
+            normalizeAmount(event.amount) ||
+          deposit.sourceCurrency.toUpperCase() !== event.currency.toUpperCase()
         ) {
           await tx.deposit.update({
             where: { id: deposit.id },
             data: {
               status: "MANUAL_REVIEW",
               externalTransactionId: event.transactionId,
+            },
+          });
+          await tx.paymentWebhook.update({
+            where: { id: webhook.id },
+            data: {
+              status: "FAILED",
+              errorCode: "AMOUNT_OR_CURRENCY_MISMATCH",
+              processedAt: new Date(),
             },
           });
           return { status: "MANUAL_REVIEW" };
@@ -115,6 +164,7 @@ export class BinanceWebhookProcessor {
           String(deposit.netAmount),
           deposit.userId,
         );
+        if (!rows[0]) throw new Error("WALLET_NOT_FOUND");
         await tx.walletTransaction.create({
           data: {
             walletId: rows[0].id,
@@ -141,9 +191,9 @@ export class BinanceWebhookProcessor {
         });
         return { status: "PAID" };
       });
-    } catch (e: any) {
-      if (e?.code === "P2002") return { status: "DUPLICATE" };
-      throw e;
+    } catch (error: any) {
+      if (error?.code === "P2002") return { status: "DUPLICATE" };
+      throw error;
     }
   }
 }

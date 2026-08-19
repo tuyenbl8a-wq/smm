@@ -4,225 +4,115 @@ import {
   maskSecret,
 } from "../provider/crypto.js";
 
+const publicKeys = [
+  "cassoEnabled",
+  "bankName",
+  "bankBin",
+  "bankAccountNumber",
+  "bankAccountName",
+];
+const secretKeys = [
+  "cassoApiKey",
+  "cassoWebhookSecureToken",
+  "vietQrClientId",
+  "vietQrApiKey",
+];
+
 export class PaymentSettingsService {
   constructor(
-    private readonly db: any,
-    private readonly encryptionKey: string,
+    private db: any,
+    private encryptionKey: string,
   ) {}
 
-  async getAdminSettings() {
-    const rows = await this.db.setting.findMany({
-      where: {
-        group: {
-          in: ["payments.casso", "payments.bank", "payments.vietqr"],
-        },
-      },
+  private async row(key: string) {
+    return this.db.setting.findUnique({
+      where: { group_key: { group: "payments", key } },
     });
+  }
 
-    const map = new Map<string, any>(
-      rows.map(
-        (row: any) => [`${row.group}:${row.key}`, row] as [string, any],
-      ),
+  async webhookToken(fallback = "") {
+    const row = await this.row("cassoWebhookSecureToken");
+    return row?.encrypted && typeof row.value === "string"
+      ? decryptSecret(row.value, this.encryptionKey)
+      : fallback;
+  }
+
+  async publicBank() {
+    const rows = await this.db.setting.findMany({
+      where: { group: "payments", key: { in: publicKeys } },
+    });
+    const values = Object.fromEntries(
+      rows.map((row: any) => [row.key, row.value]),
     );
-
-    const read = (group: string, key: string) =>
-      map.get(`${group}:${key}`)?.value ?? null;
-
-    const readSecret = (group: string, key: string) => {
-      const row = map.get(`${group}:${key}`);
-      if (!row?.value) return null;
-
-      const raw = String(row.value);
-
-      if (!row.encrypted) {
-        return raw;
-      }
-
-      try {
-        return decryptSecret(raw, this.encryptionKey);
-      } catch {
-        return null;
-      }
-    };
-
-    const maskedSecret = (group: string, key: string) => {
-      const value = readSecret(group, key);
-      return value ? maskSecret(value) : null;
-    };
-
     return {
-      casso: {
-        enabled: Boolean(read("payments.casso", "enabled")),
-        apiKeyConfigured: Boolean(
-          readSecret("payments.casso", "apiKey"),
-        ),
-        apiKeyMasked: maskedSecret("payments.casso", "apiKey"),
-        webhookTokenConfigured: Boolean(
-          readSecret("payments.casso", "webhookSecureToken"),
-        ),
-        webhookTokenMasked: maskedSecret(
-          "payments.casso",
-          "webhookSecureToken",
-        ),
-      },
-
-      bank: {
-        bankName: read("payments.bank", "bankName"),
-        bankBin: read("payments.bank", "bankBin"),
-        accountNumber: read("payments.bank", "accountNumber"),
-        accountName: read("payments.bank", "accountName"),
-      },
-
-      vietqr: {
-        clientIdConfigured: Boolean(
-          readSecret("payments.vietqr", "clientId"),
-        ),
-        clientIdMasked: maskedSecret("payments.vietqr", "clientId"),
-
-        apiKeyConfigured: Boolean(
-          readSecret("payments.vietqr", "apiKey"),
-        ),
-        apiKeyMasked: maskedSecret("payments.vietqr", "apiKey"),
-
-        webhookSecretConfigured: Boolean(
-          readSecret("payments.vietqr", "webhookSecret"),
-        ),
-        webhookSecretMasked: maskedSecret(
-          "payments.vietqr",
-          "webhookSecret",
-        ),
-      },
+      bin: String(values.bankBin ?? process.env.BANK_BIN ?? ""),
+      name: String(values.bankName ?? process.env.BANK_NAME ?? ""),
+      account: String(
+        values.bankAccountNumber ?? process.env.BANK_ACCOUNT_NUMBER ?? "",
+      ),
+      accountName: String(
+        values.bankAccountName ?? process.env.BANK_ACCOUNT_NAME ?? "",
+      ),
     };
   }
 
-  async updateAdminSettings(input: Record<string, unknown>) {
-    const writes: Array<{
-      group: string;
-      key: string;
-      value: unknown;
-      encrypted: boolean;
-    }> = [];
+  async adminView() {
+    const rows = await this.db.setting.findMany({
+        where: { group: "payments" },
+      }),
+      values: Record<string, unknown> = {};
+    for (const row of rows) {
+      if (row.encrypted) {
+        const raw =
+          typeof row.value === "string"
+            ? decryptSecret(row.value, this.encryptionKey)
+            : "";
+        values[row.key] = {
+          configured: Boolean(raw),
+          masked: raw ? maskSecret(raw) : null,
+        };
+      } else values[row.key] = row.value;
+    }
+    return {
+      ...values,
+      webhookUrl: `${process.env.API_URL ?? "http://localhost:4000"}/webhooks/payments/casso`,
+    };
+  }
 
-    const push = (
-      group: string,
-      key: string,
-      value: unknown,
-      encrypted = false,
-    ) => {
-      if (value === undefined) return;
-
-      writes.push({
-        group,
-        key,
-        value,
-        encrypted,
+  async update(actorId: string, input: any) {
+    const entries = [
+      ...publicKeys
+        .filter((key) => input[key] !== undefined)
+        .map((key) => [key, input[key], false] as const),
+      ...secretKeys
+        .filter((key) => typeof input[key] === "string" && input[key].trim())
+        .map(
+          (key) =>
+            [
+              key,
+              encryptSecret(input[key].trim(), this.encryptionKey),
+              true,
+            ] as const,
+        ),
+    ];
+    if (!entries.length) throw new Error("PAYMENT_SETTINGS_EMPTY");
+    return this.db.$transaction(async (tx: any) => {
+      for (const [key, value, encrypted] of entries)
+        await tx.setting.upsert({
+          where: { group_key: { group: "payments", key } },
+          update: { value, encrypted },
+          create: { group: "payments", key, value, encrypted },
+        });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "PAYMENT_SETTINGS_UPDATE",
+          resource: "Setting",
+          resourceId: "payments",
+          after: { keys: entries.map(([key]) => key) },
+        },
       });
-    };
-
-    const pushSecret = (
-      group: string,
-      key: string,
-      value: unknown,
-    ) => {
-      if (value === undefined) return;
-
-      const raw = String(value).trim();
-
-      if (!raw) return;
-
-      push(
-        group,
-        key,
-        encryptSecret(raw, this.encryptionKey),
-        true,
-      );
-    };
-
-    push(
-      "payments.casso",
-      "enabled",
-      Boolean(input.cassoEnabled),
-    );
-
-    pushSecret(
-      "payments.casso",
-      "apiKey",
-      input.cassoApiKey,
-    );
-
-    pushSecret(
-      "payments.casso",
-      "webhookSecureToken",
-      input.cassoWebhookSecureToken,
-    );
-
-    push(
-      "payments.bank",
-      "bankName",
-      String(input.bankName ?? "").trim(),
-    );
-
-    push(
-      "payments.bank",
-      "bankBin",
-      String(input.bankBin ?? "").trim(),
-    );
-
-    push(
-      "payments.bank",
-      "accountNumber",
-      String(input.bankAccountNumber ?? "").trim(),
-    );
-
-    push(
-      "payments.bank",
-      "accountName",
-      String(input.bankAccountName ?? "").trim(),
-    );
-
-    pushSecret(
-      "payments.vietqr",
-      "clientId",
-      input.vietqrClientId,
-    );
-
-    pushSecret(
-      "payments.vietqr",
-      "apiKey",
-      input.vietqrApiKey,
-    );
-
-    pushSecret(
-      "payments.vietqr",
-      "webhookSecret",
-      input.vietqrWebhookSecret,
-    );
-
-    await this.db.$transaction(
-      writes.map((item) =>
-        this.db.setting.upsert({
-          where: {
-            group_key: {
-              group: item.group,
-              key: item.key,
-            },
-          },
-
-          update: {
-            value: item.value,
-            encrypted: item.encrypted,
-          },
-
-          create: {
-            group: item.group,
-            key: item.key,
-            value: item.value,
-            encrypted: item.encrypted,
-          },
-        }),
-      ),
-    );
-
-    return this.getAdminSettings();
+      return { updated: entries.map(([key]) => key) };
+    });
   }
 }
