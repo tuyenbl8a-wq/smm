@@ -5,6 +5,7 @@ import { SubmitWorker } from "./provider-submit.js";
 import { ProviderSyncWorker } from "./provider-sync.js";
 import { EmailWorker } from "./email.js";
 import { LifecycleWorker } from "./lifecycle.js";
+import { smtpConfig, SmtpTransport } from "./smtp.js";
 const config = loadConfig(process.env, 4100);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -13,7 +14,12 @@ const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
 const submitWorker = new SubmitWorker(prisma, config.encryptionKey);
 const syncWorker = new ProviderSyncWorker(prisma, config.encryptionKey);
-const emailWorker = new EmailWorker(prisma, null);
+const smtp = smtpConfig(process.env),
+  smtpTransport = smtp ? new SmtpTransport(smtp) : null,
+  emailWorker = new EmailWorker(
+    prisma,
+    smtpTransport ? (message) => smtpTransport.send(message) : null,
+  );
 const lifecycleWorker = new LifecycleWorker(prisma, config.encryptionKey);
 const lifecyclePoll = setInterval(() => void lifecycleWorker.run(), 30000);
 let emailRunning = false;

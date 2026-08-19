@@ -19,6 +19,8 @@ import {
 } from "../admin/operations.js";
 import { PaymentSettingsService } from "../payment/settings.js";
 import { stringifyJson } from "../http/json.js";
+import type { LocalStorage } from "../storage/local.js";
+import { endpointFromUrl, probeTcp } from "@smm/health";
 import {
   csrfValue,
   hashPassword,
@@ -51,6 +53,7 @@ export class AuthHandler {
     private readonly support?: SupportService,
     private readonly admin?: AdminOperationsService,
     private readonly paymentSettings?: PaymentSettingsService,
+    private readonly storage?: LocalStorage,
   ) {}
   async handle(
     request: IncomingMessage,
@@ -82,6 +85,20 @@ export class AuthHandler {
           "AUTHENTICATION_REQUIRED",
           "Authentication required",
         );
+      if (
+        path.startsWith("/api/v1/customer") &&
+        this.admin &&
+        !canAccessAdmin(auth.access, "settings.manage")
+      ) {
+        const maintenance = await this.admin.maintenance();
+        if (maintenance.enabled)
+          return this.error(
+            response,
+            503,
+            "MAINTENANCE_MODE",
+            maintenance.message,
+          );
+      }
       if (request.method === "GET" && path === "/api/v1/me")
         return this.ok(response, {
           user: this.publicUser(auth.user),
@@ -338,6 +355,51 @@ export class AuthHandler {
           await this.support!.adminInbox(Object.fromEntries(u.searchParams)),
         );
       }
+      if (request.method === "GET" && path === "/api/v1/admin/system-status") {
+        if (!canAccessAdmin(auth.access, "settings.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const [database, redis] = await Promise.all([
+          probeTcp(
+            endpointFromUrl(this.config.databaseUrl),
+            this.config.healthTimeoutMs,
+          ),
+          probeTcp(
+            endpointFromUrl(this.config.redisUrl),
+            this.config.healthTimeoutMs,
+          ),
+        ]);
+        return this.ok(response, {
+          checkedAt: new Date(),
+          api: { status: "healthy", message: "API đang hoạt động" },
+          database: { status: database ? "healthy" : "down" },
+          redis: { status: redis ? "healthy" : "down" },
+          email: {
+            status: process.env.SMTP_HOST ? "healthy" : "not_configured",
+            message: process.env.SMTP_HOST
+              ? "SMTP đã cấu hình"
+              : "SMTP chưa cấu hình",
+          },
+          storage: {
+            status: this.storage ? "healthy" : "not_configured",
+            message: this.storage
+              ? "Kho tệp riêng tư khả dụng"
+              : "Cần cấu hình lưu trữ bền vững",
+          },
+          payments: {
+            casso: process.env.CASSO_WEBHOOK_SECURE_TOKEN
+              ? "healthy"
+              : "not_configured",
+            binance: process.env.BINANCE_MERCHANT_API_KEY
+              ? "healthy"
+              : "not_configured",
+          },
+        });
+      }
       if (request.method === "GET" && path === "/api/v1/admin/deposits") {
         if (!canAccessAdmin(auth.access, "payments.manage"))
           return this.error(
@@ -373,6 +435,23 @@ export class AuthHandler {
             BigInt(adminTicket[1]!),
             true,
           ),
+        );
+      }
+      const adminAttachmentDownload =
+        /^\/api\/v1\/admin\/attachments\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "GET" && adminAttachmentDownload) {
+        if (!canAccessAdmin(auth.access, "tickets.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return await this.downloadAttachment(
+          response,
+          auth.user.id,
+          adminAttachmentDownload[1]!,
+          true,
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/catalog") {
@@ -580,6 +659,43 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.support!.create(auth.user.id, await this.body(request)),
+        );
+      const adminAttachmentUpload =
+        /^\/api\/v1\/admin\/tickets\/(\d+)\/attachments$/.exec(path);
+      if (request.method === "POST" && adminAttachmentUpload) {
+        if (!canAccessAdmin(auth.access, "tickets.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return await this.uploadAttachment(
+          request,
+          response,
+          auth.user.id,
+          BigInt(adminAttachmentUpload[1]!),
+          true,
+        );
+      }
+      const customerAttachmentUpload =
+          /^\/api\/v1\/customer\/tickets\/(\d+)\/attachments$/.exec(path),
+        customerAttachmentDownload =
+          /^\/api\/v1\/customer\/attachments\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "POST" && customerAttachmentUpload)
+        return await this.uploadAttachment(
+          request,
+          response,
+          auth.user.id,
+          BigInt(customerAttachmentUpload[1]!),
+          false,
+        );
+      if (request.method === "GET" && customerAttachmentDownload)
+        return await this.downloadAttachment(
+          response,
+          auth.user.id,
+          customerAttachmentDownload[1]!,
+          false,
         );
       const ticketReply = /^\/api\/v1\/customer\/tickets\/(\d+)\/reply$/.exec(
         path,
@@ -1131,7 +1247,10 @@ export class AuthHandler {
       let data = "";
       request.on("data", (chunk) => {
         data += String(chunk ?? "");
-        if (Buffer.byteLength(data) > 32_768) {
+        const attachment = /\/attachments$/.test(
+          new URL(request.url ?? "/", this.config.apiUrl).pathname,
+        );
+        if (Buffer.byteLength(data) > (attachment ? 7_100_000 : 32_768)) {
           request.destroy();
           reject(new InputError("PAYLOAD_TOO_LARGE", "Payload too large"));
         }
@@ -1154,6 +1273,66 @@ export class AuthHandler {
         ),
       );
     });
+  }
+  private async uploadAttachment(
+    request: IncomingMessage,
+    response: ServerResponse,
+    userId: string,
+    ticketId: bigint,
+    isStaff: boolean,
+  ): Promise<true> {
+    if (!this.storage)
+      return this.error(
+        response,
+        503,
+        "STORAGE_UNAVAILABLE",
+        "Storage unavailable",
+      );
+    const body = await this.body(request),
+      name = String(body.name ?? ""),
+      mime = String(body.mime ?? ""),
+      encoded = String(body.data ?? "");
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
+      throw new SupportError("ATTACHMENT_INVALID", "Invalid attachment");
+    const data = Buffer.from(encoded, "base64");
+    this.support!.validateAttachment({ name, mime, size: data.length });
+    const stored = await this.storage.put(name, mime, data);
+    return this.ok(
+      response,
+      await this.support!.addAttachment(
+        userId,
+        ticketId,
+        { storageKey: stored.key, originalName: name, mime, size: stored.size },
+        isStaff,
+      ),
+    );
+  }
+  private async downloadAttachment(
+    response: ServerResponse,
+    userId: string,
+    id: string,
+    isStaff: boolean,
+  ): Promise<true> {
+    if (!this.storage)
+      return this.error(
+        response,
+        503,
+        "STORAGE_UNAVAILABLE",
+        "Storage unavailable",
+      );
+    const item = await this.support!.attachment(userId, id, isStaff),
+      data = await this.storage.read(item.storageKey),
+      filename = String(item.originalName).replace(/[^A-Za-z0-9._-]/g, "_");
+    response.statusCode = 200;
+    response.setHeader("content-type", item.mime);
+    response.setHeader("content-length", String(data.length));
+    response.setHeader(
+      "content-disposition",
+      `attachment; filename="${filename || "attachment"}"`,
+    );
+    response.setHeader("cache-control", "private, no-store");
+    response.end(data);
+    return true;
   }
   private email(value: unknown) {
     const email = String(value ?? "")

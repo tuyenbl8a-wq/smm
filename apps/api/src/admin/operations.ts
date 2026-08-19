@@ -446,6 +446,7 @@ export class AdminOperationsService {
         "timezone",
         "registrationEnabled",
         "maintenanceMode",
+        "maintenanceMessage",
       ]),
       entries = Object.entries(input).filter(([key]) => allowed.has(key));
     if (!entries.length)
@@ -467,5 +468,26 @@ export class AdminOperationsService {
       });
       return { updated: entries.map(([key]) => key) };
     });
+  }
+
+  async maintenance() {
+    const rows = await this.db.setting.findMany({
+      where: {
+        group: "general",
+        key: { in: ["maintenanceMode", "maintenanceMessage"] },
+        encrypted: false,
+      },
+      select: { key: true, value: true },
+    });
+    const values = Object.fromEntries(
+      rows.map((row: any) => [row.key, row.value]),
+    );
+    return {
+      enabled: values.maintenanceMode === true,
+      message:
+        typeof values.maintenanceMessage === "string"
+          ? values.maintenanceMessage.slice(0, 500)
+          : "Hệ thống đang bảo trì. Vui lòng quay lại sau.",
+    };
   }
 }

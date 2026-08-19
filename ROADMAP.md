@@ -47,13 +47,14 @@ migration validation, and build checks applicable to the code introduced by it.
   exact-once settlement. Scheduled Binance reconciliation still requires live
   merchant API credentials and a production adapter contract.
 - Phase 18 provides customer/admin ticket conversations, private internal notes,
-  notification unread/read-all operations and bounded email jobs. Durable private
-  attachment delivery and a live SMTP transport remain incomplete.
+  notification unread/read-all operations, authenticated private attachment routes,
+  an implicit-TLS SMTP transport and bounded email retries. A production durable
+  object-storage adapter and live SMTP acceptance remain incomplete.
 - Phase 19 has database entities only; coupon redemption and affiliate commission
   settlement are intentionally not presented as complete without atomic services.
 - Phase 20 now has database-backed range reports and formula-safe CSV export;
   persisted report snapshots and time-series charts remain incomplete.
-- Phases 21–23 have substantial security, regression-test, Docker and runbook
-  foundations. Maintenance-mode orchestration, live dependency E2E and a supplied
-  reverse-proxy deployment still require operator acceptance.
+- Phases 21–23 now include enforced customer/API maintenance mode, bounded dependency
+  status checks, security regressions, Docker/runbook foundations and an Nginx TLS
+  example. Live dependency E2E and production deployment require operator acceptance.
 - Phase 24 evidence and limitations are recorded in `docs/FINAL_AUDIT.md`.

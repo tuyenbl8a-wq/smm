@@ -38,6 +38,7 @@ export function createApiServer(
   binance?: BinanceWebhookProcessor,
   limiter?: DistributedRateLimiter,
   casso?: CassoWebhook,
+  maintenance?: () => Promise<{ enabled: boolean; message: string }>,
 ): Server {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", config.apiUrl).pathname;
@@ -118,6 +119,21 @@ export function createApiServer(
     }
     if (request.method === "POST" && path === "/api/v2" && reseller) {
       try {
+        const state = maintenance
+          ? await maintenance()
+          : { enabled: false, message: "" };
+        if (state.enabled) {
+          response.statusCode = 503;
+          response.setHeader("content-type", "application/json");
+          response.setHeader("retry-after", "300");
+          response.end(
+            stringifyJson({
+              error: state.message,
+              code: "MAINTENANCE_MODE",
+            }),
+          );
+          return;
+        }
         const raw = await readBody(request, 65_536),
           input = raw.trim().startsWith("{")
             ? JSON.parse(raw)

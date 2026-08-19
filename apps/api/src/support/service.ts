@@ -188,8 +188,45 @@ export class SupportService {
       take: 100,
     });
   }
+  async addAttachment(
+    userId: string,
+    ticketId: bigint,
+    input: {
+      storageKey: string;
+      originalName: string;
+      mime: string;
+      size: number;
+    },
+    isStaff = false,
+  ) {
+    const ticket = await this.db.ticket.findUnique({ where: { id: ticketId } });
+    if (!ticket || (!isStaff && ticket.userId !== userId))
+      throw new SupportError("TICKET_NOT_FOUND", "Ticket not found");
+    return this.db.attachment.create({
+      data: { ticketId, uploaderId: userId, ...input },
+      select: {
+        id: true,
+        originalName: true,
+        mime: true,
+        size: true,
+        createdAt: true,
+      },
+    });
+  }
+  async attachment(userId: string, id: string, isStaff = false) {
+    const item = await this.db.attachment.findUnique({ where: { id } });
+    if (!item)
+      throw new SupportError("ATTACHMENT_NOT_FOUND", "Attachment not found");
+    const ticket = await this.db.ticket.findUnique({
+      where: { id: item.ticketId },
+    });
+    if (!ticket || (!isStaff && ticket.userId !== userId))
+      throw new SupportError("ATTACHMENT_NOT_FOUND", "Attachment not found");
+    return item;
+  }
   validateAttachment(x: { name: string; mime: string; size: number }) {
     if (
+      x.size <= 0 ||
       x.size > 5 * 1024 * 1024 ||
       ![/^image\/(png|jpeg|webp)$/, /^application\/pdf$/].some((r) =>
         r.test(x.mime),

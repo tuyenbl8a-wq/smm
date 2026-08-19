@@ -13,11 +13,12 @@ external merchant, SMTP, object-storage, or production network was exercised.
 | API v2                    | PASS    | Key isolation, standard actions, Redis atomic limiter, idempotency and route tests                                | Multi-instance staging soak test                                            |
 | VietQR/Casso deposits     | PASS    | Verified webhook, exact amount matching, transaction uniqueness, atomic exact-once credit and replay tests        | Live Casso/VietQR credentials                                               |
 | Binance deposits          | PARTIAL | Fail-closed signed webhook with exact amount/currency and replay protection                                       | Scheduled official merchant reconciliation and live credentials             |
-| Support/notifications     | PARTIAL | Customer/admin conversations, hidden internal notes, read/unread operations and bounded email queue               | Durable private attachments and SMTP delivery                               |
+| Support/notifications     | PARTIAL | Customer/admin conversations, ownership-checked private files, read/unread operations and bounded SMTP queue      | Durable object-storage adapter and live SMTP acceptance                     |
 | Reports                   | PARTIAL | Database-backed range totals, top services/providers and formula-safe CSV                                         | Persisted snapshots and time-series visualization                           |
 | Coupon/referral           | PARTIAL | Schema foundations and financial constraints                                                                      | Atomic redemption/commission services and operational UI                    |
 | UI and accessibility      | PARTIAL | Separate Vietnamese customer/admin navigation, responsive tables/forms, explicit DOM lookup and translated states | Real-device accessibility/user acceptance testing                           |
-| Production infrastructure | PARTIAL | Non-root images, Compose dependencies, health probes and backup/recovery runbook                                  | Staging deployment, reverse proxy selection and monitoring integration      |
+| Maintenance/status        | PASS    | Customer/API maintenance enforcement, webhook and health bypass, bounded database/Redis probes                    | Production operator acceptance                                              |
+| Production infrastructure | PARTIAL | Non-root images, Compose, health probes, Nginx TLS example and backup/rollback runbook                            | Staging deployment and monitoring integration                               |
 | Automated tests           | PASS    | Workspace unit/regression suites and browser smoke contract                                                       | Authenticated live-browser run is blocked when Chromium/services are absent |
 
 ## Security conclusions
@@ -35,6 +36,6 @@ external merchant, SMTP, object-storage, or production network was exercised.
 ## Release recommendation
 
 The completed core is suitable for a staging/user-acceptance deployment. Do not
-declare every roadmap phase complete: Binance reconciliation, SMTP/attachments,
+declare every roadmap phase complete: Binance reconciliation, durable object storage,
 coupon/referral settlement, report snapshots and live-browser infrastructure
 remain `PARTIAL` or externally blocked.

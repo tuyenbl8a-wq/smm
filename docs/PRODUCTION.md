@@ -1,5 +1,18 @@
 # Production readiness checklist
 
+## Host preparation
+
+- Recommended minimum for a small installation is Ubuntu 24.04, 2 vCPU, 4 GiB
+  RAM and 40 GiB encrypted SSD. Size PostgreSQL and worker capacity from measured
+  order volume, not this minimum.
+- Install Docker Engine and the Compose plugin from Docker's signed repository.
+  Point DNS for the panel and API names at the host before requesting TLS
+  certificates. `docs/nginx.conf.example` shows HTTPS redirect, security headers,
+  forwarded headers, upload limits, and separate web/API upstreams.
+- Create the first administrator only through the documented one-time development
+  bootstrap in an isolated environment, immediately rotate its password, and never
+  execute the development seed against production.
+
 ## Required environment
 
 - Set `NODE_ENV=production`, canonical HTTPS `APP_URL`/`API_URL`, PostgreSQL
@@ -70,6 +83,19 @@
 5. Perform scheduled encrypted backups with retention, off-site replication, and
    routine restore drills. Record secret rotation and migration events in the
    operational change log.
+6. Keep at least 7 daily and 4 weekly PostgreSQL backups. Back up the durable
+   attachment bucket separately with versioning; database metadata alone cannot
+   restore an attachment.
+
+## Upgrade and rollback
+
+1. Build and tag immutable API, web, and worker images with the Git commit SHA.
+2. Back up PostgreSQL and attachments, deploy migrations, then roll API, worker and
+   web in that order while checking readiness.
+3. Roll back application images when code fails. Never reverse a data migration
+   blindly; restore the verified pre-deploy backup or apply a reviewed forward fix.
+4. Use `docker compose logs --since 15m api worker web` for triage, but forward
+   production logs to a redacting, access-controlled sink with alerting.
 
 ## Recovery
 

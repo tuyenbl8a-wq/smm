@@ -20,6 +20,7 @@ import {
 import { CassoWebhook } from "./payment/casso.js";
 import { AdminOperationsService } from "./admin/operations.js";
 import { PaymentSettingsService } from "./payment/settings.js";
+import { LocalStorage } from "./storage/local.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -37,6 +38,11 @@ const paymentSettings = new PaymentSettingsService(
   prisma,
   config.encryptionKey,
 );
+const attachmentStorage =
+  config.environment === "production"
+    ? undefined
+    : new LocalStorage(process.env.ATTACHMENT_PATH ?? ".data/attachments");
+const adminOperations = new AdminOperationsService(prisma);
 const server = createApiServer(
   config,
   new AuthHandler(
@@ -50,8 +56,9 @@ const server = createApiServer(
     resellerService,
     new DepositService(prisma, () => paymentSettings.publicBank()),
     new SupportService(prisma),
-    new AdminOperationsService(prisma),
+    adminOperations,
     paymentSettings,
+    attachmentStorage,
   ),
   resellerService,
   new VietQrWebhook(prisma, process.env.VIETQR_WEBHOOK_SECRET ?? ""),
@@ -68,6 +75,7 @@ const server = createApiServer(
   new CassoWebhook(prisma, process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? "", () =>
     paymentSettings.webhookToken(process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? ""),
   ),
+  () => adminOperations.maintenance(),
 );
 server.listen(config.port, config.host, () => {
   console.log(
