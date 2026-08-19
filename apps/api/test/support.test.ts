@@ -47,3 +47,23 @@ test("notification unread operations stay scoped to the customer", async () => {
   assert.deepEqual(calls[0].where, { userId: "customer", readAt: null });
   assert.deepEqual(calls[1].where, { userId: "customer", readAt: null });
 });
+
+test("private attachment access enforces ticket ownership while allowing staff", async () => {
+  const service = new SupportService({
+    attachment: {
+      findUnique: async () => ({
+        id: "a",
+        ticketId: 1n,
+        storageKey: "key",
+        originalName: "invoice.pdf",
+        mime: "application/pdf",
+      }),
+    },
+    ticket: { findUnique: async () => ({ id: 1n, userId: "owner" }) },
+  });
+  await assert.rejects(
+    () => service.attachment("other", "a"),
+    (error: any) => error.code === "ATTACHMENT_NOT_FOUND",
+  );
+  assert.equal((await service.attachment("admin", "a", true)).id, "a");
+});

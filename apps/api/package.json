@@ -14,6 +14,7 @@
   "dependencies": {
     "@prisma/client": "6.14.0",
     "@smm/config": "workspace:*",
+    "@smm/database": "workspace:*",
     "@smm/health": "workspace:*",
     "@smm/types": "workspace:*"
   }

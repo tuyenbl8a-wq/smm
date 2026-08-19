@@ -270,6 +270,23 @@ model Deposit {
   @@index([status, expiresAt])
   @@map("deposits")
 }
+model PaymentReconciliationJob {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  depositId String @unique @map("deposit_id") @db.Uuid
+  provider String @db.VarChar(40)
+  status RequestStatus @default(PENDING)
+  attempts Int @default(0)
+  maxAttempts Int @default(8) @map("max_attempts")
+  nextAttemptAt DateTime @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  claimedAt DateTime? @map("claimed_at") @db.Timestamptz(3)
+  claimToken String? @unique @map("claim_token") @db.Uuid
+  lastError String? @map("last_error") @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([provider, status, nextAttemptAt])
+  @@index([status, claimedAt])
+  @@map("payment_reconciliation_jobs")
+}
 model PaymentWebhook {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   paymentMethodId String @map("payment_method_id") @db.Uuid
@@ -393,6 +410,9 @@ model Order {
   remains Int?
   saleRate Decimal @map("sale_rate") @db.Decimal(20, 8)
   charge Decimal @db.Decimal(20, 8)
+  originalCharge Decimal @default(0) @map("original_charge") @db.Decimal(20, 8)
+  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(20, 8)
+  couponCode String? @map("coupon_code") @db.VarChar(50)
   providerRate Decimal @map("provider_rate") @db.Decimal(20, 8)
   providerCost Decimal @map("provider_cost") @db.Decimal(20, 8)
   profit Decimal @db.Decimal(20, 8)
@@ -576,6 +596,25 @@ model AffiliateCommission {
   @@unique([affiliateId, referenceId])
   @@index([status, createdAt])
   @@map("affiliate_commissions")
+}
+model DailyReportSnapshot {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  date DateTime @db.Date
+  timezone String @db.VarChar(64)
+  revenue Decimal @default(0) @db.Decimal(20, 8)
+  providerCost Decimal @default(0) @map("provider_cost") @db.Decimal(20, 8)
+  grossProfit Decimal @default(0) @map("gross_profit") @db.Decimal(20, 8)
+  depositAmount Decimal @default(0) @map("deposit_amount") @db.Decimal(20, 8)
+  refundedAmount Decimal @default(0) @map("refunded_amount") @db.Decimal(20, 8)
+  totalOrders Int @default(0) @map("total_orders")
+  failedOrders Int @default(0) @map("failed_orders")
+  partialOrders Int @default(0) @map("partial_orders")
+  newUsers Int @default(0) @map("new_users")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([date, timezone])
+  @@index([timezone, date])
+  @@map("daily_report_snapshots")
 }
 model PriceGroup {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

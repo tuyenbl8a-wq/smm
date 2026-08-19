@@ -72,6 +72,13 @@ export class BinanceMerchantProvider implements PaymentProvider {
     );
   }
 }
+export interface BinancePaymentEvent {
+  eventId: string;
+  transactionId: string;
+  depositCode: string;
+  amount: string;
+  currency: string;
+}
 export class BinanceWebhookProcessor {
   constructor(
     private db: any,
@@ -87,6 +94,16 @@ export class BinanceWebhookProcessor {
       );
     if (eventStatus !== "PAY_SUCCESS")
       return { status: "IGNORED", reason: "PAYMENT_NOT_SUCCESSFUL" };
+    return this.settle(event, payload, true);
+  }
+  reconcile(event: BinancePaymentEvent, payload: Record<string, unknown> = {}) {
+    return this.settle(event, payload, false);
+  }
+  private async settle(
+    event: BinancePaymentEvent,
+    payload: Record<string, unknown>,
+    signatureValid: boolean,
+  ) {
     try {
       return await this.db.$transaction(async (tx: any) => {
         const deposit = await tx.deposit.findUnique({
@@ -97,11 +114,11 @@ export class BinanceWebhookProcessor {
           data: {
             paymentMethodId: deposit.paymentMethodId,
             externalEventId: event.eventId,
-            signatureValid: true,
+            signatureValid,
             status: "PENDING",
-            payload: JSON.parse(raw),
+            payload,
             payloadHash: createHmac("sha256", "binance-payload")
-              .update(raw)
+              .update(JSON.stringify(payload))
               .digest("hex"),
           },
         });
@@ -174,9 +191,9 @@ export class BinanceWebhookProcessor {
         });
         return { status: "PAID" };
       });
-    } catch (e: any) {
-      if (e?.code === "P2002") return { status: "DUPLICATE" };
-      throw e;
+    } catch (error: any) {
+      if (error?.code === "P2002") return { status: "DUPLICATE" };
+      throw error;
     }
   }
 }

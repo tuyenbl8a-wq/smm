@@ -31,7 +31,10 @@ export class AdminOperationError extends Error {
 }
 
 export class AdminOperationsService {
-  constructor(private db: any) {}
+  private snapshots: DailySnapshotService;
+  constructor(private db: any) {
+    this.snapshots = new DailySnapshotService(db);
+  }
 
   async users(query: any) {
     const page = Math.max(1, Number(query.page) || 1),
@@ -417,6 +420,37 @@ export class AdminOperationsService {
     return rows.map((row) => row.map(safe).join(",")).join("\r\n");
   }
 
+  async reportTrend(from: string, to: string) {
+    const setting = await this.db.setting.findUnique({
+      where: { group_key: { group: "general", key: "timezone" } },
+    });
+    const timezone =
+      typeof setting?.value === "string" ? setting.value : "Asia/Ho_Chi_Minh";
+    return {
+      timezone,
+      items: await this.snapshots.trend(timezone, from, to),
+    };
+  }
+
+  async rebuildReport(actorId: string, date: string) {
+    const setting = await this.db.setting.findUnique({
+      where: { group_key: { group: "general", key: "timezone" } },
+    });
+    const timezone =
+        typeof setting?.value === "string" ? setting.value : "Asia/Ho_Chi_Minh",
+      snapshot = await this.snapshots.build(date, timezone);
+    await this.db.auditLog.create({
+      data: {
+        actorId,
+        action: "REPORT_SNAPSHOT_REBUILD",
+        resource: "DailyReportSnapshot",
+        resourceId: snapshot.id,
+        after: { date, timezone },
+      },
+    });
+    return snapshot;
+  }
+
   async logs(kind: string, page = 1, limit = 50) {
     const model =
       kind === "system"
@@ -446,6 +480,7 @@ export class AdminOperationsService {
         "timezone",
         "registrationEnabled",
         "maintenanceMode",
+        "maintenanceMessage",
       ]),
       entries = Object.entries(input).filter(([key]) => allowed.has(key));
     if (!entries.length)
@@ -468,4 +503,26 @@ export class AdminOperationsService {
       return { updated: entries.map(([key]) => key) };
     });
   }
+
+  async maintenance() {
+    const rows = await this.db.setting.findMany({
+      where: {
+        group: "general",
+        key: { in: ["maintenanceMode", "maintenanceMessage"] },
+        encrypted: false,
+      },
+      select: { key: true, value: true },
+    });
+    const values = Object.fromEntries(
+      rows.map((row: any) => [row.key, row.value]),
+    );
+    return {
+      enabled: values.maintenanceMode === true,
+      message:
+        typeof values.maintenanceMessage === "string"
+          ? values.maintenanceMessage.slice(0, 500)
+          : "Hệ thống đang bảo trì. Vui lòng quay lại sau.",
+    };
+  }
 }
+import { DailySnapshotService } from "@smm/database";

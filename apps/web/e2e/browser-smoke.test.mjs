@@ -18,6 +18,7 @@ const routes = [
   "/support",
   "/notifications",
   "/account",
+  "/referral",
   "/admin",
   "/admin/users",
   "/admin/orders",
@@ -30,6 +31,7 @@ const routes = [
   "/admin/reports",
   "/admin/logs",
   "/admin/settings",
+  "/admin/coupons",
 ];
 test("all production smoke destinations are registered", () => {
   for (const route of routes)

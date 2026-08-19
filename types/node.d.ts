@@ -53,6 +53,9 @@ declare module "node:net" {
     port: number;
   }): Socket;
 }
+declare module "node:tls" {
+  export function connect(options: Record<string, unknown>): any;
+}
 declare module "node:test" {
   const test: (name: string, callback: () => void | Promise<void>) => void;
   export default test;

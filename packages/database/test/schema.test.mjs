@@ -98,3 +98,20 @@ test("lifecycle action migration persists bounded retry and stale claims", () =>
   assert.match(sql, /"claimed_at"/);
   assert.match(sql, /status_next_attempt_at_index/);
 });
+
+test("phase 17-20 migration adds durable reconciliation, promotion snapshots and reports", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260819160000_phase17_19_20_completion/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /payment_reconciliation_jobs/);
+  assert.match(sql, /claim_token/);
+  assert.match(sql, /payment_reconciliation_jobs_deposit_id_key/);
+  assert.match(sql, /attempts_check/);
+  assert.match(sql, /original_charge/);
+  assert.match(sql, /discount_amount/);
+  assert.match(sql, /daily_report_snapshots_date_timezone_key/);
+});

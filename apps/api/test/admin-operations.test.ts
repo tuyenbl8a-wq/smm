@@ -77,3 +77,18 @@ test("report CSV neutralizes spreadsheet formulas", async () => {
   assert.match(csv, /"'=1\+1"/);
   assert.match(csv, /"'\+10"/);
 });
+
+test("maintenance settings are normalized for runtime enforcement", async () => {
+  const service = new AdminOperationsService({
+    setting: {
+      findMany: async () => [
+        { key: "maintenanceMode", value: true },
+        { key: "maintenanceMessage", value: "Vui lòng quay lại sau." },
+      ],
+    },
+  });
+  assert.deepEqual(await service.maintenance(), {
+    enabled: true,
+    message: "Vui lòng quay lại sau.",
+  });
+});

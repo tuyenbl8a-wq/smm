@@ -14,6 +14,7 @@ test("all customer destinations use the shared customer navigation", () => {
     "/support",
     "/notifications",
     "/account",
+    "/referral",
   ])
     assert.match(
       page,
@@ -29,6 +30,7 @@ test("all customer destinations use the shared customer navigation", () => {
     "orderDetailPage",
     "depositDetailPage",
     "accountPage",
+    "referralPage",
   ])
     assert.match(page, new RegExp(`function ${fn}[^]*?customerNavigation`));
 });
@@ -39,6 +41,7 @@ test("customer and admin routes remain independently available", () => {
     "/admin/catalog",
     "/admin/providers",
     "/admin/support",
+    "/admin/coupons",
   ])
     assert.match(main, new RegExp(`\\"${route.replaceAll("/", "\\/")}\\"`));
   assert.match(main, /adminProviderDetailPage/);

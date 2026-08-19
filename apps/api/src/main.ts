@@ -20,6 +20,8 @@ import {
 import { CassoWebhook } from "./payment/casso.js";
 import { AdminOperationsService } from "./admin/operations.js";
 import { PaymentSettingsService } from "./payment/settings.js";
+import { LocalStorage } from "./storage/local.js";
+import { PromotionService } from "./promotion/service.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -37,6 +39,17 @@ const paymentSettings = new PaymentSettingsService(
   prisma,
   config.encryptionKey,
 );
+const attachmentStorage =
+  config.environment === "production"
+    ? undefined
+    : new LocalStorage(process.env.ATTACHMENT_PATH ?? ".data/attachments");
+const adminOperations = new AdminOperationsService(prisma);
+const binanceProvider = new BinanceMerchantProvider(
+  "https://bpay.binanceapi.com",
+  process.env.BINANCE_MERCHANT_API_KEY ?? "",
+  process.env.BINANCE_MERCHANT_SECRET ?? "",
+  process.env.BINANCE_WEBHOOK_SECRET ?? "",
+);
 const server = createApiServer(
   config,
   new AuthHandler(
@@ -48,26 +61,23 @@ const server = createApiServer(
     orderService,
     lifecycleService,
     resellerService,
-    new DepositService(prisma, () => paymentSettings.publicBank()),
+    new DepositService(prisma, () => paymentSettings.publicBank(), {
+      BINANCE: binanceProvider,
+    }),
     new SupportService(prisma),
-    new AdminOperationsService(prisma),
+    adminOperations,
     paymentSettings,
+    attachmentStorage,
+    new PromotionService(prisma),
   ),
   resellerService,
   new VietQrWebhook(prisma, process.env.VIETQR_WEBHOOK_SECRET ?? ""),
-  new BinanceWebhookProcessor(
-    prisma,
-    new BinanceMerchantProvider(
-      "https://bpay.binanceapi.com",
-      process.env.BINANCE_MERCHANT_API_KEY ?? "",
-      process.env.BINANCE_MERCHANT_SECRET ?? "",
-      process.env.BINANCE_WEBHOOK_SECRET ?? "",
-    ),
-  ),
+  new BinanceWebhookProcessor(prisma, binanceProvider),
   new DistributedRateLimiter(new RedisCounterClient(new URL(config.redisUrl))),
   new CassoWebhook(prisma, process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? "", () =>
     paymentSettings.webhookToken(process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? ""),
   ),
+  () => adminOperations.maintenance(),
 );
 server.listen(config.port, config.host, () => {
   console.log(

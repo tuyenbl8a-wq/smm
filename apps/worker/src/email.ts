@@ -7,14 +7,17 @@ export class EmailWorker {
     if (!this.send) return 0;
     const row = await this.db.$transaction(async (tx: any) => {
       const x = await tx.$queryRawUnsafe(
-        `SELECT * FROM "notifications" WHERE "channel"='EMAIL' AND "delivered_at" IS NULL AND "delivery_attempts"<5 AND ("next_attempt_at" IS NULL OR "next_attempt_at"<=NOW()) FOR UPDATE SKIP LOCKED LIMIT 1`,
+        `SELECT n.*,u."email" FROM "notifications" n JOIN "users" u ON u."id"=n."user_id" WHERE n."channel"='EMAIL' AND n."delivered_at" IS NULL AND n."delivery_attempts"<5 AND (n."next_attempt_at" IS NULL OR n."next_attempt_at"<=NOW()) FOR UPDATE OF n SKIP LOCKED LIMIT 1`,
       );
       if (!x[0]) return null;
       await tx.notification.update({
         where: { id: x[0].id },
         data: {
           deliveryAttempts: { increment: 1 },
-          nextAttemptAt: new Date(Date.now() + 60000),
+          nextAttemptAt: new Date(
+            Date.now() +
+              Math.min(3_600_000, 30_000 * 2 ** x[0].delivery_attempts),
+          ),
         },
       });
       return x[0];
@@ -23,6 +26,7 @@ export class EmailWorker {
     try {
       await this.send({
         userId: row.user_id,
+        to: row.email,
         title: row.title,
         body: row.body,
       });
@@ -33,7 +37,9 @@ export class EmailWorker {
     } catch {
       await this.db.notification.update({
         where: { id: row.id },
-        data: { deliveryError: "SMTP_DELIVERY_FAILED" },
+        data: {
+          deliveryError: "SMTP_DELIVERY_FAILED",
+        },
       });
     }
     return 1;

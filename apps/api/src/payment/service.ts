@@ -40,6 +40,7 @@ export class DepositService {
       account: process.env.BANK_ACCOUNT_NUMBER ?? "",
       accountName: process.env.BANK_ACCOUNT_NAME ?? "",
     },
+    private providers: Record<string, PaymentProvider> = {},
   ) {}
   async create(userId: string, input: any) {
     const amount = normalizeAmount(input.amount),
@@ -57,7 +58,7 @@ export class DepositService {
     )
       throw new PaymentError("AMOUNT_TOO_SMALL", "Amount below minimum");
     const code = `NAP${randomBytes(6).toString("hex").toUpperCase()}`;
-    return this.db.deposit.create({
+    const deposit = await this.db.deposit.create({
       data: {
         userId,
         paymentMethodId: method.id,
@@ -72,6 +73,28 @@ export class DepositService {
         expiresAt: new Date(Date.now() + 30 * 60000),
       },
     });
+    const provider = this.providers[String(method.providerType).toUpperCase()];
+    if (!provider) return deposit;
+    try {
+      const payment = await provider.createPayment(deposit);
+      return await this.db.$transaction(async (tx: any) => {
+        const updated = await tx.deposit.update({
+          where: { id: deposit.id },
+          data: { externalOrderId: payment.externalOrderId },
+        });
+        if (String(method.providerType).toUpperCase() === "BINANCE")
+          await tx.paymentReconciliationJob.create({
+            data: { depositId: deposit.id, provider: "BINANCE" },
+          });
+        return { ...updated, payment };
+      });
+    } catch (error) {
+      await this.db.deposit.update({
+        where: { id: deposit.id },
+        data: { status: "FAILED" },
+      });
+      throw error;
+    }
   }
   async detail(userId: string, id: string) {
     let x = await this.db.deposit.findFirst({ where: { id, userId } });
@@ -176,6 +199,17 @@ export class DepositService {
         paymentMethod: await this.db.paymentMethod.findUnique({
           where: { id: row.paymentMethodId },
           select: { code: true, name: true },
+        }),
+        reconciliation: await this.db.paymentReconciliationJob.findUnique({
+          where: { depositId: row.id },
+          select: {
+            status: true,
+            attempts: true,
+            maxAttempts: true,
+            nextAttemptAt: true,
+            claimedAt: true,
+            lastError: true,
+          },
         }),
       })),
     );
