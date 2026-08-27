@@ -100,6 +100,24 @@ enum NotificationChannel {
   TELEGRAM
 }
 
+enum PricingMode {
+  FIXED
+  COST_PLUS_PERCENT
+  COST_PLUS_FIXED
+  COST_PLUS_PERCENT_AND_FIXED
+}
+
+enum PriceSafetyAction {
+  AUTO_RAISE
+  DISABLE_SERVICE
+  REQUIRE_REVIEW
+}
+
+enum PriceReviewStatus {
+  OK
+  PRICE_REVIEW
+}
+
 model User {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email String @unique @db.VarChar(320)
@@ -318,10 +336,15 @@ model Provider {
   lastSuccessAt DateTime? @map("last_success_at") @db.Timestamptz(3)
   lastFailureAt DateTime? @map("last_failure_at") @db.Timestamptz(3)
   lastSyncAt DateTime? @map("last_sync_at") @db.Timestamptz(3)
+  autoSyncEnabled Boolean @default(false) @map("auto_sync_enabled")
+  syncIntervalMinutes Int @default(15) @map("sync_interval_minutes")
+  nextSyncAt DateTime? @map("next_sync_at") @db.Timestamptz(3)
+  syncClaimedAt DateTime? @map("sync_claimed_at") @db.Timestamptz(3)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([status, priority])
+  @@index([autoSyncEnabled, nextSyncAt])
   @@map("providers")
 }
 model ProviderService {
@@ -338,6 +361,7 @@ model ProviderService {
   cancel Boolean @default(false)
   raw Json?
   active Boolean @default(true)
+  stale Boolean @default(false)
   lastSyncedAt DateTime @map("last_synced_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -367,6 +391,14 @@ model Service {
   pricingModel String @default("PER_THOUSAND") @map("pricing_model") @db.VarChar(40)
   rate Decimal @db.Decimal(20, 8)
   providerCost Decimal @map("provider_cost") @db.Decimal(20, 8)
+  pricingMode PricingMode @default(COST_PLUS_PERCENT_AND_FIXED) @map("pricing_mode_strategy")
+  defaultMarkupPercent Decimal @default(0) @map("default_markup_percent") @db.Decimal(9, 6)
+  defaultFixedProfit Decimal @default(0) @map("default_fixed_profit") @db.Decimal(20, 8)
+  defaultMinProfit Decimal @default(0) @map("default_min_profit") @db.Decimal(20, 8)
+  autoDecrease Boolean @default(true) @map("auto_decrease")
+  safetyAction PriceSafetyAction @default(AUTO_RAISE) @map("safety_action")
+  maxAutomaticIncreasePercent Decimal @default(50) @map("max_automatic_increase_percent") @db.Decimal(9, 6)
+  priceReviewStatus PriceReviewStatus @default(OK) @map("price_review_status")
   min Int
   max Int
   averageTime String? @map("average_time") @db.VarChar(100)
@@ -413,6 +445,8 @@ model Order {
   originalCharge Decimal @default(0) @map("original_charge") @db.Decimal(20, 8)
   discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(20, 8)
   couponCode String? @map("coupon_code") @db.VarChar(50)
+  priceGroupIdSnapshot String? @map("price_group_id_snapshot") @db.Uuid
+  priceGroupCodeSnapshot String? @map("price_group_code_snapshot") @db.VarChar(50)
   providerRate Decimal @map("provider_rate") @db.Decimal(20, 8)
   providerCost Decimal @map("provider_cost") @db.Decimal(20, 8)
   profit Decimal @db.Decimal(20, 8)
@@ -621,6 +655,9 @@ model PriceGroup {
   name String @unique @db.VarChar(100)
   code String @unique @db.VarChar(50)
   active Boolean @default(true)
+  defaultMarkupPercent Decimal @default(0) @map("default_markup_percent") @db.Decimal(9, 6)
+  defaultFixedProfit Decimal @default(0) @map("default_fixed_profit") @db.Decimal(20, 8)
+  defaultMinProfit Decimal @default(0) @map("default_min_profit") @db.Decimal(20, 8)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@map("price_groups")
@@ -636,7 +673,29 @@ model PriceRule {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@unique([priceGroupId, serviceId])
+  @@index([serviceId])
   @@map("price_rules")
+}
+
+model ServicePriceHistory {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceId String @map("service_id") @db.Uuid
+  providerId String? @map("provider_id") @db.Uuid
+  providerServiceId String? @map("provider_service_id") @db.Uuid
+  oldProviderCost Decimal @map("old_provider_cost") @db.Decimal(20, 8)
+  newProviderCost Decimal @map("new_provider_cost") @db.Decimal(20, 8)
+  oldSaleRate Decimal @map("old_sale_rate") @db.Decimal(20, 8)
+  newSaleRate Decimal @map("new_sale_rate") @db.Decimal(20, 8)
+  changePercent Decimal @map("change_percent") @db.Decimal(20, 8)
+  reason String @db.VarChar(40)
+  source String @db.VarChar(80)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([serviceId, createdAt])
+  @@index([providerId, createdAt])
+  @@index([providerServiceId, createdAt])
+  @@index([createdAt])
+  @@map("service_price_history")
 }
 model AuditLog {
   id BigInt @id @default(autoincrement())

@@ -1,4 +1,4 @@
-import { calculateSaleRate } from "../catalog/pricing.js";
+import { PricingResolver } from "../catalog/resolver.js";
 import { PromotionService } from "../promotion/service.js";
 export class OrderError extends Error {
   constructor(
@@ -23,8 +23,10 @@ export const orderAmount = (rate: unknown, quantity: number) =>
   text((units(rate) * BigInt(quantity)) / 1000n);
 export class OrderService {
   private readonly promotions: PromotionService;
+  private readonly pricing: PricingResolver;
   constructor(private readonly db: any) {
     this.promotions = new PromotionService(db);
+    this.pricing = new PricingResolver(db);
   }
   async create(userId: string, input: any, key: string) {
     if (!/^[A-Za-z0-9:_-]{12,128}$/.test(key))
@@ -60,50 +62,13 @@ export class OrderService {
             "QUANTITY_OUT_OF_RANGE",
             `Quantity must be ${service.min}-${service.max}`,
           );
-        const user = await tx.user.findUnique({
-          where: { id: userId },
-          select: { priceGroupId: true },
-        });
-        const rule = user?.priceGroupId
-          ? await tx.priceRule.findUnique({
-              where: {
-                priceGroupId_serviceId: {
-                  priceGroupId: user.priceGroupId,
-                  serviceId,
-                },
-              },
-            })
-          : null;
-        const mapping = await tx.serviceMapping.findFirst({
-          where: { serviceId, active: true },
-          orderBy: { priority: "asc" },
-        });
-        if (!mapping)
-          throw new OrderError(
-            "PROVIDER_MAPPING_UNAVAILABLE",
-            "No active provider mapping",
-          );
-        const ps = await tx.providerService.findUnique({
-          where: { id: mapping.providerServiceId },
-        });
-        if (!ps || !ps.active)
-          throw new OrderError(
-            "PROVIDER_SERVICE_UNAVAILABLE",
-            "Provider service unavailable",
-          );
-        const provider = await tx.provider.findUnique({
-          where: { id: ps.providerId },
-        });
-        if (!provider || provider.status !== "ACTIVE")
-          throw new OrderError("PROVIDER_UNAVAILABLE", "Provider unavailable");
-        const saleRate = calculateSaleRate({
-          baseRate: service.rate,
-          providerCost: ps.rate,
-          fixedRate: rule?.fixedRate,
-          markupPercent: rule?.markupPercent,
-          fixedProfit: rule?.fixedProfit,
-          minProfit: rule?.minProfit ?? mapping.minProfit,
-        });
+        const resolved = await this.pricing.resolveCustomerPrice(
+          userId,
+          serviceId,
+          tx,
+        );
+        const { mapping, providerService: ps, provider, group } = resolved;
+        const saleRate = resolved.rate;
         const originalCharge = orderAmount(saleRate, quantity),
           providerCost = orderAmount(ps.rate, quantity),
           coupon = input.couponCode
@@ -114,8 +79,14 @@ export class OrderService {
                 originalCharge,
               )
             : null,
-          charge = coupon?.total ?? originalCharge,
-          discountAmount = coupon?.discount ?? "0.00000000",
+          requestedCharge = coupon?.total ?? originalCharge,
+          /* Promotions are website-funded only when explicitly implemented. The safe default never sells below provider cost. */
+          charge = text(
+            units(requestedCharge) < units(providerCost)
+              ? units(providerCost)
+              : units(requestedCharge),
+          ),
+          discountAmount = text(units(originalCharge) - units(charge)),
           profit = text(units(charge) - units(providerCost));
         const order = await tx.order.create({
           data: {
@@ -130,6 +101,8 @@ export class OrderService {
             originalCharge,
             discountAmount,
             couponCode: coupon?.coupon.code,
+            priceGroupIdSnapshot: group?.id,
+            priceGroupCodeSnapshot: group?.code,
             providerRate: String(ps.rate),
             providerCost,
             profit,

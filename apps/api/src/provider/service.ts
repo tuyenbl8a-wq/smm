@@ -1,3 +1,4 @@
+import { repriceMappedServices } from "../catalog/repricing.js";
 import { decryptSecret, encryptSecret, maskSecret } from "./crypto.js";
 import { StandardSmmAdapter } from "./adapter.js";
 export class ProviderConfigError extends Error {
@@ -70,6 +71,8 @@ export class ProviderService {
       priority: Number(input.priority ?? 100),
       timeoutMs: Number(input.timeoutMs ?? 15000),
       maxRetries: Number(input.maxRetries ?? 3),
+      autoSyncEnabled: Boolean(input.autoSyncEnabled ?? false),
+      syncIntervalMinutes: Number(input.syncIntervalMinutes ?? 15),
     };
     return this.db.$transaction(async (tx: any) => {
       const item = await tx.provider.create({ data });
@@ -136,6 +139,12 @@ export class ProviderService {
       ...(input.maxRetries != null
         ? { maxRetries: Number(input.maxRetries) }
         : {}),
+      ...(input.autoSyncEnabled != null
+        ? { autoSyncEnabled: Boolean(input.autoSyncEnabled) }
+        : {}),
+      ...(input.syncIntervalMinutes != null
+        ? { syncIntervalMinutes: Number(input.syncIntervalMinutes) }
+        : {}),
     };
     if (input.apiUrl != null) {
       const url = new URL(String(input.apiUrl));
@@ -181,6 +190,8 @@ export class ProviderService {
     const result = await this.db.$transaction(async (tx: any) => {
       let created = 0,
         updated = 0;
+      const changed: string[] = [],
+        seen: string[] = [];
       for (const record of records) {
         const existing = await tx.providerService.findUnique({
           where: {
@@ -190,7 +201,7 @@ export class ProviderService {
             },
           },
         });
-        await tx.providerService.upsert({
+        const saved = await tx.providerService.upsert({
           where: {
             providerId_externalId: {
               providerId: id,
@@ -198,10 +209,33 @@ export class ProviderService {
             },
           },
           create: { providerId: id, ...record, lastSyncedAt: now },
-          update: { ...record, lastSyncedAt: now, active: true },
+          update: { ...record, lastSyncedAt: now, active: true, stale: false },
         });
+        seen.push(saved.id);
+        if (
+          !existing ||
+          String(existing.rate) !== String(record.rate) ||
+          existing.min !== record.min ||
+          existing.max !== record.max
+        )
+          changed.push(saved.id);
         existing ? updated++ : created++;
       }
+      if (tx.providerService.updateMany)
+        await tx.providerService.updateMany({
+          where: { providerId: id, id: { notIn: seen } },
+          data: { stale: true, active: false },
+        });
+      const pricingAvailable = Boolean(tx.serviceMapping);
+      const pricing = pricingAvailable
+        ? await repriceMappedServices(tx, id, changed)
+        : {
+            priceChanged: 0,
+            priceIncreased: 0,
+            priceDecreased: 0,
+            requiresReview: 0,
+            unavailable: 0,
+          };
       await tx.provider.update({
         where: { id },
         data: { lastSyncAt: now, lastSuccessAt: now },
@@ -212,10 +246,20 @@ export class ProviderService {
           action: "PROVIDER_SERVICES_SYNC",
           resource: "provider",
           resourceId: id,
-          after: { received: records.length, created, updated },
+          after: {
+            received: records.length,
+            created,
+            updated,
+            ...(pricingAvailable ? pricing : {}),
+          },
         },
       });
-      return { received: records.length, created, updated };
+      return {
+        received: records.length,
+        created,
+        updated,
+        ...(pricingAvailable ? pricing : {}),
+      };
     });
     return result;
   }

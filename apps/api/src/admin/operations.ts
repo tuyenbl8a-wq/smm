@@ -141,6 +141,16 @@ export class AdminOperationsService {
     if (username !== undefined && !/^[a-zA-Z0-9_.-]{3,64}$/.test(username))
       throw new AdminOperationError("USERNAME_INVALID", "Invalid username");
     return this.db.$transaction(async (tx: any) => {
+      if (input.priceGroupId != null) {
+        const group = await tx.priceGroup.findFirst({
+          where: { id: String(input.priceGroupId), active: true },
+        });
+        if (!group)
+          throw new AdminOperationError(
+            "PRICE_GROUP_NOT_FOUND",
+            "Price group not found",
+          );
+      }
       const after = await tx.user.update({
         where: { id },
         data: {
@@ -151,6 +161,9 @@ export class AdminOperationsService {
             : {}),
           ...(input.emailVerified === false ? { emailVerifiedAt: null } : {}),
           ...(input.status ? { status: String(input.status) } : {}),
+          ...(input.priceGroupId != null
+            ? { priceGroupId: String(input.priceGroupId) }
+            : {}),
         },
         select: {
           id: true,
@@ -158,6 +171,7 @@ export class AdminOperationsService {
           username: true,
           status: true,
           emailVerifiedAt: true,
+          priceGroupId: true,
         },
       });
       if (input.status === "BANNED")
