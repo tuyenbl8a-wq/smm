@@ -45,6 +45,15 @@ export interface AdminDashboard {
   providers: { active: number; inactive: number };
   services: { active: number; inactive: number };
   alerts: Array<{ type: string; message: string; count: number }>;
+  priceAlerts: {
+    open: number;
+    recent: Array<{
+      id: string;
+      type: string;
+      severity: string;
+      title: string;
+    }>;
+  };
   activity: Array<{
     date: string;
     orders: number;
@@ -371,6 +380,8 @@ export class PrismaAuthStore implements AuthStore {
       inactiveServices,
       activityRecords,
       recentOrders,
+      openPriceAlerts,
+      recentPriceAlerts,
     ] = await Promise.all([
       this.db.user.count({ where: { deletedAt: null } }),
       this.db.user.count({ where: { status: "ACTIVE", deletedAt: null } }),
@@ -424,8 +435,28 @@ export class PrismaAuthStore implements AuthStore {
         orderBy: { createdAt: "desc" },
         take: 8,
       }),
+      this.db.priceAlert
+        ? this.db.priceAlert.count({ where: { status: "OPEN" } })
+        : 0,
+      this.db.priceAlert
+        ? this.db.priceAlert.findMany({
+            where: { status: "OPEN" },
+            select: { id: true, type: true, severity: true, title: true },
+            orderBy: { createdAt: "desc" },
+            take: 5,
+          })
+        : [],
     ]);
     const alerts = [
+      ...(openPriceAlerts
+        ? [
+            {
+              type: "pricing",
+              message: "Cảnh báo giá đang chờ xử lý",
+              count: openPriceAlerts,
+            },
+          ]
+        : []),
       ...(failedOrders
         ? [
             {
@@ -488,6 +519,10 @@ export class PrismaAuthStore implements AuthStore {
       providers: { active: activeProviders, inactive: inactiveProviders },
       services: { active: activeServices, inactive: inactiveServices },
       alerts,
+      priceAlerts: {
+        open: openPriceAlerts,
+        recent: recentPriceAlerts,
+      },
       activity: buildAdminActivity(activityRecords),
       recentOrders: recentOrders.map((order: any) => ({
         ...order,

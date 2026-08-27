@@ -221,11 +221,29 @@ export class ProviderService {
           changed.push(saved.id);
         existing ? updated++ : created++;
       }
+      const staleServices = tx.providerService.findMany
+        ? await tx.providerService.findMany({
+            where: { providerId: id, id: { notIn: seen }, active: true },
+            select: { id: true, name: true },
+          })
+        : [];
       if (tx.providerService.updateMany)
         await tx.providerService.updateMany({
           where: { providerId: id, id: { notIn: seen } },
           data: { stale: true, active: false },
         });
+      if (tx.priceAlert)
+        for (const stale of staleServices)
+          await tx.priceAlert.create({
+            data: {
+              providerId: id,
+              providerServiceId: stale.id,
+              type: "PROVIDER_SERVICE_STALE",
+              severity: "WARNING",
+              title: "Dịch vụ nhà cung cấp không còn xuất hiện",
+              message: `${stale.name} đã được đánh dấu stale sau đồng bộ.`,
+            },
+          });
       const pricingAvailable = Boolean(tx.serviceMapping);
       const pricing = pricingAvailable
         ? await repriceMappedServices(tx, id, changed)

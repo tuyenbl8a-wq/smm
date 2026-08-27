@@ -39,6 +39,7 @@ test("customer and admin routes remain independently available", () => {
     "/account",
     "/admin/payments",
     "/admin/catalog",
+    "/admin/pricing",
     "/admin/providers",
     "/admin/support",
     "/admin/coupons",
@@ -59,6 +60,14 @@ test("catalog and provider audit controls are wired to authenticated APIs", () =
   assert.match(page, /data-rule/);
   assert.match(page, /data-mapping/);
   assert.match(page, /admin\/providers\/\$\{id\}/);
+});
+test("professional pricing UI requires preview before transactional apply", () => {
+  assert.match(page, /function adminPricingPage/);
+  assert.match(page, /pricing\/bulk\/preview/);
+  assert.match(page, /pricing\/bulk\/apply/);
+  assert.match(page, /previewSignature/);
+  assert.match(page, /Bảng giá chuyên nghiệp/);
+  assert.match(page, /Cảnh báo giá/);
 });
 test("rendered scripts bind DOM nodes explicitly and omit empty enum filters", () => {
   assert.match(page, /document\.getElementById/);

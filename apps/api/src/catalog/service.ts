@@ -1,4 +1,5 @@
 import { decimalInput, resolveCustomerRate } from "./pricing.js";
+import { BulkPricingService } from "./bulk-pricing.js";
 
 export class CatalogError extends Error {
   constructor(
@@ -31,7 +32,59 @@ const integer = (value: unknown, field: string, min = 0): number => {
 };
 
 export class CatalogService {
-  constructor(private readonly db: any) {}
+  private readonly bulk: BulkPricingService;
+  constructor(private readonly db: any) {
+    this.bulk = new BulkPricingService(db);
+  }
+
+  bulkPreview(input: any) {
+    return this.bulk.preview(input);
+  }
+
+  bulkApply(actorId: string, input: any) {
+    return this.bulk.apply(actorId, input);
+  }
+
+  async pricingAlerts() {
+    const [open, items] = await Promise.all([
+      this.db.priceAlert.count({ where: { status: "OPEN" } }),
+      this.db.priceAlert.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+    ]);
+    return { open, items };
+  }
+
+  async resolvePricingAlert(actorId: string, id: string) {
+    return this.db.$transaction(async (tx: any) => {
+      const alert = await tx.priceAlert.findUnique({ where: { id } });
+      if (!alert)
+        throw new CatalogError(
+          "PRICE_ALERT_NOT_FOUND",
+          "Cảnh báo không tồn tại",
+        );
+      if (alert.status === "RESOLVED") return alert;
+      const resolved = await tx.priceAlert.update({
+        where: { id },
+        data: {
+          status: "RESOLVED",
+          resolvedBy: actorId,
+          resolvedAt: new Date(),
+        },
+      });
+      await this.audit(
+        tx,
+        actorId,
+        "PRICE_ALERT_RESOLVE",
+        "price_alert",
+        id,
+        alert,
+        resolved,
+      );
+      return resolved;
+    });
+  }
 
   async customerCatalog(
     userId: string,
@@ -148,6 +201,7 @@ export class CatalogService {
       priceGroups,
       priceRules,
       providerServices,
+      providers,
       mappings,
       priceHistory,
     ] = await Promise.all([
@@ -166,6 +220,11 @@ export class CatalogService {
         where: { active: true },
         orderBy: { name: "asc" },
         take: 500,
+      }),
+      this.db.provider.findMany({
+        where: { deletedAt: null },
+        select: { id: true, name: true, status: true },
+        orderBy: { name: "asc" },
       }),
       this.db.serviceMapping.findMany({ take: 500 }),
       this.db.servicePriceHistory.findMany({
@@ -192,6 +251,7 @@ export class CatalogService {
         ...x,
         rate: String(x.rate),
       })),
+      providers,
       mappings,
       priceHistory: priceHistory.map((x: any) => ({
         ...x,

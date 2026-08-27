@@ -118,6 +118,17 @@ enum PriceReviewStatus {
   PRICE_REVIEW
 }
 
+enum PriceAlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum PriceAlertStatus {
+  OPEN
+  RESOLVED
+}
+
 model User {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email String @unique @db.VarChar(320)
@@ -689,6 +700,7 @@ model ServicePriceHistory {
   changePercent Decimal @map("change_percent") @db.Decimal(20, 8)
   reason String @db.VarChar(40)
   source String @db.VarChar(80)
+  metadata Json?
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([serviceId, createdAt])
@@ -696,6 +708,27 @@ model ServicePriceHistory {
   @@index([providerServiceId, createdAt])
   @@index([createdAt])
   @@map("service_price_history")
+}
+
+model PriceAlert {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceId String? @map("service_id") @db.Uuid
+  providerId String? @map("provider_id") @db.Uuid
+  providerServiceId String? @map("provider_service_id") @db.Uuid
+  type String @db.VarChar(50)
+  severity PriceAlertSeverity
+  status PriceAlertStatus @default(OPEN)
+  title String @db.VarChar(180)
+  message String @db.VarChar(500)
+  metadata Json?
+  resolvedBy String? @map("resolved_by") @db.Uuid
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([status, severity, createdAt])
+  @@index([serviceId, createdAt])
+  @@index([providerId, createdAt])
+  @@map("price_alerts")
 }
 model AuditLog {
   id BigInt @id @default(autoincrement())

@@ -16,6 +16,18 @@ export async function repriceMappedServices(
   changedProviderServiceIds: string[],
   source = "provider-sync",
 ): Promise<RepriceSummary> {
+  const alert = (data: {
+    serviceId?: string;
+    providerServiceId?: string;
+    type: string;
+    severity: "INFO" | "WARNING" | "CRITICAL";
+    title: string;
+    message: string;
+    metadata?: any;
+  }) =>
+    tx.priceAlert.create({
+      data: { ...data, providerId, status: "OPEN" },
+    });
   const summary: RepriceSummary = {
     priceChanged: 0,
     priceIncreased: 0,
@@ -30,7 +42,9 @@ export async function repriceMappedServices(
       active: true,
     },
   });
-  const serviceIds = [...new Set(mappings.map((x: any) => x.serviceId))];
+  const serviceIds = [
+    ...new Set<string>(mappings.map((x: any) => String(x.serviceId))),
+  ];
   for (const serviceId of serviceIds) {
     const service = await tx.service.findUnique({ where: { id: serviceId } });
     const candidates = await tx.serviceMapping.findMany({
@@ -45,11 +59,20 @@ export async function repriceMappedServices(
       },
     });
     if (!providerServices.length) {
-      await tx.service.update({
-        where: { id: serviceId },
-        data: { active: false },
-      });
+      if (service.active)
+        await tx.service.update({
+          where: { id: serviceId },
+          data: { active: false },
+        });
       summary.unavailable++;
+      if (service.active)
+        await alert({
+          serviceId,
+          type: "SERVICE_UNAVAILABLE",
+          severity: "CRITICAL",
+          title: "Dịch vụ không còn nhà cung cấp khả dụng",
+          message: `${service.name} đã bị tắt để ngăn nhận đơn không thể xử lý.`,
+        });
       continue;
     }
     const selected = providerServices.find(
@@ -93,7 +116,21 @@ export async function repriceMappedServices(
           changePercent: percent,
           reason: "PROVIDER_SYNC",
           source,
+          metadata: {
+            pricingMode: service.pricingMode,
+            safetyAction: service.safetyAction,
+            threshold: String(service.maxAutomaticIncreasePercent),
+          },
         },
+      });
+      await alert({
+        serviceId,
+        providerServiceId: selected.id,
+        type: "PRICE_SPIKE_REVIEW",
+        severity: "CRITICAL",
+        title: "Giá nhà cung cấp tăng vượt ngưỡng",
+        message: `${service.name} tăng ${percent}% và đang chờ kiểm tra.`,
+        metadata: { oldCost, newCost, percent },
       });
       continue;
     }
@@ -119,6 +156,9 @@ export async function repriceMappedServices(
       else data.rate = newRate;
     } else data.rate = newRate;
     await tx.service.update({ where: { id: serviceId }, data });
+    const floorRaised =
+      moneyUnits(newRate) ===
+      moneyUnits(newCost) + moneyUnits(service.defaultMinProfit ?? "0");
     await tx.servicePriceHistory.create({
       data: {
         serviceId,
@@ -134,8 +174,41 @@ export async function repriceMappedServices(
             ? "SAFETY_FLOOR"
             : "PROVIDER_SYNC",
         source,
+        metadata: {
+          pricingMode: service.pricingMode,
+          safetyAction: service.safetyAction,
+          autoDecrease: service.autoDecrease,
+          minProfit: String(service.defaultMinProfit),
+        },
       },
     });
+    const actionType =
+      data.active === false
+        ? "SERVICE_DISABLED"
+        : data.priceReviewStatus === "PRICE_REVIEW"
+          ? "SAFETY_REVIEW"
+          : service.pricingMode === "FIXED" && data.rate !== undefined
+            ? "AUTO_RAISE"
+            : floorRaised
+              ? "MINIMUM_PROFIT_FLOOR"
+              : null;
+    if (actionType)
+      await alert({
+        serviceId,
+        providerServiceId: selected.id,
+        type: actionType,
+        severity: data.active === false ? "CRITICAL" : "WARNING",
+        title:
+          actionType === "SERVICE_DISABLED"
+            ? "Dịch vụ bị tắt do giá vốn"
+            : actionType === "AUTO_RAISE"
+              ? "Giá bán đã tự động tăng"
+              : actionType === "MINIMUM_PROFIT_FLOOR"
+                ? "Giá được nâng theo lợi nhuận tối thiểu"
+                : "Giá cần được kiểm tra",
+        message: `${service.name}: ${oldRate} → ${data.rate ?? oldRate}.`,
+        metadata: { oldCost, newCost, oldRate, newRate: data.rate ?? oldRate },
+      });
     summary.priceChanged++;
     change > 0n ? summary.priceIncreased++ : summary.priceDecreased++;
   }

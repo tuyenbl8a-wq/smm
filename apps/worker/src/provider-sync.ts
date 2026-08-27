@@ -19,41 +19,215 @@ export class ProviderSyncWorker {
     private key: string,
   ) {}
   private async repriceProvider(tx: any, providerId: string) {
-    /* PostgreSQL performs decimal arithmetic atomically; MAX protects margin if a higher-cost failover is selected. */
-    await tx.$executeRawUnsafe(
-      `WITH costs AS (
-         SELECT sm.service_id, MAX(ps.rate) safety_cost FROM service_mappings sm
-         JOIN provider_services ps ON ps.id=sm.provider_service_id JOIN providers p ON p.id=ps.provider_id
-         WHERE sm.active=true AND ps.active=true AND ps.stale=false AND p.status IN ('ACTIVE','DEGRADED')
-           AND sm.service_id IN (SELECT sm2.service_id FROM service_mappings sm2 JOIN provider_services ps2 ON ps2.id=sm2.provider_service_id WHERE ps2.provider_id=$1::uuid)
-         GROUP BY sm.service_id)
-       UPDATE services s SET price_review_status='PRICE_REVIEW',updated_at=CURRENT_TIMESTAMP FROM costs c
-       WHERE s.id=c.service_id AND c.safety_cost>s.provider_cost
-         AND ((c.safety_cost-s.provider_cost)*100/NULLIF(s.provider_cost,0))>s.max_automatic_increase_percent`,
-      providerId,
+    const SCALE = 100_000_000n;
+    const units = (value: unknown): bigint => {
+      const match = /^(\d{1,12})(?:\.(\d{1,8}))?$/.exec(String(value));
+      if (!match) throw new Error("PRICE_INVALID");
+      return (
+        BigInt(match[1]!) * SCALE + BigInt((match[2] ?? "").padEnd(8, "0"))
+      );
+    };
+    const text = (value: bigint) =>
+      `${value / SCALE}.${String(value % SCALE).padStart(8, "0")}`;
+    const providerServices = await tx.providerService.findMany({
+      where: { providerId, active: true, stale: false },
+      select: { id: true },
+    });
+    const affectedMappings = await tx.serviceMapping.findMany({
+      where: {
+        providerServiceId: { in: providerServices.map((row: any) => row.id) },
+        active: true,
+      },
+      select: { serviceId: true },
+    });
+    const serviceIds = [
+      ...new Set<string>(
+        affectedMappings.map((row: any) => String(row.serviceId)),
+      ),
+    ];
+    if (!serviceIds.length) return 0;
+    const [services, mappings] = await Promise.all([
+      tx.service.findMany({ where: { id: { in: serviceIds } } }),
+      tx.serviceMapping.findMany({
+        where: { serviceId: { in: serviceIds }, active: true },
+        orderBy: { priority: "asc" },
+      }),
+    ]);
+    const allProviderServices = await tx.providerService.findMany({
+      where: {
+        id: { in: mappings.map((row: any) => row.providerServiceId) },
+        active: true,
+        stale: false,
+      },
+    });
+    const providers = await tx.provider.findMany({
+      where: {
+        id: { in: allProviderServices.map((row: any) => row.providerId) },
+        status: { in: ["ACTIVE", "DEGRADED"] },
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    const availableProviders = new Set(providers.map((row: any) => row.id));
+    const availableServices = allProviderServices.filter((row: any) =>
+      availableProviders.has(row.providerId),
     );
-    return tx.$executeRawUnsafe(
-      `WITH affected AS (
-         SELECT DISTINCT sm.service_id FROM service_mappings sm
-         JOIN provider_services ps ON ps.id=sm.provider_service_id
-         WHERE ps.provider_id=$1::uuid AND sm.active=true
-       ), costs AS (
-         SELECT sm.service_id, MAX(ps.rate) AS safety_cost
-         FROM service_mappings sm JOIN provider_services ps ON ps.id=sm.provider_service_id
-         JOIN providers p ON p.id=ps.provider_id
-         WHERE sm.active=true AND ps.active=true AND ps.stale=false
-           AND p.status IN ('ACTIVE','DEGRADED') AND sm.service_id IN (SELECT service_id FROM affected)
-         GROUP BY sm.service_id
-       )
-       UPDATE services s SET provider_cost=c.safety_cost,
-         rate=CASE WHEN c.safety_cost>s.provider_cost OR s.auto_decrease THEN
-           GREATEST(c.safety_cost+s.default_min_profit,
-             c.safety_cost+(c.safety_cost*s.default_markup_percent/100)+s.default_fixed_profit)
-           ELSE s.rate END,
-         updated_at=CURRENT_TIMESTAMP
-       FROM costs c WHERE s.id=c.service_id AND s.price_review_status='OK'`,
-      providerId,
-    );
+    let changed = 0;
+    for (const service of services) {
+      const serviceMappings = mappings.filter(
+        (row: any) => row.serviceId === service.id,
+      );
+      const candidates = serviceMappings
+        .map((mapping: any) =>
+          availableServices.find(
+            (row: any) => row.id === mapping.providerServiceId,
+          ),
+        )
+        .filter(Boolean);
+      if (!candidates.length) {
+        if (service.active) {
+          await tx.service.update({
+            where: { id: service.id },
+            data: { active: false },
+          });
+          await tx.priceAlert.create({
+            data: {
+              serviceId: service.id,
+              providerId,
+              type: "SERVICE_UNAVAILABLE",
+              severity: "CRITICAL",
+              title: "Dịch vụ không còn nhà cung cấp khả dụng",
+              message: `${service.name} đã bị tắt sau đồng bộ nhà cung cấp.`,
+            },
+          });
+        }
+        continue;
+      }
+      const selected = candidates[0];
+      const safetyCost = candidates.reduce(
+        (maximum: bigint, row: any) =>
+          units(row.rate) > maximum ? units(row.rate) : maximum,
+        0n,
+      );
+      const oldCost = units(service.providerCost),
+        oldRate = units(service.rate);
+      const increasePercent =
+        oldCost === 0n ? 0n : ((safetyCost - oldCost) * 100n * SCALE) / oldCost;
+      if (
+        safetyCost > oldCost &&
+        increasePercent > units(service.maxAutomaticIncreasePercent)
+      ) {
+        await tx.service.update({
+          where: { id: service.id },
+          data: { priceReviewStatus: "PRICE_REVIEW" },
+        });
+        await tx.priceAlert.create({
+          data: {
+            serviceId: service.id,
+            providerId,
+            providerServiceId: selected.id,
+            type: "PRICE_SPIKE_REVIEW",
+            severity: "CRITICAL",
+            title: "Giá nhà cung cấp tăng vượt ngưỡng",
+            message: `${service.name} đang chờ kiểm tra giá.`,
+            metadata: {
+              oldCost: text(oldCost),
+              newCost: text(safetyCost),
+              changePercent: text(increasePercent),
+            },
+          },
+        });
+        continue;
+      }
+      let newRate = oldRate;
+      if (safetyCost > oldCost || service.autoDecrease) {
+        const percentage =
+          (safetyCost * units(service.defaultMarkupPercent ?? "0")) /
+          SCALE /
+          100n;
+        const calculated =
+          safetyCost + percentage + units(service.defaultFixedProfit ?? "0");
+        const floor = safetyCost + units(service.defaultMinProfit ?? "0");
+        newRate = calculated < floor ? floor : calculated;
+        if (service.pricingMode === "FIXED")
+          newRate = oldRate < floor ? floor : oldRate;
+      }
+      const saleChanged = newRate !== oldRate;
+      const costChanged = safetyCost !== oldCost;
+      if (!saleChanged && !costChanged) continue;
+      const data: any = {
+        providerCost: text(safetyCost),
+        priceReviewStatus: "OK",
+      };
+      if (service.pricingMode === "FIXED" && newRate > oldRate) {
+        if (service.safetyAction === "DISABLE_SERVICE") data.active = false;
+        else if (service.safetyAction === "REQUIRE_REVIEW")
+          data.priceReviewStatus = "PRICE_REVIEW";
+        else data.rate = text(newRate);
+      } else data.rate = text(newRate);
+      await tx.service.update({ where: { id: service.id }, data });
+      const appliedRate = data.rate !== undefined ? newRate : oldRate;
+      if (costChanged || appliedRate !== oldRate) {
+        const changePercent =
+          oldRate === 0n
+            ? 0n
+            : ((appliedRate - oldRate) * 100n * SCALE) / oldRate;
+        await tx.servicePriceHistory.create({
+          data: {
+            serviceId: service.id,
+            providerId,
+            providerServiceId: selected.id,
+            oldProviderCost: text(oldCost),
+            newProviderCost: text(safetyCost),
+            oldSaleRate: text(oldRate),
+            newSaleRate: text(appliedRate),
+            changePercent: text(changePercent),
+            reason:
+              appliedRate !== oldRate &&
+              appliedRate ===
+                safetyCost + units(service.defaultMinProfit ?? "0")
+                ? "SAFETY_FLOOR"
+                : "PROVIDER_SYNC",
+            source: "worker-provider-sync",
+            metadata: {
+              pricingMode: service.pricingMode,
+              safetyAction: service.safetyAction,
+              autoDecrease: service.autoDecrease,
+              minProfit: String(service.defaultMinProfit),
+            },
+          },
+        });
+      }
+      const alertType =
+        data.active === false
+          ? "SERVICE_DISABLED"
+          : service.pricingMode === "FIXED" && data.rate
+            ? "AUTO_RAISE"
+            : appliedRate !== oldRate &&
+                appliedRate ===
+                  safetyCost + units(service.defaultMinProfit ?? "0")
+              ? "MINIMUM_PROFIT_FLOOR"
+              : null;
+      if (alertType)
+        await tx.priceAlert.create({
+          data: {
+            serviceId: service.id,
+            providerId,
+            providerServiceId: selected.id,
+            type: alertType,
+            severity: data.active === false ? "CRITICAL" : "WARNING",
+            title:
+              data.active === false
+                ? "Dịch vụ bị tắt do giá vốn"
+                : alertType === "MINIMUM_PROFIT_FLOOR"
+                  ? "Giá được nâng theo lợi nhuận tối thiểu"
+                  : "Giá bán đã tự động tăng",
+            message: `${service.name}: ${text(oldRate)} → ${text(appliedRate)}.`,
+          },
+        });
+      changed++;
+    }
+    return changed;
   }
   async once() {
     const lock = await this.db.$queryRawUnsafe(
@@ -137,10 +311,25 @@ export class ProviderSyncWorker {
               });
               seen.push(saved.id);
             }
+            const staleServices = await tx.providerService.findMany({
+              where: { providerId: p.id, id: { notIn: seen }, active: true },
+              select: { id: true, name: true },
+            });
             await tx.providerService.updateMany({
               where: { providerId: p.id, id: { notIn: seen } },
               data: { active: false, stale: true },
             });
+            for (const stale of staleServices)
+              await tx.priceAlert.create({
+                data: {
+                  providerId: p.id,
+                  providerServiceId: stale.id,
+                  type: "PROVIDER_SERVICE_STALE",
+                  severity: "WARNING",
+                  title: "Dịch vụ nhà cung cấp không còn xuất hiện",
+                  message: `${stale.name} đã được đánh dấu stale sau đồng bộ.`,
+                },
+              });
             await this.repriceProvider(tx, p.id);
             await tx.provider.update({
               where: { id: p.id },

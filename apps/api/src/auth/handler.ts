@@ -516,6 +516,26 @@ export class AuthHandler {
         if (!this.catalog) throw new Error("Catalog service unavailable");
         return this.ok(response, await this.catalog.adminOverview());
       }
+      if (
+        request.method === "GET" &&
+        (path === "/api/v1/admin/pricing" ||
+          path === "/api/v1/admin/pricing/alerts")
+      ) {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.catalog) throw new Error("Catalog service unavailable");
+        return this.ok(
+          response,
+          path.endsWith("/alerts")
+            ? await this.catalog.pricingAlerts()
+            : await this.catalog.adminOverview(),
+        );
+      }
       if (request.method === "GET" && path === "/api/v1/admin/providers") {
         if (!canAccessAdmin(auth.access, "providers.manage"))
           return this.error(
@@ -865,6 +885,37 @@ export class AuthHandler {
         await this.store.revokeSession(auth.session.id);
         this.clearCookies(response);
         return this.ok(response, { loggedOut: true });
+      }
+      if (
+        request.method === "POST" &&
+        path.startsWith("/api/v1/admin/pricing/")
+      ) {
+        this.checkBurst(request, "admin-pricing-mutation");
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.catalog) throw new Error("Catalog service unavailable");
+        const body = await this.body(request);
+        if (path === "/api/v1/admin/pricing/bulk/preview")
+          return this.ok(response, await this.catalog.bulkPreview(body));
+        if (path === "/api/v1/admin/pricing/bulk/apply")
+          return this.ok(
+            response,
+            await this.catalog.bulkApply(auth.user.id, body),
+          );
+        const alert =
+          /^\/api\/v1\/admin\/pricing\/alerts\/([0-9a-f-]{36})\/resolve$/.exec(
+            path,
+          );
+        if (alert)
+          return this.ok(
+            response,
+            await this.catalog.resolvePricingAlert(auth.user.id, alert[1]!),
+          );
       }
       if (
         request.method === "POST" &&
