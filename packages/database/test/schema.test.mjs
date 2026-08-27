@@ -21,7 +21,7 @@ test("money never uses floating point", () => {
 test("all Prisma enum values use multiline declarations", () => {
   assert.doesNotMatch(schema, /enum\s+\w+\s*\{[^\n{}]+\}/);
   const enums = [...schema.matchAll(/enum\s+(\w+)\s*\{([\s\S]*?)\n\}/g)];
-  assert.equal(enums.length, 12);
+  assert.equal(enums.length, 15);
   for (const [, , body] of enums) {
     const values = body
       .split("\n")
@@ -32,6 +32,21 @@ test("all Prisma enum values use multiline declarations", () => {
       true,
     );
   }
+});
+
+test("professional pricing migration is additive and indexed", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260825120000_professional_pricing/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /service_price_history/);
+  assert.match(sql, /default_markup_percent/);
+  assert.match(sql, /price_group_id_snapshot/);
+  assert.match(sql, /providers_auto_sync_enabled_next_sync_at_idx/);
+  assert.match(sql, /service_price_history_service_id_created_at_idx/);
 });
 test("external payment identities are unique", () => {
   assert.match(schema, /externalTransactionId String\? @unique/);

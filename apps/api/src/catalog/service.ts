@@ -1,4 +1,4 @@
-import { calculateSaleRate, decimalInput } from "./pricing.js";
+import { decimalInput, resolveCustomerRate } from "./pricing.js";
 
 export class CatalogError extends Error {
   constructor(
@@ -64,7 +64,7 @@ export class CatalogService {
       where: { id: userId },
       select: { priceGroupId: true },
     });
-    const [total, services, rules] = await Promise.all([
+    const [total, services, rules, group] = await Promise.all([
       this.db.service.count({ where }),
       this.db.service.findMany({
         where,
@@ -98,11 +98,24 @@ export class CatalogService {
             },
           })
         : [],
+      user?.priceGroupId
+        ? this.db.priceGroup.findFirst({
+            where: { id: user.priceGroupId, active: true },
+          })
+        : null,
     ]);
     /* Provider cost is fetched separately only for pricing and is never selected into the public row. */
     const costs = await this.db.service.findMany({
       where: { id: { in: services.map((service: any) => service.id) } },
-      select: { id: true, providerCost: true, rate: true },
+      select: {
+        id: true,
+        providerCost: true,
+        rate: true,
+        pricingMode: true,
+        defaultMarkupPercent: true,
+        defaultFixedProfit: true,
+        defaultMinProfit: true,
+      },
     });
     const costMap = new Map(costs.map((item: any) => [item.id, item]));
     const ruleMap = new Map(rules.map((rule: any) => [rule.serviceId, rule]));
@@ -117,13 +130,11 @@ export class CatalogService {
         const rule: any = ruleMap.get(service.id);
         return {
           ...service,
-          rate: calculateSaleRate({
-            baseRate: source.rate,
+          rate: resolveCustomerRate({
+            service: source,
+            group,
+            override: rule,
             providerCost: source.providerCost,
-            fixedRate: rule?.fixedRate,
-            markupPercent: rule?.markupPercent,
-            fixedProfit: rule?.fixedProfit,
-            minProfit: rule?.minProfit ?? "0",
           }),
         };
       }),
@@ -138,6 +149,7 @@ export class CatalogService {
       priceRules,
       providerServices,
       mappings,
+      priceHistory,
     ] = await Promise.all([
       this.db.serviceCategory.findMany({
         where: { deletedAt: null },
@@ -156,6 +168,10 @@ export class CatalogService {
         take: 500,
       }),
       this.db.serviceMapping.findMany({ take: 500 }),
+      this.db.servicePriceHistory.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
     ]);
     return {
       categories,
@@ -177,6 +193,14 @@ export class CatalogService {
         rate: String(x.rate),
       })),
       mappings,
+      priceHistory: priceHistory.map((x: any) => ({
+        ...x,
+        oldProviderCost: String(x.oldProviderCost),
+        newProviderCost: String(x.newProviderCost),
+        oldSaleRate: String(x.oldSaleRate),
+        newSaleRate: String(x.newSaleRate),
+        changePercent: String(x.changePercent),
+      })),
     };
   }
   async upsertMapping(actorId: string, input: any) {
@@ -362,6 +386,15 @@ export class CatalogService {
           name: name(input.name).slice(0, 100),
           code,
           active: input.active !== false,
+          defaultMarkupPercent: decimalInput(
+            input.defaultMarkupPercent ?? "0",
+            true,
+          ),
+          defaultFixedProfit: decimalInput(
+            input.defaultFixedProfit ?? "0",
+            true,
+          ),
+          defaultMinProfit: decimalInput(input.defaultMinProfit ?? "0", true),
         },
       });
       await this.audit(
@@ -392,6 +425,25 @@ export class CatalogService {
             : {}),
           ...(input.active !== undefined
             ? { active: Boolean(input.active) }
+            : {}),
+          ...(input.defaultMarkupPercent !== undefined
+            ? {
+                defaultMarkupPercent: decimalInput(
+                  input.defaultMarkupPercent,
+                  true,
+                ),
+              }
+            : {}),
+          ...(input.defaultFixedProfit !== undefined
+            ? {
+                defaultFixedProfit: decimalInput(
+                  input.defaultFixedProfit,
+                  true,
+                ),
+              }
+            : {}),
+          ...(input.defaultMinProfit !== undefined
+            ? { defaultMinProfit: decimalInput(input.defaultMinProfit, true) }
             : {}),
         },
       });

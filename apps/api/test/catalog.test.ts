@@ -13,7 +13,7 @@ test("pricing uses exact eight-place fixed-point arithmetic", () => {
       markupPercent: "10",
       fixedProfit: "0.00000001",
     }),
-    "11.00000001",
+    "7.70000001",
   );
   assert.equal(
     calculateSaleRate({ baseRate: "8", providerCost: "9", minProfit: "2" }),
@@ -100,13 +100,21 @@ test("customer catalog is scoped to active categories and never exposes provider
         },
       ],
     },
+    priceGroup: {
+      findFirst: async () => ({
+        id: "group-1",
+        defaultMarkupPercent: "0",
+        defaultFixedProfit: "0",
+        defaultMinProfit: "0",
+      }),
+    },
   };
   const result = await new CatalogService(db).customerCatalog("customer-1", {
     page: 1,
     limit: 20,
   });
   assert.deepEqual(serviceWhere.categoryId, { in: [category.id] });
-  assert.equal(result.services[0].rate, "11.00000000");
+  assert.equal(result.services[0].rate, "5.50000000");
   assert.equal("providerCost" in result.services[0], false);
 });
 

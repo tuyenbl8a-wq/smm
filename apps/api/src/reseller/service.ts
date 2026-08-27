@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { OrderService } from "../order/service.js";
 import { OrderLifecycleService } from "../order/lifecycle.js";
+import { resolveCustomerRate } from "../catalog/pricing.js";
 const hash = (x: string) => createHash("sha256").update(x).digest("hex");
 export class ResellerError extends Error {
   constructor(
@@ -70,24 +71,58 @@ export class ResellerService {
       });
       return { balance: String(w.balance), currency: w.currency };
     }
-    if (action === "services")
-      return this.db.service
-        .findMany({
+    if (action === "services") {
+      const user = await this.db.user.findUnique({
+        where: { id: key.userId },
+        select: { priceGroupId: true },
+      });
+      const [services, group, rules] = await Promise.all([
+        this.db.service.findMany({
           where: { active: true },
           select: {
             id: true,
             name: true,
             type: true,
             rate: true,
+            providerCost: true,
+            pricingMode: true,
+            defaultMarkupPercent: true,
+            defaultFixedProfit: true,
+            defaultMinProfit: true,
             min: true,
             max: true,
             refill: true,
             cancel: true,
           },
-        })
-        .then((x: any[]) =>
-          x.map((s) => ({ ...s, service: s.id, rate: String(s.rate) })),
-        );
+        }),
+        user?.priceGroupId
+          ? this.db.priceGroup.findFirst({
+              where: { id: user.priceGroupId, active: true },
+            })
+          : null,
+        user?.priceGroupId
+          ? this.db.priceRule.findMany({
+              where: { priceGroupId: user.priceGroupId },
+            })
+          : [],
+      ]);
+      const ruleMap = new Map(rules.map((x: any) => [x.serviceId, x]));
+      return services.map((s: any) => ({
+        service: s.id,
+        name: s.name,
+        type: s.type,
+        rate: resolveCustomerRate({
+          service: s,
+          group,
+          override: ruleMap.get(s.id),
+          providerCost: s.providerCost,
+        }),
+        min: s.min,
+        max: s.max,
+        refill: s.refill,
+        cancel: s.cancel,
+      }));
+    }
     if (action === "add")
       return this.orders
         .create(
