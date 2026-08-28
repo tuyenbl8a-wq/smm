@@ -71,6 +71,18 @@ test("service administration follows platform-category-service and invalidates e
   assert.match(page, /overrides/);
   assert.match(page, /Người dùng & nhân sự/);
 });
+test("payment method form is adapter-specific and submits only visible fields", () => {
+  assert.match(page, /data-adapters/);
+  assert.match(page, /function applyAdapter/);
+  assert.match(page, /control\.disabled=!show/);
+  assert.match(page, /Cài đặt nâng cao/);
+  assert.match(page, /Webhook Secure Token/);
+  assert.match(page, /Bank BIN \/ acqId/);
+  assert.match(page, /Chế độ tích hợp/);
+  assert.match(page, /Hướng dẫn cấu hình/);
+  assert.match(page, /READY_TO_TEST/);
+  assert.match(page, /payment-methods\/'\+editing\+'\/test/);
+});
 test("professional pricing UI requires preview before transactional apply", () => {
   assert.match(page, /function adminPricingPage/);
   assert.match(page, /pricing\/bulk\/preview/);
