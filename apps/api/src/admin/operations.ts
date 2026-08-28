@@ -20,6 +20,17 @@ const uuidFilter = (value: unknown, code: string) => {
     throw new AdminOperationError(code, "Invalid identifier filter");
   return text;
 };
+const MONEY_SCALE = 100_000_000n;
+const moneyUnits = (value: unknown): bigint => {
+  const match = /^(\d{1,12})(?:\.(\d{1,8}))?$/.exec(String(value ?? "0"));
+  if (!match)
+    throw new AdminOperationError("MONEY_INVALID", "Invalid money value");
+  return (
+    BigInt(match[1]!) * MONEY_SCALE + BigInt((match[2] ?? "").padEnd(8, "0"))
+  );
+};
+const moneyText = (value: bigint): string =>
+  `${value / MONEY_SCALE}.${String(value % MONEY_SCALE).padStart(8, "0")}`;
 
 export class AdminOperationError extends Error {
   constructor(
@@ -47,6 +58,26 @@ export class AdminOperationsService {
       ),
       where: any = {
         ...(status ? { status } : {}),
+        ...(optional(query.priceGroupId)
+          ? {
+              priceGroupId: uuidFilter(
+                query.priceGroupId,
+                "PRICE_GROUP_FILTER_INVALID",
+              ),
+            }
+          : {}),
+        ...(optional(query.registeredFrom) || optional(query.registeredTo)
+          ? {
+              createdAt: {
+                ...(optional(query.registeredFrom)
+                  ? { gte: new Date(String(query.registeredFrom)) }
+                  : {}),
+                ...(optional(query.registeredTo)
+                  ? { lte: new Date(String(query.registeredTo)) }
+                  : {}),
+              },
+            }
+          : {}),
         ...(search
           ? {
               OR: [
@@ -77,6 +108,7 @@ export class AdminOperationsService {
           username: true,
           status: true,
           emailVerifiedAt: true,
+          priceGroupId: true,
           createdAt: true,
         },
         orderBy: { createdAt: "desc" },
@@ -84,7 +116,26 @@ export class AdminOperationsService {
         take: limit,
       }),
     ]);
-    return { items: rows, page, limit, total, pages: Math.ceil(total / limit) };
+    const groupIds = rows
+      .map((row: any) => row.priceGroupId)
+      .filter((id: any): id is string => Boolean(id));
+    const groups = groupIds.length
+      ? await this.db.priceGroup.findMany({
+          where: { id: { in: groupIds } },
+          select: { id: true, code: true, name: true },
+        })
+      : [];
+    const groupMap = new Map(groups.map((group: any) => [group.id, group]));
+    return {
+      items: rows.map((row: any) => ({
+        ...row,
+        priceGroup: row.priceGroupId ? groupMap.get(row.priceGroupId) : null,
+      })),
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+    };
   }
 
   async user(id: string) {
@@ -98,6 +149,7 @@ export class AdminOperationsService {
         emailVerifiedAt: true,
         createdAt: true,
         updatedAt: true,
+        priceGroupId: true,
       },
     });
     if (!user)
@@ -108,13 +160,42 @@ export class AdminOperationsService {
         select: { id: true, code: true, name: true },
       }),
       wallet = await this.db.wallet.findUnique({ where: { userId: id } });
-    const [orders, deposits, tickets, sessions] = await Promise.all([
+    const [
+      orders,
+      deposits,
+      tickets,
+      sessions,
+      priceGroup,
+      priceGroups,
+      priceGroupHistory,
+      successfulDeposits,
+      spending,
+      completedOrders,
+    ] = await Promise.all([
       this.db.order.count({ where: { userId: id } }),
       this.db.deposit.count({ where: { userId: id } }),
       this.db.ticket.count({ where: { userId: id } }),
       this.db.session.count({
         where: { userId: id, revokedAt: null, expiresAt: { gt: new Date() } },
       }),
+      user.priceGroupId
+        ? this.db.priceGroup.findUnique({ where: { id: user.priceGroupId } })
+        : null,
+      this.db.priceGroup.findMany({ orderBy: { tierOrder: "asc" } }),
+      this.db.priceGroupHistory.findMany({
+        where: { userId: id },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+      this.db.deposit.aggregate({
+        where: { userId: id, status: "PAID" },
+        _sum: { netAmount: true },
+      }),
+      this.db.order.aggregate({
+        where: { userId: id },
+        _sum: { charge: true, refundedAmount: true },
+      }),
+      this.db.order.count({ where: { userId: id, status: "COMPLETED" } }),
     ]);
     return {
       ...user,
@@ -123,6 +204,305 @@ export class AdminOperationsService {
         ? { balance: String(wallet.balance), currency: wallet.currency }
         : null,
       counts: { orders, deposits, tickets, activeSessions: sessions },
+      priceGroup,
+      priceGroups,
+      priceGroupHistory,
+      upgradeStats: {
+        successfulDeposits: String(successfulDeposits._sum.netAmount ?? "0"),
+        totalSpent: moneyText(
+          moneyUnits(spending._sum.charge ?? "0") -
+            moneyUnits(spending._sum.refundedAmount ?? "0"),
+        ),
+        completedOrders,
+      },
+    };
+  }
+
+  async assignPriceGroup(actorId: string, userId: string, input: any) {
+    const reason = optional(input.reason)?.slice(0, 500);
+    return this.db.$transaction(async (tx: any) => {
+      const [user, next] = await Promise.all([
+        tx.user.findUnique({
+          where: { id: userId },
+          select: { id: true, priceGroupId: true },
+        }),
+        tx.priceGroup.findFirst({
+          where: { id: String(input.priceGroupId ?? ""), active: true },
+        }),
+      ]);
+      if (!user)
+        throw new AdminOperationError("USER_NOT_FOUND", "User not found");
+      if (!next)
+        throw new AdminOperationError(
+          "PRICE_GROUP_NOT_FOUND",
+          "Price group not found or inactive",
+        );
+      const previous = user.priceGroupId
+        ? await tx.priceGroup.findUnique({ where: { id: user.priceGroupId } })
+        : null;
+      if (previous?.id === next.id) return { changed: false, priceGroup: next };
+      const changed = await tx.user.updateMany({
+        where: { id: userId, priceGroupId: user.priceGroupId },
+        data: { priceGroupId: next.id, priceGroupEvaluatedAt: new Date() },
+      });
+      if (!changed.count)
+        throw new AdminOperationError(
+          "PRICE_GROUP_CONFLICT",
+          "Price group changed concurrently",
+        );
+      const history = await tx.priceGroupHistory.create({
+        data: {
+          userId,
+          oldPriceGroupId: previous?.id,
+          oldPriceGroupCode: previous?.code,
+          oldPriceGroupName: previous?.name,
+          newPriceGroupId: next.id,
+          newPriceGroupCode: next.code,
+          newPriceGroupName: next.name,
+          source: "MANUAL",
+          actorId,
+          reason,
+          metadata: { operation: "single" },
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "USER_PRICE_GROUP_CHANGE",
+          resource: "User",
+          resourceId: userId,
+          before: { priceGroupId: previous?.id, code: previous?.code },
+          after: { priceGroupId: next.id, code: next.code, reason },
+        },
+      });
+      return { changed: true, priceGroup: next, historyId: history.id };
+    });
+  }
+
+  private async bulkPriceGroupCandidates(db: any, input: any) {
+    const ids = Array.isArray(input.userIds)
+      ? [...new Set(input.userIds.map(String))].slice(0, 5000)
+      : [];
+    if (!ids.length)
+      throw new AdminOperationError(
+        "USERS_REQUIRED",
+        "Select at least one user",
+      );
+    const [next, users] = await Promise.all([
+      db.priceGroup.findFirst({
+        where: { id: String(input.priceGroupId ?? ""), active: true },
+      }),
+      db.user.findMany({
+        where: { id: { in: ids }, deletedAt: null },
+        select: { id: true, email: true, username: true, priceGroupId: true },
+      }),
+    ]);
+    if (!next)
+      throw new AdminOperationError(
+        "PRICE_GROUP_NOT_FOUND",
+        "Price group not found or inactive",
+      );
+    const oldGroups = await db.priceGroup.findMany({
+      where: {
+        id: { in: users.map((user: any) => user.priceGroupId).filter(Boolean) },
+      },
+    });
+    const oldMap = new Map(oldGroups.map((group: any) => [group.id, group]));
+    return {
+      next,
+      users: users
+        .filter((user: any) => user.priceGroupId !== next.id)
+        .map((user: any) => ({
+          ...user,
+          oldPriceGroup: oldMap.get(user.priceGroupId) ?? null,
+        })),
+    };
+  }
+
+  async bulkPriceGroupPreview(input: any) {
+    const result = await this.bulkPriceGroupCandidates(this.db, input);
+    return {
+      count: result.users.length,
+      priceGroup: {
+        id: result.next.id,
+        code: result.next.code,
+        name: result.next.name,
+      },
+      users: result.users,
+    };
+  }
+
+  async bulkAssignPriceGroup(actorId: string, input: any) {
+    const reason = optional(input.reason)?.slice(0, 500);
+    return this.db.$transaction(async (tx: any) => {
+      const result = await this.bulkPriceGroupCandidates(tx, input);
+      for (const user of result.users) {
+        const changed = await tx.user.updateMany({
+          where: { id: user.id, priceGroupId: user.priceGroupId },
+          data: {
+            priceGroupId: result.next.id,
+            priceGroupEvaluatedAt: new Date(),
+          },
+        });
+        if (!changed.count)
+          throw new AdminOperationError(
+            "PRICE_GROUP_CONFLICT",
+            "A user changed concurrently",
+          );
+        await tx.priceGroupHistory.create({
+          data: {
+            userId: user.id,
+            oldPriceGroupId: user.oldPriceGroup?.id,
+            oldPriceGroupCode: user.oldPriceGroup?.code,
+            oldPriceGroupName: user.oldPriceGroup?.name,
+            newPriceGroupId: result.next.id,
+            newPriceGroupCode: result.next.code,
+            newPriceGroupName: result.next.name,
+            source: "MANUAL",
+            actorId,
+            reason,
+            metadata: { operation: "bulk" },
+          },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "USER_PRICE_GROUP_BULK_CHANGE",
+          resource: "User",
+          after: {
+            userIds: result.users.map((user: any) => user.id),
+            priceGroupId: result.next.id,
+            reason,
+          },
+        },
+      });
+      return { changed: result.users.length, priceGroup: result.next };
+    });
+  }
+
+  async customerPriceGroup(userId: string) {
+    const [user, settings, groups] = await Promise.all([
+      this.db.user.findUnique({
+        where: { id: userId },
+        select: { priceGroupId: true },
+      }),
+      this.db.setting.findMany({
+        where: {
+          group: "pricing",
+          key: { in: ["autoUpgradeEnabled", "autoDowngradeEnabled"] },
+        },
+      }),
+      this.db.priceGroup.findMany({
+        where: { active: true },
+        orderBy: { tierOrder: "asc" },
+      }),
+    ]);
+    if (!user)
+      throw new AdminOperationError("USER_NOT_FOUND", "User not found");
+    const currentIndex = groups.findIndex(
+      (group: any) => group.id === user.priceGroupId,
+    );
+    const current = currentIndex >= 0 ? groups[currentIndex] : null;
+    const next =
+      currentIndex >= 0
+        ? groups
+            .slice(currentIndex + 1)
+            .find((group: any) => group.upgradeEnabled)
+        : null;
+    const [deposits, spending, completedOrders] = await Promise.all([
+      this.db.deposit.aggregate({
+        where: { userId, status: "PAID" },
+        _sum: { netAmount: true },
+      }),
+      this.db.order.aggregate({
+        where: { userId },
+        _sum: { charge: true, refundedAmount: true },
+      }),
+      this.db.order.count({ where: { userId, status: "COMPLETED" } }),
+    ]);
+    const stats = {
+      successfulDeposits: String(deposits._sum.netAmount ?? "0"),
+      totalSpent: moneyText(
+        moneyUnits(spending._sum.charge ?? "0") -
+          moneyUnits(spending._sum.refundedAmount ?? "0"),
+      ),
+      completedOrders,
+    };
+    const requirements = next
+      ? [
+          ...(next.minSuccessfulDeposits != null
+            ? [
+                {
+                  key: "successfulDeposits",
+                  required: String(next.minSuccessfulDeposits),
+                  current: stats.successfulDeposits,
+                  remaining: moneyText(
+                    moneyUnits(next.minSuccessfulDeposits) >
+                      moneyUnits(stats.successfulDeposits)
+                      ? moneyUnits(next.minSuccessfulDeposits) -
+                          moneyUnits(stats.successfulDeposits)
+                      : 0n,
+                  ),
+                },
+              ]
+            : []),
+          ...(next.minTotalSpent != null
+            ? [
+                {
+                  key: "totalSpent",
+                  required: String(next.minTotalSpent),
+                  current: stats.totalSpent,
+                  remaining: moneyText(
+                    moneyUnits(next.minTotalSpent) >
+                      moneyUnits(stats.totalSpent)
+                      ? moneyUnits(next.minTotalSpent) -
+                          moneyUnits(stats.totalSpent)
+                      : 0n,
+                  ),
+                },
+              ]
+            : []),
+          ...(next.minCompletedOrders != null
+            ? [
+                {
+                  key: "completedOrders",
+                  required: next.minCompletedOrders,
+                  current: completedOrders,
+                  remaining: Math.max(
+                    0,
+                    next.minCompletedOrders - completedOrders,
+                  ),
+                },
+              ]
+            : []),
+        ]
+      : [];
+    const settingMap = Object.fromEntries(
+      settings.map((row: any) => [row.key, row.value]),
+    );
+    return {
+      current: current
+        ? {
+            id: current.id,
+            code: current.code,
+            name: current.name,
+            description: current.publicDescription,
+          }
+        : null,
+      autoUpgradeEnabled: settingMap.autoUpgradeEnabled === true,
+      autoDowngradeEnabled: settingMap.autoDowngradeEnabled === true,
+      next: next
+        ? {
+            id: next.id,
+            code: next.code,
+            name: next.name,
+            description: next.publicDescription,
+            matchMode: next.upgradeMatchMode,
+          }
+        : null,
+      stats,
+      requirements,
     };
   }
 
@@ -141,16 +521,6 @@ export class AdminOperationsService {
     if (username !== undefined && !/^[a-zA-Z0-9_.-]{3,64}$/.test(username))
       throw new AdminOperationError("USERNAME_INVALID", "Invalid username");
     return this.db.$transaction(async (tx: any) => {
-      if (input.priceGroupId != null) {
-        const group = await tx.priceGroup.findFirst({
-          where: { id: String(input.priceGroupId), active: true },
-        });
-        if (!group)
-          throw new AdminOperationError(
-            "PRICE_GROUP_NOT_FOUND",
-            "Price group not found",
-          );
-      }
       const after = await tx.user.update({
         where: { id },
         data: {
@@ -161,9 +531,6 @@ export class AdminOperationsService {
             : {}),
           ...(input.emailVerified === false ? { emailVerifiedAt: null } : {}),
           ...(input.status ? { status: String(input.status) } : {}),
-          ...(input.priceGroupId != null
-            ? { priceGroupId: String(input.priceGroupId) }
-            : {}),
         },
         select: {
           id: true,
@@ -190,6 +557,54 @@ export class AdminOperationsService {
         },
       });
       return after;
+    });
+  }
+
+  async priceGroupConfiguration() {
+    const [priceGroups, settings] = await Promise.all([
+      this.db.priceGroup.findMany({
+        orderBy: [{ tierOrder: "asc" }, { name: "asc" }],
+      }),
+      this.db.setting.findMany({
+        where: {
+          group: "pricing",
+          key: { in: ["autoUpgradeEnabled", "autoDowngradeEnabled"] },
+        },
+      }),
+    ]);
+    const values = Object.fromEntries(
+      settings.map((row: any) => [row.key, row.value]),
+    );
+    return {
+      priceGroups,
+      autoUpgradeEnabled: values.autoUpgradeEnabled === true,
+      autoDowngradeEnabled: values.autoDowngradeEnabled === true,
+    };
+  }
+
+  async updatePriceGroupSettings(actorId: string, input: any) {
+    const values = {
+      autoUpgradeEnabled: input.autoUpgradeEnabled === true,
+      autoDowngradeEnabled: input.autoDowngradeEnabled === true,
+    };
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.setting.findMany({ where: { group: "pricing" } });
+      for (const [key, value] of Object.entries(values))
+        await tx.setting.upsert({
+          where: { group_key: { group: "pricing", key } },
+          create: { key, value, group: "pricing", encrypted: false },
+          update: { value, encrypted: false },
+        });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "PRICE_GROUP_POLICY_UPDATE",
+          resource: "Setting",
+          before,
+          after: values,
+        },
+      });
+      return values;
     });
   }
 

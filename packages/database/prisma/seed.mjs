@@ -49,6 +49,7 @@ const permissions = [
   "users.read",
   "users.update",
   "users.ban",
+  "users.pricing.manage",
   "orders.read",
   "orders.update",
   "services.manage",

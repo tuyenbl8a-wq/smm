@@ -32,6 +32,7 @@ const routes = [
   "/admin/logs",
   "/admin/settings",
   "/admin/coupons",
+  "/admin/pricing",
 ];
 test("all production smoke destinations are registered", () => {
   for (const route of routes)
@@ -56,3 +57,17 @@ test(
     assert.ok(browser);
   },
 );
+
+test("authenticated price-group journeys are specified without leaking pricing internals", () => {
+  assert.match(page, /\/api\/v1\/admin\/users\/price-group\/bulk\/preview/);
+  assert.match(page, /\/price-group.*method:'POST'/);
+  assert.match(page, /Cấp tài khoản hiện tại/);
+  const account = page.slice(
+    page.indexOf("export function accountPage"),
+    page.indexOf("export function adminPaymentsPage"),
+  );
+  assert.doesNotMatch(
+    account,
+    /providerCost|defaultMarkupPercent|minimumProfit/,
+  );
+});

@@ -129,6 +129,16 @@ enum PriceAlertStatus {
   RESOLVED
 }
 
+enum UpgradeMatchMode {
+  ALL
+  ANY
+}
+
+enum PriceGroupChangeSource {
+  MANUAL
+  AUTO
+}
+
 model User {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email String @unique @db.VarChar(320)
@@ -138,11 +148,13 @@ model User {
   emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(3)
   avatarKey String? @map("avatar_key") @db.VarChar(512)
   priceGroupId String? @map("price_group_id") @db.Uuid
+  priceGroupEvaluatedAt DateTime? @map("price_group_evaluated_at") @db.Timestamptz(3)
   referralCode String @unique @map("referral_code") @db.VarChar(32)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([status, createdAt])
+  @@index([status, priceGroupEvaluatedAt])
   @@map("users")
 }
 
@@ -669,9 +681,38 @@ model PriceGroup {
   defaultMarkupPercent Decimal @default(0) @map("default_markup_percent") @db.Decimal(9, 6)
   defaultFixedProfit Decimal @default(0) @map("default_fixed_profit") @db.Decimal(20, 8)
   defaultMinProfit Decimal @default(0) @map("default_min_profit") @db.Decimal(20, 8)
+  tierOrder Int @default(0) @map("tier_order")
+  publicDescription String? @map("public_description") @db.Text
+  upgradeEnabled Boolean @default(false) @map("upgrade_enabled")
+  upgradeMatchMode UpgradeMatchMode @default(ALL) @map("upgrade_match_mode")
+  minSuccessfulDeposits Decimal? @map("min_successful_deposits") @db.Decimal(20, 8)
+  minTotalSpent Decimal? @map("min_total_spent") @db.Decimal(20, 8)
+  minCompletedOrders Int? @map("min_completed_orders")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([active, tierOrder])
   @@map("price_groups")
+}
+
+model PriceGroupHistory {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  oldPriceGroupId String? @map("old_price_group_id") @db.Uuid
+  oldPriceGroupCode String? @map("old_price_group_code") @db.VarChar(50)
+  oldPriceGroupName String? @map("old_price_group_name") @db.VarChar(100)
+  newPriceGroupId String @map("new_price_group_id") @db.Uuid
+  newPriceGroupCode String @map("new_price_group_code") @db.VarChar(50)
+  newPriceGroupName String @map("new_price_group_name") @db.VarChar(100)
+  source PriceGroupChangeSource
+  actorId String? @map("actor_id") @db.Uuid
+  reason String? @db.VarChar(500)
+  metadata Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([userId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([source, createdAt])
+  @@map("price_group_history")
 }
 model PriceRule {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
