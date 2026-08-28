@@ -21,3 +21,45 @@ test("deposit amount is server validated and starts pending", async () => {
   assert.equal(data.status, "PENDING");
   assert.equal(data.userId, "u");
 });
+
+test("deposit enforces method maximum and daily limits before persistence", async () => {
+  let created = 0;
+  const method = {
+      id: "m",
+      active: true,
+      minAmount: "1",
+      maxAmount: "100",
+      dailyTransactionLimit: 2,
+      dailyAmountLimit: "150",
+      exchangeRate: "1",
+      currency: "VND",
+    },
+    db: any = {
+      paymentMethod: { findUnique: async () => method },
+      deposit: {
+        count: async () => 2,
+        aggregate: async () => ({ _sum: { grossAmount: "140" } }),
+        create: async () => {
+          created++;
+        },
+      },
+    },
+    service = new DepositService(db);
+  await assert.rejects(
+    () =>
+      service.create("u", {
+        paymentMethodId: "m",
+        amount: "101",
+      }),
+    /Amount above maximum/,
+  );
+  await assert.rejects(
+    () =>
+      service.create("u", {
+        paymentMethodId: "m",
+        amount: "10",
+      }),
+    /Daily transaction limit reached/,
+  );
+  assert.equal(created, 0);
+});

@@ -30,6 +30,162 @@ export class PaymentSettingsService {
     });
   }
 
+  private decimal(value: unknown, field: string, scale = 8) {
+    const raw = String(value ?? "0").trim();
+    if (!new RegExp(`^(?:0|[1-9]\\d*)(?:\\.\\d{1,${scale}})?$`).test(raw))
+      throw new Error(`${field.toUpperCase()}_INVALID`);
+    return raw;
+  }
+
+  private publicMethod(row: any) {
+    let configured = false,
+      accountMasked: string | null = null;
+    if (row.configEncrypted) {
+      const config = JSON.parse(
+        decryptSecret(row.configEncrypted, this.encryptionKey),
+      );
+      configured = Object.keys(config).length > 0;
+      accountMasked = config.accountNumber
+        ? maskSecret(String(config.accountNumber))
+        : null;
+    }
+    const { configEncrypted: _secret, ...safe } = row;
+    return {
+      ...safe,
+      minAmount: String(row.minAmount),
+      maxAmount: String(row.maxAmount),
+      exchangeRate: String(row.exchangeRate),
+      dailyAmountLimit: String(row.dailyAmountLimit),
+      bonusPercent: String(row.bonusPercent),
+      configured,
+      accountMasked,
+      webhookUrl: `${process.env.API_URL ?? "http://localhost:4000"}/webhooks/payments/${row.code}`,
+    };
+  }
+
+  async methods(includeInactive = true) {
+    const rows = await this.db.paymentMethod.findMany({
+      where: includeInactive ? {} : { active: true },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    });
+    return rows.map((row: any) => this.publicMethod(row));
+  }
+
+  async saveMethod(actorId: string, id: string | null, input: any) {
+    const providerType = String(input.providerType ?? "").toUpperCase();
+    if (!["MANUAL", "VIETQR", "CASSO", "BINANCE"].includes(providerType))
+      throw new Error("PAYMENT_PROVIDER_TYPE_INVALID");
+    const minAmount = this.decimal(input.minAmount, "min_amount"),
+      maxAmount = this.decimal(input.maxAmount, "max_amount"),
+      dailyAmountLimit = this.decimal(
+        input.dailyAmountLimit,
+        "daily_amount_limit",
+      ),
+      exchangeRate = this.decimal(
+        input.exchangeRate ?? "1",
+        "exchange_rate",
+        12,
+      ),
+      bonusPercent = this.decimal(input.bonusPercent, "bonus_percent", 6);
+    const units = (value: string) => {
+      const [whole, fraction = ""] = value.split(".");
+      return (
+        BigInt(whole!) * 100000000n +
+        BigInt(fraction.padEnd(8, "0").slice(0, 8))
+      );
+    };
+    if (units(maxAmount) !== 0n && units(maxAmount) < units(minAmount))
+      throw new Error("PAYMENT_LIMIT_INVALID");
+    const dailyTransactionLimit = Number(input.dailyTransactionLimit ?? 0),
+      sortOrder = Number(input.sortOrder ?? 0);
+    if (
+      !Number.isSafeInteger(dailyTransactionLimit) ||
+      dailyTransactionLimit < 0 ||
+      !Number.isSafeInteger(sortOrder) ||
+      sortOrder < 0
+    )
+      throw new Error("PAYMENT_LIMIT_INVALID");
+    const secrets = [
+        "accountNumber",
+        "accountName",
+        "apiKey",
+        "apiSecret",
+        "merchantId",
+        "webhookSecret",
+      ],
+      secretInput = Object.fromEntries(
+        secrets
+          .filter((key) => typeof input[key] === "string" && input[key].trim())
+          .map((key) => [key, input[key].trim()]),
+      );
+    return this.db.$transaction(async (tx: any) => {
+      const existing = id
+        ? await tx.paymentMethod.findUnique({ where: { id } })
+        : null;
+      if (id && !existing) throw new Error("PAYMENT_METHOD_NOT_FOUND");
+      let configEncrypted = existing?.configEncrypted ?? null;
+      if (Object.keys(secretInput).length) {
+        const prior = configEncrypted
+          ? JSON.parse(decryptSecret(configEncrypted, this.encryptionKey))
+          : {};
+        configEncrypted = encryptSecret(
+          JSON.stringify({ ...prior, ...secretInput }),
+          this.encryptionKey,
+        );
+      }
+      const data = {
+        code: String(input.code ?? existing?.code ?? "")
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9_-]/g, "")
+          .slice(0, 50),
+        name: String(input.name ?? "")
+          .trim()
+          .slice(0, 120),
+        providerType,
+        currency: String(input.currency ?? "USD")
+          .toUpperCase()
+          .slice(0, 10),
+        icon: input.icon ? String(input.icon).trim().slice(0, 2048) : null,
+        minAmount,
+        maxAmount,
+        exchangeRate,
+        dailyTransactionLimit,
+        dailyAmountLimit,
+        bonusPercent,
+        instructions: input.instructions
+          ? String(input.instructions).slice(0, 10000)
+          : null,
+        sortOrder,
+        active: input.active === true,
+        configEncrypted,
+      };
+      if (!data.code || !data.name) throw new Error("PAYMENT_METHOD_INVALID");
+      const row = existing
+        ? await tx.paymentMethod.update({ where: { id }, data })
+        : await tx.paymentMethod.create({ data });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: existing ? "PAYMENT_METHOD_UPDATE" : "PAYMENT_METHOD_CREATE",
+          resource: "PaymentMethod",
+          resourceId: row.id,
+          before: existing
+            ? { name: existing.name, active: existing.active }
+            : undefined,
+          after: {
+            code: row.code,
+            name: row.name,
+            providerType: row.providerType,
+            currency: row.currency,
+            active: row.active,
+          },
+        },
+      });
+      return this.publicMethod(row);
+    });
+  }
+
   async webhookToken(fallback = "") {
     const row = await this.row("cassoWebhookSecureToken");
     return row?.encrypted && typeof row.value === "string"

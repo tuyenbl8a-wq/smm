@@ -42,6 +42,16 @@ export class DepositService {
     },
     private providers: Record<string, PaymentProvider> = {},
   ) {}
+  private units(value: unknown) {
+    const raw = String(value ?? "0").trim();
+    if (!/^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(raw))
+      throw new PaymentError("AMOUNT_INVALID", "Invalid payment amount");
+    const normalized = raw,
+      [whole, fraction = ""] = normalized.split(".");
+    return (
+      BigInt(whole!) * 100000000n + BigInt(fraction.padEnd(8, "0").slice(0, 8))
+    );
+  }
   async create(userId: string, input: any) {
     const amount = normalizeAmount(input.amount),
       method = await this.db.paymentMethod.findUnique({
@@ -52,11 +62,48 @@ export class DepositService {
         "METHOD_UNAVAILABLE",
         "Payment method unavailable",
       );
-    if (
-      BigInt(amount.replace(".", "")) <
-      BigInt(String(method.minAmount).replace(".", ""))
-    )
+    const amountUnits = this.units(amount),
+      minUnits = this.units(method.minAmount),
+      maxUnits = this.units(method.maxAmount ?? "0");
+    if (amountUnits < minUnits)
       throw new PaymentError("AMOUNT_TOO_SMALL", "Amount below minimum");
+    if (maxUnits > 0n && amountUnits > maxUnits)
+      throw new PaymentError("AMOUNT_TOO_LARGE", "Amount above maximum");
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    if (Number(method.dailyTransactionLimit ?? 0) > 0) {
+      const count = await this.db.deposit.count({
+        where: {
+          paymentMethodId: method.id,
+          createdAt: { gte: dayStart },
+          status: { notIn: ["FAILED", "CANCELED", "EXPIRED"] },
+        },
+      });
+      if (count >= Number(method.dailyTransactionLimit))
+        throw new PaymentError(
+          "METHOD_DAILY_LIMIT",
+          "Daily transaction limit reached",
+        );
+    }
+    const dailyAmountLimit = this.units(method.dailyAmountLimit ?? "0");
+    if (dailyAmountLimit > 0n) {
+      const aggregate = await this.db.deposit.aggregate({
+        where: {
+          paymentMethodId: method.id,
+          createdAt: { gte: dayStart },
+          status: { notIn: ["FAILED", "CANCELED", "EXPIRED"] },
+        },
+        _sum: { grossAmount: true },
+      });
+      if (
+        this.units(aggregate._sum.grossAmount ?? "0") + amountUnits >
+        dailyAmountLimit
+      )
+        throw new PaymentError(
+          "METHOD_DAILY_AMOUNT_LIMIT",
+          "Daily amount limit reached",
+        );
+    }
     const code = `NAP${randomBytes(6).toString("hex").toUpperCase()}`;
     const deposit = await this.db.deposit.create({
       data: {
@@ -69,7 +116,7 @@ export class DepositService {
         netAmount: amount,
         sourceCurrency: method.currency,
         baseCurrency: "USD",
-        exchangeRate: "1",
+        exchangeRate: String(method.exchangeRate ?? "1"),
         expiresAt: new Date(Date.now() + 30 * 60000),
       },
     });

@@ -421,6 +421,25 @@ export class AuthHandler {
           );
         return this.ok(response, await this.paymentSettings!.adminView());
       }
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/admin/payment-methods"
+      ) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.paymentSettings!.methods(
+            url.searchParams.get("includeInactive") !== "false",
+          ),
+        );
+      }
       if (request.method === "GET" && path === "/api/v1/admin/tickets") {
         if (!canAccessAdmin(auth.access, "tickets.manage"))
           return this.error(
@@ -957,6 +976,45 @@ export class AuthHandler {
           response,
           await this.paymentSettings!.update(
             auth.user.id,
+            await this.body(request),
+          ),
+        );
+      }
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/admin/payment-methods"
+      ) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.paymentSettings!.saveMethod(
+            auth.user.id,
+            null,
+            await this.body(request),
+          ),
+        );
+      }
+      const paymentMethodUpdate =
+        /^\/api\/v1\/admin\/payment-methods\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "POST" && paymentMethodUpdate) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.paymentSettings!.saveMethod(
+            auth.user.id,
+            paymentMethodUpdate[1]!,
             await this.body(request),
           ),
         );

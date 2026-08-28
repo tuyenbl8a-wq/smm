@@ -540,6 +540,27 @@ export class CatalogService {
         throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
       const data: any = {
         ...(input.name !== undefined ? { name: name(input.name) } : {}),
+        ...(input.description !== undefined
+          ? {
+              description:
+                String(input.description).trim().slice(0, 5000) || null,
+            }
+          : {}),
+        ...(input.type !== undefined
+          ? { type: name(input.type).slice(0, 80) }
+          : {}),
+        ...(input.averageTime !== undefined
+          ? {
+              averageTime:
+                String(input.averageTime).trim().slice(0, 100) || null,
+            }
+          : {}),
+        ...(input.refill !== undefined
+          ? { refill: input.refill === true }
+          : {}),
+        ...(input.cancel !== undefined
+          ? { cancel: input.cancel === true }
+          : {}),
         ...(input.rate !== undefined ? { rate: decimalInput(input.rate) } : {}),
         ...(input.providerCost !== undefined
           ? { providerCost: decimalInput(input.providerCost, true) }
@@ -560,6 +581,18 @@ export class CatalogService {
           "Maximum must be at least minimum",
         );
       const item = await tx.service.update({ where: { id }, data });
+      const manualSyncOverride: any = {};
+      if (input.name !== undefined && input.name !== before.name)
+        manualSyncOverride.syncName = false;
+      if (input.min !== undefined && Number(input.min) !== before.min)
+        manualSyncOverride.syncMin = false;
+      if (input.max !== undefined && Number(input.max) !== before.max)
+        manualSyncOverride.syncMax = false;
+      if (Object.keys(manualSyncOverride).length)
+        await tx.serviceMapping.updateMany({
+          where: { serviceId: id, active: true },
+          data: { syncAll: false, ...manualSyncOverride },
+        });
       await this.audit(
         tx,
         actorId,

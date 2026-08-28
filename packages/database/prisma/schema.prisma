@@ -306,9 +306,17 @@ model PaymentMethod {
   maxAmount Decimal @map("max_amount") @db.Decimal(20, 8)
   feeFixed Decimal @default(0) @map("fee_fixed") @db.Decimal(20, 8)
   feePercent Decimal @default(0) @map("fee_percent") @db.Decimal(9, 6)
+  icon String? @db.VarChar(2048)
+  exchangeRate Decimal @default(1) @map("exchange_rate") @db.Decimal(24, 12)
+  dailyTransactionLimit Int @default(0) @map("daily_transaction_limit")
+  dailyAmountLimit Decimal @default(0) @map("daily_amount_limit") @db.Decimal(20, 8)
+  bonusPercent Decimal @default(0) @map("bonus_percent") @db.Decimal(9, 6)
+  instructions String? @db.Text
+  sortOrder Int @default(0) @map("sort_order")
   active Boolean @default(false)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([active, sortOrder])
   @@map("payment_methods")
 }
 model Deposit {
