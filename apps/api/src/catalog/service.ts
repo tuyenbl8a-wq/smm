@@ -207,8 +207,9 @@ export class CatalogService {
     };
   }
 
-  async adminOverview() {
+  async adminOverview(includePricing = true) {
     const [
+      platforms,
       categories,
       services,
       priceGroups,
@@ -218,6 +219,9 @@ export class CatalogService {
       mappings,
       priceHistory,
     ] = await Promise.all([
+      this.db.platform.findMany({
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      }),
       this.db.serviceCategory.findMany({
         where: { deletedAt: null },
         orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -246,34 +250,68 @@ export class CatalogService {
       }),
     ]);
     return {
+      platforms,
       categories,
       services: services.map((x: any) => ({
-        ...x,
-        rate: String(x.rate),
-        providerCost: String(x.providerCost),
+        ...(includePricing
+          ? { ...x, rate: String(x.rate), providerCost: String(x.providerCost) }
+          : {
+              id: x.id,
+              categoryId: x.categoryId,
+              name: x.name,
+              description: x.description,
+              type: x.type,
+              min: x.min,
+              max: x.max,
+              averageTime: x.averageTime,
+              refill: x.refill,
+              cancel: x.cancel,
+              sortOrder: x.sortOrder,
+              active: x.active,
+              priceReviewStatus: x.priceReviewStatus,
+            }),
       })),
-      priceGroups,
-      priceRules: priceRules.map((x: any) => ({
-        ...x,
-        fixedRate: x.fixedRate == null ? null : String(x.fixedRate),
-        markupPercent: x.markupPercent == null ? null : String(x.markupPercent),
-        fixedProfit: x.fixedProfit == null ? null : String(x.fixedProfit),
-        minProfit: String(x.minProfit),
-      })),
+      priceGroups: includePricing ? priceGroups : [],
+      priceRules: includePricing
+        ? priceRules.map((x: any) => ({
+            ...x,
+            fixedRate: x.fixedRate == null ? null : String(x.fixedRate),
+            markupPercent:
+              x.markupPercent == null ? null : String(x.markupPercent),
+            fixedProfit: x.fixedProfit == null ? null : String(x.fixedProfit),
+            minProfit: String(x.minProfit),
+          }))
+        : [],
       providerServices: providerServices.map((x: any) => ({
-        ...x,
-        rate: String(x.rate),
+        ...(includePricing
+          ? { ...x, rate: String(x.rate) }
+          : {
+              id: x.id,
+              providerId: x.providerId,
+              externalId: x.externalId,
+              name: x.name,
+              category: x.category,
+              type: x.type,
+              min: x.min,
+              max: x.max,
+              refill: x.refill,
+              cancel: x.cancel,
+              active: x.active,
+              stale: x.stale,
+            }),
       })),
       providers,
       mappings,
-      priceHistory: priceHistory.map((x: any) => ({
-        ...x,
-        oldProviderCost: String(x.oldProviderCost),
-        newProviderCost: String(x.newProviderCost),
-        oldSaleRate: String(x.oldSaleRate),
-        newSaleRate: String(x.newSaleRate),
-        changePercent: String(x.changePercent),
-      })),
+      priceHistory: includePricing
+        ? priceHistory.map((x: any) => ({
+            ...x,
+            oldProviderCost: String(x.oldProviderCost),
+            newProviderCost: String(x.newProviderCost),
+            oldSaleRate: String(x.oldSaleRate),
+            newSaleRate: String(x.newSaleRate),
+            changePercent: String(x.changePercent),
+          }))
+        : [],
     };
   }
   async upsertMapping(actorId: string, input: any) {
@@ -289,6 +327,28 @@ export class CatalogService {
         ? decimalInput(input.fixedProfit, true)
         : null,
       minProfit: decimalInput(input.minProfit ?? "0", true),
+      syncAll: input.syncAll !== false,
+      syncName: input.syncName !== false,
+      syncCost: input.syncCost !== false,
+      syncMin: input.syncMin !== false,
+      syncMax: input.syncMax !== false,
+      syncType: input.syncType !== false,
+      syncRefill: input.syncRefill !== false,
+      syncCancel: input.syncCancel !== false,
+      syncStatus: input.syncStatus !== false,
+      syncDescription: input.syncDescription === true,
+      syncAverageTime: input.syncAverageTime === true,
+      providerCostOverride:
+        input.syncAll === false && input.syncCost === false
+          ? decimalInput(input.providerCostOverride ?? "0", true)
+          : null,
+      disabledPolicy: [
+        "KEEP_ACTIVE",
+        "DISABLE_SERVICE",
+        "REQUIRE_REVIEW",
+      ].includes(String(input.disabledPolicy))
+        ? String(input.disabledPolicy)
+        : "REQUIRE_REVIEW",
     };
     return this.db.$transaction(async (tx: any) => {
       const item = await tx.serviceMapping.upsert({
@@ -314,8 +374,70 @@ export class CatalogService {
     });
   }
 
+  async createPlatform(actorId: string, input: any) {
+    const data = {
+      name: name(input.name).slice(0, 120),
+      slug: slug(input.slug).slice(0, 140),
+      icon: input.icon ? String(input.icon).trim().slice(0, 255) : null,
+      sortOrder: integer(input.sortOrder ?? 0, "sortOrder"),
+      active: input.active !== false,
+    };
+    return this.db.$transaction(async (tx: any) => {
+      const item = await tx.platform.create({ data });
+      await this.audit(
+        tx,
+        actorId,
+        "PLATFORM_CREATE",
+        "platform",
+        item.id,
+        null,
+        item,
+      );
+      return item;
+    });
+  }
+
+  async updatePlatform(actorId: string, id: string, input: any) {
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.platform.findUnique({ where: { id } });
+      if (!before)
+        throw new CatalogError("PLATFORM_NOT_FOUND", "Platform not found");
+      const item = await tx.platform.update({
+        where: { id },
+        data: {
+          ...(input.name !== undefined
+            ? { name: name(input.name).slice(0, 120) }
+            : {}),
+          ...(input.slug !== undefined
+            ? { slug: slug(input.slug).slice(0, 140) }
+            : {}),
+          ...(input.icon !== undefined
+            ? { icon: String(input.icon).trim().slice(0, 255) || null }
+            : {}),
+          ...(input.sortOrder !== undefined
+            ? { sortOrder: integer(input.sortOrder, "sortOrder") }
+            : {}),
+          ...(input.active !== undefined
+            ? { active: input.active === true }
+            : {}),
+        },
+      });
+      await this.audit(
+        tx,
+        actorId,
+        "PLATFORM_UPDATE",
+        "platform",
+        id,
+        before,
+        item,
+      );
+      return item;
+    });
+  }
+
   async createCategory(actorId: string, input: any) {
     const data = {
+      platformId: input.platformId ? String(input.platformId) : null,
       name: name(input.name),
       slug: slug(input.slug),
       description: input.description
@@ -344,6 +466,9 @@ export class CatalogService {
       if (!before)
         throw new CatalogError("CATEGORY_NOT_FOUND", "Category not found");
       const data = {
+        ...(input.platformId !== undefined
+          ? { platformId: input.platformId ? String(input.platformId) : null }
+          : {}),
         ...(input.name !== undefined ? { name: name(input.name) } : {}),
         ...(input.slug !== undefined ? { slug: slug(input.slug) } : {}),
         ...(input.active !== undefined

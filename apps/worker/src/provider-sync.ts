@@ -78,37 +78,95 @@ export class ProviderSyncWorker {
         (row: any) => row.serviceId === service.id,
       );
       const candidates = serviceMappings
-        .map((mapping: any) =>
-          availableServices.find(
+        .map((mapping: any) => {
+          const providerService = availableServices.find(
             (row: any) => row.id === mapping.providerServiceId,
-          ),
-        )
+          );
+          return providerService
+            ? {
+                mapping,
+                providerService,
+                cost:
+                  mapping.syncAll !== false || mapping.syncCost === true
+                    ? providerService.rate
+                    : (mapping.providerCostOverride ?? service.providerCost),
+              }
+            : null;
+        })
         .filter(Boolean);
       if (!candidates.length) {
-        if (service.active) {
+        const policy =
+          serviceMappings.find(
+            (row: any) => row.disabledPolicy === "DISABLE_SERVICE",
+          )?.disabledPolicy ??
+          serviceMappings.find(
+            (row: any) => row.disabledPolicy === "REQUIRE_REVIEW",
+          )?.disabledPolicy ??
+          "KEEP_ACTIVE";
+        if (service.active && policy !== "KEEP_ACTIVE") {
           await tx.service.update({
             where: { id: service.id },
-            data: { active: false },
+            data:
+              policy === "DISABLE_SERVICE"
+                ? { active: false }
+                : { priceReviewStatus: "PRICE_REVIEW" },
           });
           await tx.priceAlert.create({
             data: {
               serviceId: service.id,
               providerId,
               type: "SERVICE_UNAVAILABLE",
-              severity: "CRITICAL",
+              severity: policy === "KEEP_ACTIVE" ? "WARNING" : "CRITICAL",
               title: "Dịch vụ không còn nhà cung cấp khả dụng",
-              message: `${service.name} đã bị tắt sau đồng bộ nhà cung cấp.`,
+              message:
+                policy === "DISABLE_SERVICE"
+                  ? `${service.name} đã bị tắt sau đồng bộ nhà cung cấp.`
+                  : `${service.name} cần được kiểm tra sau đồng bộ nhà cung cấp.`,
+              metadata: { disabledPolicy: policy },
             },
           });
         }
         continue;
       }
-      const selected = candidates[0];
+      const selected: any = candidates[0];
       const safetyCost = candidates.reduce(
         (maximum: bigint, row: any) =>
-          units(row.rate) > maximum ? units(row.rate) : maximum,
+          units(row.cost) > maximum ? units(row.cost) : maximum,
         0n,
       );
+      const syncAll = selected.mapping.syncAll !== false,
+        providerRow = selected.providerService,
+        syncedFields = {
+          ...(providerRow.name !== undefined &&
+          (syncAll || selected.mapping.syncName)
+            ? { name: providerRow.name }
+            : {}),
+          ...(providerRow.min !== undefined &&
+          (syncAll || selected.mapping.syncMin)
+            ? { min: providerRow.min }
+            : {}),
+          ...(providerRow.max !== undefined &&
+          (syncAll || selected.mapping.syncMax)
+            ? { max: providerRow.max }
+            : {}),
+          ...(providerRow.type !== undefined &&
+          (syncAll || selected.mapping.syncType)
+            ? { type: providerRow.type }
+            : {}),
+          ...(providerRow.refill !== undefined &&
+          (syncAll || selected.mapping.syncRefill)
+            ? { refill: providerRow.refill }
+            : {}),
+          ...(providerRow.cancel !== undefined &&
+          (syncAll || selected.mapping.syncCancel)
+            ? { cancel: providerRow.cancel }
+            : {}),
+        };
+      if (Object.keys(syncedFields).length)
+        await tx.service.update({
+          where: { id: service.id },
+          data: syncedFields,
+        });
       const oldCost = units(service.providerCost),
         oldRate = units(service.rate);
       const increasePercent =
@@ -125,7 +183,7 @@ export class ProviderSyncWorker {
           data: {
             serviceId: service.id,
             providerId,
-            providerServiceId: selected.id,
+            providerServiceId: selected.providerService.id,
             type: "PRICE_SPIKE_REVIEW",
             severity: "CRITICAL",
             title: "Giá nhà cung cấp tăng vượt ngưỡng",
@@ -176,7 +234,7 @@ export class ProviderSyncWorker {
           data: {
             serviceId: service.id,
             providerId,
-            providerServiceId: selected.id,
+            providerServiceId: selected.providerService.id,
             oldProviderCost: text(oldCost),
             newProviderCost: text(safetyCost),
             oldSaleRate: text(oldRate),
@@ -213,7 +271,7 @@ export class ProviderSyncWorker {
           data: {
             serviceId: service.id,
             providerId,
-            providerServiceId: selected.id,
+            providerServiceId: selected.providerService.id,
             type: alertType,
             severity: data.active === false ? "CRITICAL" : "WARNING",
             title:
@@ -255,6 +313,9 @@ export class ProviderSyncWorker {
           data: { syncClaimedAt: new Date() },
         });
         if (!claimed.count) continue;
+        const syncLog = await this.db.providerSyncLog.create({
+          data: { providerId: p.id, status: "RUNNING", startedAt: new Date() },
+        });
         const controller = new AbortController(),
           timer = setTimeout(() => controller.abort(), p.timeoutMs);
         try {
@@ -272,10 +333,18 @@ export class ProviderSyncWorker {
             throw new Error("SYNC_INVALID");
           await this.db.$transaction(async (tx: any) => {
             const seen: string[] = [];
+            let created = 0,
+              updated = 0,
+              unchanged = 0;
             for (const x of rows) {
               const externalId = String(x.service),
                 rate = String(x.rate);
               if (!/^\d{1,12}(?:\.\d{1,8})?$/.test(rate)) continue;
+              const existing = await tx.providerService.findUnique({
+                where: {
+                  providerId_externalId: { providerId: p.id, externalId },
+                },
+              });
               const saved = await tx.providerService.upsert({
                 where: {
                   providerId_externalId: { providerId: p.id, externalId },
@@ -309,6 +378,16 @@ export class ProviderSyncWorker {
                   stale: false,
                 },
               });
+              if (!existing) created++;
+              else if (
+                String(existing.rate) !== rate ||
+                existing.name !== String(x.name) ||
+                existing.min !== Number(x.min) ||
+                existing.max !== Number(x.max) ||
+                existing.active !== true
+              )
+                updated++;
+              else unchanged++;
               seen.push(saved.id);
             }
             const staleServices = await tx.providerService.findMany({
@@ -330,7 +409,7 @@ export class ProviderSyncWorker {
                   message: `${stale.name} đã được đánh dấu stale sau đồng bộ.`,
                 },
               });
-            await this.repriceProvider(tx, p.id);
+            const priceChanged = await this.repriceProvider(tx, p.id);
             await tx.provider.update({
               where: { id: p.id },
               data: {
@@ -342,14 +421,38 @@ export class ProviderSyncWorker {
                 ),
               },
             });
+            await tx.providerSyncLog.update({
+              where: { id: syncLog.id },
+              data: {
+                status: "COMPLETED",
+                finishedAt: new Date(),
+                received: rows.length,
+                created,
+                updated,
+                unchanged,
+                stale: staleServices.length,
+                metadata: { priceChanged },
+              },
+            });
           });
-        } catch {
+        } catch (error: any) {
           await this.db.provider.update({
             where: { id: p.id },
             data: {
               lastFailureAt: new Date(),
               syncClaimedAt: null,
               nextSyncAt: new Date(Date.now() + 5 * 60_000),
+            },
+          });
+          await this.db.providerSyncLog.update({
+            where: { id: syncLog.id },
+            data: {
+              status: "FAILED",
+              finishedAt: new Date(),
+              errors: 1,
+              errorMessage: String(
+                error?.message ?? "Provider sync failed",
+              ).slice(0, 500),
             },
           });
         } finally {

@@ -50,9 +50,10 @@ test("customer and admin routes remain independently available", () => {
 });
 test("navigation highlights active destinations and groups admin operations", () => {
   assert.match(page, /active === path/);
-  assert.match(page, /VẬN HÀNH/);
-  assert.match(page, /TÀI CHÍNH/);
-  assert.match(page, /HỆ THỐNG/);
+  assert.match(page, /Đơn hàng/);
+  assert.match(page, /Dịch vụ/);
+  assert.match(page, /Cài đặt/);
+  assert.match(page, /themeCycle/);
   assert.match(page, /customerNavigation\("\/deposit"\)/);
 });
 test("catalog and provider audit controls are wired to authenticated APIs", () => {
@@ -71,8 +72,8 @@ test("professional pricing UI requires preview before transactional apply", () =
 });
 test("rendered scripts bind DOM nodes explicitly and omit empty enum filters", () => {
   assert.match(page, /document\.getElementById/);
-  assert.match(page, /const search=byId\('search'\),status=byId\('status'\)/);
-  assert.match(page, /if\(status\.value\)q\.set\('status',status\.value\)/);
+  assert.match(page, /const search=byId\('search'\),from=byId\('from'\)/);
+  assert.match(page, /if\(selectedStatus\)q\.set\('status',selectedStatus\)/);
   assert.doesNotMatch(page, /status='\+status\.value/);
   assert.match(page, /document\.getElementById\(\$\{JSON\.stringify\(id\)\}\)/);
 });

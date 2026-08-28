@@ -260,8 +260,18 @@ export class PrismaAuthStore implements AuthStore {
     const grants = await this.db.rolePermission.findMany({
       where: { roleId: { in: roles.map((x: any) => x.id) } },
     });
+    const userGrants = await this.db.userPermission.findMany({
+      where: { userId },
+    });
     const permissions = await this.db.permission.findMany({
-      where: { id: { in: grants.map((x: any) => x.permissionId) } },
+      where: {
+        id: {
+          in: [
+            ...grants.map((x: any) => x.permissionId),
+            ...userGrants.map((x: any) => x.permissionId),
+          ],
+        },
+      },
     });
     return {
       roles: roles.map((x: any) => x.code),

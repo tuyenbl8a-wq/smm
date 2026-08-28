@@ -125,11 +125,68 @@ export class AdminOperationsService {
           select: { id: true, code: true, name: true },
         })
       : [];
-    const groupMap = new Map(groups.map((group: any) => [group.id, group]));
+    const ids = rows.map((row: any) => row.id),
+      [wallets, userRoles, roleRows, deposits, orders, lastLogins] =
+        await Promise.all([
+          this.db.wallet?.findMany
+            ? this.db.wallet.findMany({ where: { userId: { in: ids } } })
+            : [],
+          this.db.userRole?.findMany
+            ? this.db.userRole.findMany({ where: { userId: { in: ids } } })
+            : [],
+          this.db.role?.findMany ? this.db.role.findMany({}) : [],
+          this.db.deposit?.groupBy
+            ? this.db.deposit.groupBy({
+                by: ["userId"],
+                where: { userId: { in: ids }, status: "PAID" },
+                _sum: { netAmount: true },
+              })
+            : [],
+          this.db.order?.groupBy
+            ? this.db.order.groupBy({
+                by: ["userId"],
+                where: { userId: { in: ids } },
+                _sum: { charge: true, refundedAmount: true },
+                _count: { _all: true },
+              })
+            : [],
+          this.db.loginHistory?.findMany
+            ? this.db.loginHistory.findMany({
+                where: { userId: { in: ids }, success: true },
+                orderBy: { createdAt: "desc" },
+              })
+            : [],
+        ]),
+      groupMap = new Map(groups.map((group: any) => [group.id, group])),
+      roleMap = new Map(roleRows.map((role: any) => [role.id, role.code]));
     return {
       items: rows.map((row: any) => ({
         ...row,
         priceGroup: row.priceGroupId ? groupMap.get(row.priceGroupId) : null,
+        balance: String(
+          wallets.find((wallet: any) => wallet.userId === row.id)?.balance ??
+            "0",
+        ),
+        roles: userRoles
+          .filter((link: any) => link.userId === row.id)
+          .map((link: any) => roleMap.get(link.roleId)),
+        totalDeposits: String(
+          deposits.find((entry: any) => entry.userId === row.id)?._sum
+            .netAmount ?? "0",
+        ),
+        totalSpent: (() => {
+          const entry = orders.find((order: any) => order.userId === row.id);
+          return moneyText(
+            moneyUnits(entry?._sum.charge ?? "0") -
+              moneyUnits(entry?._sum.refundedAmount ?? "0"),
+          );
+        })(),
+        orderCount:
+          orders.find((entry: any) => entry.userId === row.id)?._count._all ??
+          0,
+        lastLoginAt:
+          lastLogins.find((entry: any) => entry.userId === row.id)?.createdAt ??
+          null,
       })),
       page,
       limit,
@@ -661,6 +718,202 @@ export class AdminOperationsService {
     return { revoked: result.count };
   }
 
+  async recordSecurityAction(
+    actorId: string,
+    targetId: string,
+    action: string,
+  ) {
+    await this.db.auditLog.create({
+      data: {
+        actorId,
+        action,
+        resource: "User",
+        resourceId: targetId,
+        after: { tokenExposed: false },
+      },
+    });
+  }
+
+  async staff() {
+    const roles = await this.db.role.findMany({
+      where: { code: { in: ["STAFF", "ADMIN", "SUPER_ADMIN"] } },
+    });
+    const links = await this.db.userRole.findMany({
+      where: { roleId: { in: roles.map((role: any) => role.id) } },
+    });
+    const users = await this.db.user.findMany({
+      where: {
+        id: { in: links.map((link: any) => link.userId) },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        status: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const lastLogins = await this.db.loginHistory.findMany({
+      where: {
+        userId: { in: users.map((user: any) => user.id) },
+        success: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const roleMap = new Map(roles.map((role: any) => [role.id, role.code]));
+    return {
+      items: users.map((user: any) => ({
+        ...user,
+        roles: links
+          .filter((link: any) => link.userId === user.id)
+          .map((link: any) => roleMap.get(link.roleId)),
+        lastLoginAt:
+          lastLogins.find((row: any) => row.userId === user.id)?.createdAt ??
+          null,
+      })),
+      permissions: await this.db.permission.findMany({
+        orderBy: { code: "asc" },
+      }),
+    };
+  }
+
+  async createStaff(actorId: string, input: any) {
+    const roleCode = input.role === "ADMIN" ? "ADMIN" : "STAFF";
+    return this.db.$transaction(async (tx: any) => {
+      const role = await tx.role.findUniqueOrThrow({
+          where: { code: roleCode },
+        }),
+        normal =
+          (await tx.priceGroup.findUnique({ where: { code: "KHACH_LE" } })) ??
+          (await tx.priceGroup.findFirst({
+            where: { active: true },
+            orderBy: { tierOrder: "asc" },
+          }));
+      const user = await tx.user.create({
+        data: {
+          email: String(input.email).trim().toLowerCase(),
+          username: String(input.username).trim(),
+          passwordHash: String(input.passwordHash),
+          status: "ACTIVE",
+          emailVerifiedAt: new Date(),
+          referralCode: String(input.referralCode),
+          priceGroupId: normal?.id,
+        },
+      });
+      await tx.userRole.create({ data: { userId: user.id, roleId: role.id } });
+      await tx.wallet.create({ data: { userId: user.id, currency: "USD" } });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "STAFF_CREATE",
+          resource: "User",
+          resourceId: user.id,
+          after: { email: user.email, username: user.username, role: roleCode },
+        },
+      });
+      return {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: roleCode,
+      };
+    });
+  }
+
+  async updateStaff(
+    actorId: string,
+    actorPermissions: string[],
+    targetId: string,
+    input: any,
+    superAdmin = false,
+  ) {
+    if (actorId === targetId && input.role)
+      throw new AdminOperationError(
+        "SELF_ESCALATION_DENIED",
+        "Cannot change your own staff role",
+      );
+    const links = await this.db.userRole.findMany({
+        where: { userId: targetId },
+      }),
+      targetRoles = await this.db.role.findMany({
+        where: { id: { in: links.map((link: any) => link.roleId) } },
+      });
+    if (targetRoles.some((role: any) => role.code === "SUPER_ADMIN"))
+      throw new AdminOperationError(
+        "SUPER_ADMIN_PROTECTED",
+        "Super Admin cannot be changed here",
+      );
+    const requested: string[] = Array.isArray(input.permissions)
+      ? Array.from(new Set<string>(input.permissions.map(String)))
+      : [];
+    if (
+      !superAdmin &&
+      requested.some((code) => !actorPermissions.includes(code))
+    )
+      throw new AdminOperationError(
+        "PERMISSION_GRANT_DENIED",
+        "Cannot grant a permission you do not own",
+      );
+    const roleCode = input.role === "ADMIN" ? "ADMIN" : "STAFF";
+    return this.db.$transaction(async (tx: any) => {
+      const before = { roles: targetRoles.map((role: any) => role.code) },
+        role = await tx.role.findUniqueOrThrow({ where: { code: roleCode } }),
+        permissions = await tx.permission.findMany({
+          where: { code: { in: requested } },
+        });
+      if (permissions.length !== requested.length)
+        throw new AdminOperationError(
+          "PERMISSION_INVALID",
+          "Unknown permission",
+        );
+      await tx.userRole.deleteMany({ where: { userId: targetId } });
+      await tx.userRole.create({ data: { userId: targetId, roleId: role.id } });
+      await tx.userPermission.deleteMany({ where: { userId: targetId } });
+      if (permissions.length)
+        await tx.userPermission.createMany({
+          data: permissions.map((permission: any) => ({
+            userId: targetId,
+            permissionId: permission.id,
+            grantedBy: actorId,
+          })),
+          skipDuplicates: true,
+        });
+      if (input.status === "BANNED" || input.status === "ACTIVE") {
+        await tx.user.update({
+          where: { id: targetId },
+          data: { status: input.status },
+        });
+        if (input.status === "BANNED")
+          await tx.session.updateMany({
+            where: { userId: targetId, revokedAt: null },
+            data: { revokedAt: new Date() },
+          });
+      }
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "STAFF_PERMISSIONS_UPDATE",
+          resource: "User",
+          resourceId: targetId,
+          before,
+          after: {
+            role: roleCode,
+            permissions: requested,
+            status: input.status,
+          },
+        },
+      });
+      return {
+        id: targetId,
+        role: roleCode,
+        permissions: requested,
+        status: input.status,
+      };
+    });
+  }
+
   async orders(query: any) {
     const page = Math.max(1, Number(query.page) || 1),
       limit = clamp(query.limit),
@@ -687,10 +940,23 @@ export class AdminOperationsService {
         ...(provider ? { providerId: provider } : {}),
         ...(user ? { userId: user } : {}),
         ...(service ? { serviceId: service } : {}),
+        ...(optional(query.from) || optional(query.to)
+          ? {
+              createdAt: {
+                ...(optional(query.from)
+                  ? { gte: new Date(String(query.from)) }
+                  : {}),
+                ...(optional(query.to)
+                  ? { lte: new Date(String(query.to)) }
+                  : {}),
+              },
+            }
+          : {}),
         ...(search
           ? {
               OR: [
                 { publicId: { equals: search } },
+                { providerOrderId: { equals: search } },
                 { link: { contains: search } },
               ],
             }
@@ -705,7 +971,55 @@ export class AdminOperationsService {
         take: limit,
       }),
     ]);
-    return { items, page, limit, total, pages: Math.ceil(total / limit) };
+    const [users, services, providers] = await Promise.all([
+      items.length && this.db.user?.findMany
+        ? this.db.user.findMany({
+            where: {
+              id: { in: [...new Set(items.map((item: any) => item.userId))] },
+            },
+            select: { id: true, email: true, username: true },
+          })
+        : [],
+      items.length && this.db.service?.findMany
+        ? this.db.service.findMany({
+            where: {
+              id: {
+                in: [...new Set(items.map((item: any) => item.serviceId))],
+              },
+            },
+            select: { id: true, name: true },
+          })
+        : [],
+      items.length && this.db.provider?.findMany
+        ? this.db.provider.findMany({
+            where: {
+              id: {
+                in: [
+                  ...new Set(
+                    items.map((item: any) => item.providerId).filter(Boolean),
+                  ),
+                ],
+              },
+            },
+            select: { id: true, name: true },
+          })
+        : [],
+    ]);
+    const userMap = new Map(users.map((row: any) => [row.id, row])),
+      serviceMap = new Map(services.map((row: any) => [row.id, row])),
+      providerMap = new Map(providers.map((row: any) => [row.id, row]));
+    return {
+      items: items.map((item: any) => ({
+        ...item,
+        user: userMap.get(item.userId),
+        service: serviceMap.get(item.serviceId),
+        provider: item.providerId ? providerMap.get(item.providerId) : null,
+      })),
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+    };
   }
 
   async order(publicId: string) {
@@ -905,11 +1219,27 @@ export class AdminOperationsService {
   async updateSettings(actorId: string, input: any) {
     const allowed = new Set([
         "siteName",
+        "metaDescription",
+        "metaKeywords",
+        "defaultLanguage",
         "currency",
         "timezone",
+        "announcement",
         "registrationEnabled",
         "maintenanceMode",
         "maintenanceMessage",
+        "serviceSalesEnabled",
+        "duplicateOrderPolicy",
+        "supportFacebookEnabled",
+        "supportFacebook",
+        "supportTelegramEnabled",
+        "supportTelegram",
+        "supportWhatsappEnabled",
+        "supportWhatsapp",
+        "supportEmailEnabled",
+        "supportEmail",
+        "supportPhoneEnabled",
+        "supportPhone",
       ]),
       entries = Object.entries(input).filter(([key]) => allowed.has(key));
     if (!entries.length)
@@ -931,6 +1261,30 @@ export class AdminOperationsService {
       });
       return { updated: entries.map(([key]) => key) };
     });
+  }
+
+  async publicSettings() {
+    const allowed = [
+      "siteName",
+      "defaultLanguage",
+      "currency",
+      "announcement",
+      "supportFacebookEnabled",
+      "supportFacebook",
+      "supportTelegramEnabled",
+      "supportTelegram",
+      "supportWhatsappEnabled",
+      "supportWhatsapp",
+      "supportEmailEnabled",
+      "supportEmail",
+      "supportPhoneEnabled",
+      "supportPhone",
+    ];
+    const rows = await this.db.setting.findMany({
+      where: { group: "general", key: { in: allowed }, encrypted: false },
+      select: { key: true, value: true },
+    });
+    return Object.fromEntries(rows.map((row: any) => [row.key, row.value]));
   }
 
   async maintenance() {

@@ -1,6 +1,7 @@
 import { repriceMappedServices } from "../catalog/repricing.js";
 import { decryptSecret, encryptSecret, maskSecret } from "./crypto.js";
 import { StandardSmmAdapter } from "./adapter.js";
+import { resolveCustomerRate } from "../catalog/pricing.js";
 export class ProviderConfigError extends Error {
   constructor(
     readonly code: string,
@@ -20,6 +21,333 @@ export class ProviderService {
       decryptSecret(provider.apiKeyEncrypted, this.encryptionKey),
       provider.timeoutMs,
     );
+  }
+  private async provider(id: string) {
+    const provider = await this.db.provider.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!provider)
+      throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
+    return provider;
+  }
+
+  async fetchServices(id: string, query: any = {}) {
+    const provider = await this.provider(id),
+      rows = await this.adapter(provider).getServices(),
+      search = String(query.search ?? "")
+        .trim()
+        .toLowerCase(),
+      category = String(query.category ?? "").trim(),
+      page = Math.max(1, Number(query.page) || 1),
+      limit = Math.min(200, Math.max(1, Number(query.limit) || 50)),
+      filtered = rows.filter(
+        (row) =>
+          (!search ||
+            row.name.toLowerCase().includes(search) ||
+            row.externalId.toLowerCase().includes(search)) &&
+          (!category || row.category === category),
+      );
+    return {
+      provider: { id: provider.id, name: provider.name },
+      categories: [...new Set(rows.map((row) => row.category))].sort(),
+      page,
+      limit,
+      total: filtered.length,
+      pages: Math.ceil(filtered.length / limit),
+      items: filtered
+        .slice((page - 1) * limit, page * limit)
+        .map(({ raw, ...row }) => row),
+    };
+  }
+
+  private async selectedRecords(provider: any, input: any) {
+    const externalIds = Array.isArray(input.externalIds)
+      ? [...new Set(input.externalIds.map(String))].slice(0, 5000)
+      : [];
+    if (!externalIds.length)
+      throw new ProviderConfigError(
+        "SERVICES_REQUIRED",
+        "Select at least one service",
+      );
+    const rows = await this.adapter(provider).getServices(),
+      selected = rows.filter((row) => externalIds.includes(row.externalId));
+    if (selected.length !== externalIds.length)
+      throw new ProviderConfigError(
+        "PROVIDER_SERVICE_MISSING",
+        "A selected provider service is unavailable",
+      );
+    return selected;
+  }
+
+  async importPreview(id: string, input: any) {
+    const provider = await this.provider(id),
+      records = await this.selectedRecords(provider, input),
+      category = await this.db.serviceCategory.findFirst({
+        where: {
+          id: String(input.categoryId ?? ""),
+          active: true,
+          deletedAt: null,
+        },
+      });
+    if (!category)
+      throw new ProviderConfigError(
+        "CATEGORY_NOT_FOUND",
+        "Local category not found",
+      );
+    const [platform, groups, existingProviderServices] = await Promise.all([
+      category.platformId
+        ? this.db.platform.findUnique({ where: { id: category.platformId } })
+        : null,
+      this.db.priceGroup.findMany({
+        where: { active: true, code: { in: ["KHACH_LE", "CTV", "DAI_LY"] } },
+        orderBy: { tierOrder: "asc" },
+      }),
+      this.db.providerService.findMany({
+        where: {
+          providerId: id,
+          externalId: { in: records.map((row) => row.externalId) },
+        },
+      }),
+    ]);
+    const existingMap = new Map(
+      existingProviderServices.map((row: any) => [row.externalId, row]),
+    );
+    const existingMappings = existingProviderServices.length
+      ? await this.db.serviceMapping.findMany({
+          where: {
+            providerServiceId: {
+              in: existingProviderServices.map((row: any) => row.id),
+            },
+          },
+        })
+      : [];
+    const mapped = new Set(
+      existingMappings.map((row: any) => row.providerServiceId),
+    );
+    return {
+      count: records.length,
+      items: records.map((record) => {
+        const service = {
+          rate: record.rate,
+          pricingMode: input.pricingMode ?? "COST_PLUS_PERCENT_AND_FIXED",
+          defaultMarkupPercent: input.defaultMarkupPercent ?? "20",
+          defaultFixedProfit: input.defaultFixedProfit ?? "0",
+          defaultMinProfit: input.defaultMinProfit ?? "0",
+        };
+        const existing: any = existingMap.get(record.externalId);
+        return {
+          provider: provider.name,
+          externalServiceId: record.externalId,
+          providerName: record.name,
+          providerCategory: record.category,
+          providerCost: record.rate,
+          suggestedPlatform: platform?.name ?? null,
+          suggestedCategory: category.name,
+          localName: record.name,
+          prices: Object.fromEntries(
+            groups.map((group: any) => [
+              group.code,
+              resolveCustomerRate({
+                service,
+                group,
+                providerCost: record.rate,
+              }),
+            ]),
+          ),
+          min: record.min,
+          max: record.max,
+          type: record.type,
+          refill: record.refill,
+          cancel: record.cancel,
+          state: existing
+            ? mapped.has(existing.id)
+              ? "EXISTS"
+              : "UNMAPPED"
+            : "NEW",
+          warning: existing ? "Dịch vụ nhà cung cấp đã tồn tại" : null,
+        };
+      }),
+    };
+  }
+
+  async importApply(actorId: string, id: string, input: any) {
+    const provider = await this.provider(id),
+      records = await this.selectedRecords(provider, input),
+      categoryId = String(input.categoryId ?? ""),
+      action = ["UPDATE", "REMAP", "SKIP"].includes(
+        String(input.existingAction),
+      )
+        ? String(input.existingAction)
+        : "SKIP";
+    return this.db.$transaction(async (tx: any) => {
+      const category = await tx.serviceCategory.findFirst({
+        where: { id: categoryId, active: true, deletedAt: null },
+      });
+      if (!category)
+        throw new ProviderConfigError(
+          "CATEGORY_NOT_FOUND",
+          "Local category not found",
+        );
+      const existing = await tx.providerService.findMany({
+        where: {
+          providerId: id,
+          externalId: { in: records.map((row) => row.externalId) },
+        },
+      });
+      const existingMap = new Map(
+        existing.map((row: any) => [row.externalId, row]),
+      );
+      const mappings = existing.length
+        ? await tx.serviceMapping.findMany({
+            where: {
+              providerServiceId: { in: existing.map((row: any) => row.id) },
+            },
+          })
+        : [];
+      const mappingMap = new Map(
+        mappings.map((row: any) => [row.providerServiceId, row]),
+      );
+      let created = 0,
+        updated = 0,
+        skipped = 0;
+      const changedProviderServiceIds: string[] = [];
+      for (const record of records) {
+        const previous: any = existingMap.get(record.externalId),
+          priorMapping: any = previous ? mappingMap.get(previous.id) : null;
+        if (priorMapping && action === "SKIP") {
+          skipped++;
+          continue;
+        }
+        const providerService = await tx.providerService.upsert({
+          where: {
+            providerId_externalId: {
+              providerId: id,
+              externalId: record.externalId,
+            },
+          },
+          create: { providerId: id, ...record, lastSyncedAt: new Date() },
+          update: {
+            ...record,
+            active: true,
+            stale: false,
+            lastSyncedAt: new Date(),
+          },
+        });
+        changedProviderServiceIds.push(providerService.id);
+        if (priorMapping && action === "UPDATE") {
+          const mapping = priorMapping;
+          const all = mapping.syncAll === true;
+          await tx.service.update({
+            where: { id: mapping.serviceId },
+            data: {
+              ...(all || mapping.syncName ? { name: record.name } : {}),
+              ...(all || mapping.syncMin ? { min: record.min } : {}),
+              ...(all || mapping.syncMax ? { max: record.max } : {}),
+              ...(all || mapping.syncType ? { type: record.type } : {}),
+              ...(all || mapping.syncRefill ? { refill: record.refill } : {}),
+              ...(all || mapping.syncCancel ? { cancel: record.cancel } : {}),
+            },
+          });
+          updated++;
+          continue;
+        }
+        const pricingTemplate = {
+            rate: record.rate,
+            pricingMode: input.pricingMode ?? "COST_PLUS_PERCENT_AND_FIXED",
+            defaultMarkupPercent: input.defaultMarkupPercent ?? "20",
+            defaultFixedProfit: input.defaultFixedProfit ?? "0",
+            defaultMinProfit: input.defaultMinProfit ?? "0",
+          },
+          initialSaleRate = resolveCustomerRate({
+            service: pricingTemplate,
+            providerCost: record.rate,
+          });
+        const local = await tx.service.create({
+          data: {
+            categoryId,
+            name: record.name,
+            description:
+              typeof record.raw?.description === "string"
+                ? record.raw.description.slice(0, 5000)
+                : null,
+            type: record.type,
+            rate: initialSaleRate,
+            providerCost: record.rate,
+            pricingMode: input.pricingMode ?? "COST_PLUS_PERCENT_AND_FIXED",
+            defaultMarkupPercent: input.defaultMarkupPercent ?? "20",
+            defaultFixedProfit: input.defaultFixedProfit ?? "0",
+            defaultMinProfit: input.defaultMinProfit ?? "0",
+            min: record.min,
+            max: record.max,
+            refill: record.refill,
+            cancel: record.cancel,
+            active: input.active !== false,
+          },
+        });
+        await tx.serviceMapping.upsert({
+          where: {
+            serviceId_providerServiceId: {
+              serviceId: local.id,
+              providerServiceId: providerService.id,
+            },
+          },
+          create: {
+            serviceId: local.id,
+            providerServiceId: providerService.id,
+            priority: Number(input.priority ?? 100),
+            syncAll: input.syncAll !== false,
+            syncName: input.syncName !== false,
+            syncCost: input.syncCost !== false,
+            providerCostOverride:
+              input.syncAll === false && input.syncCost === false
+                ? record.rate
+                : null,
+            syncMin: input.syncMin !== false,
+            syncMax: input.syncMax !== false,
+            syncType: input.syncType !== false,
+            syncRefill: input.syncRefill !== false,
+            syncCancel: input.syncCancel !== false,
+            disabledPolicy: input.disabledPolicy ?? "REQUIRE_REVIEW",
+          },
+          update: { active: true },
+        });
+        created++;
+      }
+      if (changedProviderServiceIds.length)
+        await repriceMappedServices(
+          tx,
+          id,
+          changedProviderServiceIds,
+          "provider-service-import",
+        );
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "PROVIDER_SERVICE_IMPORT",
+          resource: "provider",
+          resourceId: id,
+          after: {
+            categoryId,
+            externalIds: records.map((row) => row.externalId),
+            created,
+            updated,
+            skipped,
+          },
+        },
+      });
+      return { received: records.length, created, updated, skipped, failed: 0 };
+    });
+  }
+
+  async syncLogs(id: string, page = 1) {
+    await this.provider(id);
+    const limit = 50;
+    return this.db.providerSyncLog.findMany({
+      where: { providerId: id },
+      orderBy: { startedAt: "desc" },
+      skip: (Math.max(1, page) - 1) * limit,
+      take: limit,
+    });
   }
   async list() {
     const rows = await this.db.provider.findMany({
@@ -185,8 +513,30 @@ export class ProviderService {
     const provider = await this.db.provider.findUnique({ where: { id } });
     if (!provider)
       throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
-    const records = await this.adapter(provider).getServices(),
-      now = new Date();
+    const syncLog = this.db.providerSyncLog?.create
+      ? await this.db.providerSyncLog.create({
+          data: { providerId: id, status: "RUNNING", startedAt: new Date() },
+        })
+      : null;
+    let records;
+    try {
+      records = await this.adapter(provider).getServices();
+    } catch (error: any) {
+      if (syncLog)
+        await this.db.providerSyncLog.update({
+          where: { id: syncLog.id },
+          data: {
+            status: "FAILED",
+            finishedAt: new Date(),
+            errors: 1,
+            errorMessage: String(
+              error?.message ?? "Provider sync failed",
+            ).slice(0, 500),
+          },
+        });
+      throw error;
+    }
+    const now = new Date();
     const result = await this.db.$transaction(async (tx: any) => {
       let created = 0,
         updated = 0;
@@ -272,6 +622,22 @@ export class ProviderService {
           },
         },
       });
+      if (syncLog && tx.providerSyncLog)
+        await tx.providerSyncLog.update({
+          where: { id: syncLog.id },
+          data: {
+            status: "COMPLETED",
+            finishedAt: new Date(),
+            received: records.length,
+            created,
+            updated,
+            unchanged: Math.max(0, records.length - created - changed.length),
+            stale: staleServices.length,
+            priceIncreased: pricing.priceIncreased,
+            priceDecreased: pricing.priceDecreased,
+            requiresReview: pricing.requiresReview,
+          },
+        });
       return {
         received: records.length,
         created,
