@@ -88,6 +88,21 @@ test("payment method management migration is additive and guarded", () => {
   assert.doesNotMatch(sql, /DROP TABLE|DROP COLUMN|TRUNCATE/);
 });
 
+test("payment bonus snapshot migration backfills safely and preserves deposits", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260901120000_payment_bonus_snapshot/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /ADD COLUMN "bonus_rate_snapshot"/);
+  assert.match(sql, /ADD COLUMN "credited_amount"/);
+  assert.match(sql, /UPDATE "deposits" SET "credited_amount" = "net_amount"/);
+  assert.match(sql, /ALTER COLUMN "credited_amount" SET NOT NULL/);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DROP COLUMN/i);
+});
+
 test("customer price-group migration is additive, indexed and permissioned", () => {
   const sql = readFileSync(
     new URL(

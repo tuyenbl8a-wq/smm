@@ -52,74 +52,99 @@ export class DepositService {
       BigInt(whole!) * 100000000n + BigInt(fraction.padEnd(8, "0").slice(0, 8))
     );
   }
+  private money(units: bigint) {
+    return `${units / 100000000n}.${String(units % 100000000n).padStart(8, "0")}`;
+  }
+  private percentUnits(value: unknown) {
+    const raw = String(value ?? "0").trim();
+    if (!/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/.test(raw))
+      throw new PaymentError("BONUS_INVALID", "Invalid bonus rate");
+    const [whole, fraction = ""] = raw.split(".");
+    return BigInt(whole!) * 1000000n + BigInt(fraction.padEnd(6, "0"));
+  }
   async create(userId: string, input: any) {
     const amount = normalizeAmount(input.amount),
-      method = await this.db.paymentMethod.findUnique({
-        where: { id: String(input.paymentMethodId) },
-      });
-    if (!method || !method.active)
-      throw new PaymentError(
-        "METHOD_UNAVAILABLE",
-        "Payment method unavailable",
-      );
-    const amountUnits = this.units(amount),
-      minUnits = this.units(method.minAmount),
-      maxUnits = this.units(method.maxAmount ?? "0");
-    if (amountUnits < minUnits)
-      throw new PaymentError("AMOUNT_TOO_SMALL", "Amount below minimum");
-    if (maxUnits > 0n && amountUnits > maxUnits)
-      throw new PaymentError("AMOUNT_TOO_LARGE", "Amount above maximum");
-    const dayStart = new Date();
+      paymentMethodId = String(input.paymentMethodId),
+      dayStart = new Date();
     dayStart.setUTCHours(0, 0, 0, 0);
-    if (Number(method.dailyTransactionLimit ?? 0) > 0) {
-      const count = await this.db.deposit.count({
-        where: {
-          paymentMethodId: method.id,
-          createdAt: { gte: dayStart },
-          status: { notIn: ["FAILED", "CANCELED", "EXPIRED"] },
-        },
-      });
-      if (count >= Number(method.dailyTransactionLimit))
-        throw new PaymentError(
-          "METHOD_DAILY_LIMIT",
-          "Daily transaction limit reached",
+    const reservation = await this.db.$transaction(async (tx: any) => {
+      if (tx.$queryRawUnsafe)
+        await tx.$queryRawUnsafe(
+          `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+          `payment-limit:${paymentMethodId}:${dayStart.toISOString().slice(0, 10)}`,
         );
-    }
-    const dailyAmountLimit = this.units(method.dailyAmountLimit ?? "0");
-    if (dailyAmountLimit > 0n) {
-      const aggregate = await this.db.deposit.aggregate({
-        where: {
-          paymentMethodId: method.id,
-          createdAt: { gte: dayStart },
-          status: { notIn: ["FAILED", "CANCELED", "EXPIRED"] },
-        },
-        _sum: { grossAmount: true },
+      const method = await tx.paymentMethod.findUnique({
+        where: { id: paymentMethodId },
       });
-      if (
-        this.units(aggregate._sum.grossAmount ?? "0") + amountUnits >
-        dailyAmountLimit
-      )
+      if (!method || !method.active)
         throw new PaymentError(
-          "METHOD_DAILY_AMOUNT_LIMIT",
-          "Daily amount limit reached",
+          "METHOD_UNAVAILABLE",
+          "Payment method unavailable",
         );
-    }
-    const code = `NAP${randomBytes(6).toString("hex").toUpperCase()}`;
-    const deposit = await this.db.deposit.create({
-      data: {
-        userId,
-        paymentMethodId: method.id,
-        code,
-        status: "PENDING",
-        grossAmount: amount,
-        feeAmount: "0",
-        netAmount: amount,
-        sourceCurrency: method.currency,
-        baseCurrency: "USD",
-        exchangeRate: String(method.exchangeRate ?? "1"),
-        expiresAt: new Date(Date.now() + 30 * 60000),
-      },
+      const amountUnits = this.units(amount),
+        minUnits = this.units(method.minAmount),
+        maxUnits = this.units(method.maxAmount ?? "0");
+      if (amountUnits < minUnits)
+        throw new PaymentError("AMOUNT_TOO_SMALL", "Amount below minimum");
+      if (maxUnits > 0n && amountUnits > maxUnits)
+        throw new PaymentError("AMOUNT_TOO_LARGE", "Amount above maximum");
+      if (Number(method.dailyTransactionLimit ?? 0) > 0) {
+        const count = await tx.deposit.count({
+          where: {
+            paymentMethodId: method.id,
+            createdAt: { gte: dayStart },
+            status: { notIn: ["FAILED", "CANCELED", "EXPIRED"] },
+          },
+        });
+        if (count >= Number(method.dailyTransactionLimit))
+          throw new PaymentError(
+            "METHOD_DAILY_LIMIT",
+            "Daily transaction limit reached",
+          );
+      }
+      const dailyAmountLimit = this.units(method.dailyAmountLimit ?? "0");
+      if (dailyAmountLimit > 0n) {
+        const aggregate = await tx.deposit.aggregate({
+          where: {
+            paymentMethodId: method.id,
+            createdAt: { gte: dayStart },
+            status: { notIn: ["FAILED", "CANCELED", "EXPIRED"] },
+          },
+          _sum: { grossAmount: true },
+        });
+        if (
+          this.units(aggregate._sum.grossAmount ?? "0") + amountUnits >
+          dailyAmountLimit
+        )
+          throw new PaymentError(
+            "METHOD_DAILY_AMOUNT_LIMIT",
+            "Daily amount limit reached",
+          );
+      }
+      const bonusRate = this.percentUnits(method.bonusPercent ?? "0"),
+        bonusUnits = (amountUnits * bonusRate) / 100000000n,
+        creditedAmount = this.money(amountUnits + bonusUnits),
+        code = `NAP${randomBytes(6).toString("hex").toUpperCase()}`,
+        deposit = await tx.deposit.create({
+          data: {
+            userId,
+            paymentMethodId: method.id,
+            code,
+            status: "PENDING",
+            grossAmount: amount,
+            feeAmount: "0",
+            netAmount: creditedAmount,
+            bonusRateSnapshot: String(method.bonusPercent ?? "0"),
+            creditedAmount,
+            sourceCurrency: method.currency,
+            baseCurrency: "USD",
+            exchangeRate: String(method.exchangeRate ?? "1"),
+            expiresAt: new Date(Date.now() + 30 * 60000),
+          },
+        });
+      return { method, deposit };
     });
+    const { method, deposit } = reservation;
     const provider = this.providers[String(method.providerType).toUpperCase()];
     if (!provider) return deposit;
     try {
@@ -201,6 +226,10 @@ export class DepositService {
         maxAmount: true,
         feeFixed: true,
         feePercent: true,
+        exchangeRate: true,
+        bonusPercent: true,
+        instructions: true,
+        icon: true,
       },
     });
   }
@@ -211,7 +240,7 @@ export class DepositService {
       take: 100,
     });
   }
-  async adminHistory(query: { status?: string; take?: number } = {}) {
+  async adminHistory(query: any = {}) {
     const rawStatus = String(query.status ?? "").trim(),
       status = ["", "undefined", "null"].includes(rawStatus)
         ? undefined
@@ -231,8 +260,44 @@ export class DepositService {
         "DEPOSIT_STATUS_INVALID",
         "Invalid deposit status",
       );
+    for (const field of ["method", "user"])
+      if (query[field] && !/^[0-9a-f-]{36}$/i.test(String(query[field])))
+        throw new PaymentError("DEPOSIT_FILTER_INVALID", "Invalid filter");
+    const from = query.from ? new Date(String(query.from)) : undefined,
+      to = query.to ? new Date(String(query.to)) : undefined;
+    if (to && /^\d{4}-\d{2}-\d{2}$/.test(String(query.to)))
+      to.setUTCHours(23, 59, 59, 999);
+    if (
+      (from && Number.isNaN(from.valueOf())) ||
+      (to && Number.isNaN(to.valueOf()))
+    )
+      throw new PaymentError("DEPOSIT_FILTER_INVALID", "Invalid date filter");
+    const transactionId = String(query.transactionId ?? "")
+        .trim()
+        .slice(0, 128),
+      where = {
+        ...(status ? { status } : {}),
+        ...(query.method ? { paymentMethodId: String(query.method) } : {}),
+        ...(query.user ? { userId: String(query.user) } : {}),
+        ...(transactionId
+          ? {
+              OR: [
+                { code: transactionId },
+                { externalTransactionId: transactionId },
+              ],
+            }
+          : {}),
+        ...(from || to
+          ? {
+              createdAt: {
+                ...(from ? { gte: from } : {}),
+                ...(to ? { lte: to } : {}),
+              },
+            }
+          : {}),
+      };
     const rows = await this.db.deposit.findMany({
-      where: status ? { status } : undefined,
+      where: Object.keys(where).length ? where : undefined,
       orderBy: { createdAt: "desc" },
       take: Math.min(100, Math.max(1, query.take ?? 50)),
     });
