@@ -1,7 +1,7 @@
 import { repriceMappedServices } from "../catalog/repricing.js";
 import { decryptSecret, encryptSecret, maskSecret } from "./crypto.js";
 import { StandardSmmAdapter } from "./adapter.js";
-import { resolveCustomerRate } from "../catalog/pricing.js";
+import { decimalInput, resolveCustomerRate } from "../catalog/pricing.js";
 export class ProviderConfigError extends Error {
   constructor(
     readonly code: string,
@@ -10,6 +10,61 @@ export class ProviderConfigError extends Error {
     super(message);
   }
 }
+
+function importPriceOverride(
+  input: any,
+  externalId: string,
+  groupCode: string,
+): string | null {
+  const rows = input?.priceOverrides;
+  if (!rows || typeof rows !== "object" || Array.isArray(rows)) return null;
+
+  const row = rows[externalId];
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+
+  const value = row[groupCode];
+  if (value == null || value === "") return null;
+
+  try {
+    return decimalInput(value);
+  } catch {
+    throw new ProviderConfigError(
+      "PRICE_OVERRIDE_INVALID",
+      `Giá nhập tay không hợp lệ: ${externalId}/${groupCode}`,
+    );
+  }
+}
+
+function resolveImportFixedRate(
+  input: any,
+  externalId: string,
+  group: any,
+  service: any,
+  providerCost: unknown,
+): { fixedRate: string; minProfit: string } | null {
+  const fixedRate = importPriceOverride(input, externalId, String(group.code));
+  if (!fixedRate) return null;
+
+  const minProfit = decimalInput(
+    group?.defaultMinProfit ?? service?.defaultMinProfit ?? "0",
+    true,
+  );
+  const safeRate = resolveCustomerRate({
+    service,
+    group,
+    override: { fixedRate, minProfit },
+    providerCost,
+  });
+
+  if (safeRate !== fixedRate)
+    throw new ProviderConfigError(
+      "PRICE_OVERRIDE_BELOW_FLOOR",
+      `Giá ${group.code} của dịch vụ ${externalId} thấp hơn giá vốn + lợi nhuận tối thiểu (${safeRate})`,
+    );
+
+  return { fixedRate, minProfit };
+}
+
 export class ProviderService {
   constructor(
     private readonly db: any,
@@ -145,6 +200,26 @@ export class ProviderService {
           suggestedCategory: category.name,
           localName: record.name,
           prices: Object.fromEntries(
+            groups.map((group: any) => {
+              const manual = resolveImportFixedRate(
+                input,
+                record.externalId,
+                group,
+                service,
+                record.rate,
+              );
+              return [
+                group.code,
+                manual?.fixedRate ??
+                  resolveCustomerRate({
+                    service,
+                    group,
+                    providerCost: record.rate,
+                  }),
+              ];
+            }),
+          ),
+          automaticPrices: Object.fromEntries(
             groups.map((group: any) => [
               group.code,
               resolveCustomerRate({
@@ -188,6 +263,32 @@ export class ProviderService {
           "CATEGORY_NOT_FOUND",
           "Local category not found",
         );
+
+      const requestedGroupCodes = [
+        ...new Set(
+          records.flatMap((record) => {
+            const row = input?.priceOverrides?.[record.externalId];
+            if (!row || typeof row !== "object" || Array.isArray(row)) return [];
+            return Object.entries(row)
+              .filter(([, value]) => value != null && value !== "")
+              .map(([code]) => code);
+          }),
+        ),
+      ];
+      const priceGroups = requestedGroupCodes.length
+        ? await tx.priceGroup.findMany({
+            where: {
+              active: true,
+              code: { in: requestedGroupCodes },
+            },
+          })
+        : [];
+      if (priceGroups.length !== requestedGroupCodes.length)
+        throw new ProviderConfigError(
+          "PRICE_GROUP_NOT_FOUND",
+          "Một hoặc nhiều nhóm giá không tồn tại hoặc đã bị tắt",
+        );
+
       const existing = await tx.providerService.findMany({
         where: {
           providerId: id,
@@ -311,6 +412,40 @@ export class ProviderService {
           },
           update: { active: true },
         });
+
+        for (const group of priceGroups) {
+          const manual = resolveImportFixedRate(
+            input,
+            record.externalId,
+            group,
+            pricingTemplate,
+            record.rate,
+          );
+          if (!manual) continue;
+
+          await tx.priceRule.upsert({
+            where: {
+              priceGroupId_serviceId: {
+                priceGroupId: group.id,
+                serviceId: local.id,
+              },
+            },
+            create: {
+              priceGroupId: group.id,
+              serviceId: local.id,
+              fixedRate: manual.fixedRate,
+              markupPercent: null,
+              fixedProfit: null,
+              minProfit: manual.minProfit,
+            },
+            update: {
+              fixedRate: manual.fixedRate,
+              markupPercent: null,
+              fixedProfit: null,
+              minProfit: manual.minProfit,
+            },
+          });
+        }
         created++;
       }
       if (changedProviderServiceIds.length)
