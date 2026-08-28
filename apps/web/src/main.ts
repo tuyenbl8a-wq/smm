@@ -23,6 +23,7 @@ import {
   ticketDetailPage,
   referralPage,
   adminCouponsPage,
+  adminPricingPage,
 } from "./page.js";
 const config = loadConfig(process.env, 3000);
 const server = createServer((request, response) => {
@@ -91,6 +92,7 @@ const server = createServer((request, response) => {
       "/services",
       "/orders",
       "/admin/catalog",
+      "/admin/pricing",
       "/admin/providers",
       "/api-docs",
       "/deposit",
@@ -141,45 +143,47 @@ const server = createServer((request, response) => {
                           ? ordersPage(config.apiUrl.origin)
                           : path === "/admin/catalog"
                             ? adminCatalogPage(config.apiUrl.origin)
-                            : path === "/admin/providers"
-                              ? adminProvidersPage(config.apiUrl.origin)
-                              : path === "/admin/support"
-                                ? adminSupportPage(config.apiUrl.origin)
-                                : path === "/admin/payments"
-                                  ? adminPaymentsPage(config.apiUrl.origin)
-                                  : path === "/admin/deposits"
-                                    ? adminDepositsPage(config.apiUrl.origin)
-                                    : [
-                                          "/admin/users",
-                                          "/admin/orders",
-                                          "/admin/reports",
-                                          "/admin/logs",
-                                          "/admin/settings",
-                                        ].includes(path)
-                                      ? adminModulePage(
-                                          config.apiUrl.origin,
-                                          path.split("/").at(-1) as any,
-                                        )
+                            : path === "/admin/pricing"
+                              ? adminPricingPage(config.apiUrl.origin)
+                              : path === "/admin/providers"
+                                ? adminProvidersPage(config.apiUrl.origin)
+                                : path === "/admin/support"
+                                  ? adminSupportPage(config.apiUrl.origin)
+                                  : path === "/admin/payments"
+                                    ? adminPaymentsPage(config.apiUrl.origin)
+                                    : path === "/admin/deposits"
+                                      ? adminDepositsPage(config.apiUrl.origin)
                                       : [
-                                            "/api-docs",
-                                            "/deposit",
-                                            "/support",
-                                            "/notifications",
+                                            "/admin/users",
+                                            "/admin/orders",
+                                            "/admin/reports",
+                                            "/admin/logs",
+                                            "/admin/settings",
                                           ].includes(path)
-                                        ? featurePage(
-                                            path === "/api-docs"
-                                              ? "api"
-                                              : (path.slice(1) as any),
+                                        ? adminModulePage(
                                             config.apiUrl.origin,
+                                            path.split("/").at(-1) as any,
                                           )
-                                        : path === "/admin/wallet"
-                                          ? adminWalletPage(
+                                        : [
+                                              "/api-docs",
+                                              "/deposit",
+                                              "/support",
+                                              "/notifications",
+                                            ].includes(path)
+                                          ? featurePage(
+                                              path === "/api-docs"
+                                                ? "api"
+                                                : (path.slice(1) as any),
                                               config.apiUrl.origin,
                                             )
-                                          : panelPage(
-                                              path === "/admin",
-                                              config.apiUrl.origin,
-                                            );
+                                          : path === "/admin/wallet"
+                                            ? adminWalletPage(
+                                                config.apiUrl.origin,
+                                              )
+                                            : panelPage(
+                                                path === "/admin",
+                                                config.apiUrl.origin,
+                                              );
     response.end(page);
     return;
   }
