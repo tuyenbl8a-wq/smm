@@ -248,6 +248,27 @@ export class ProviderService {
               ...(all || mapping.syncCancel ? { cancel: record.cancel } : {}),
             },
           });
+          await tx.serviceMapping.update({
+            where: { id: mapping.id },
+            data: {
+              syncAll: input.syncAll !== false,
+              syncName: input.syncName !== false,
+              syncCost: input.syncCost !== false,
+              syncMin: input.syncMin !== false,
+              syncMax: input.syncMax !== false,
+              syncType: input.syncType !== false,
+              syncRefill: input.syncRefill !== false,
+              syncCancel: input.syncCancel !== false,
+              syncStatus: input.syncStatus !== false,
+              syncDescription: input.syncDescription === true,
+              syncAverageTime: input.syncAverageTime === true,
+              providerCostOverride:
+                input.syncAll === false && input.syncCost === false
+                  ? record.rate
+                  : null,
+              disabledPolicy: input.disabledPolicy ?? "REQUIRE_REVIEW",
+            },
+          });
           updated++;
           continue;
         }
@@ -307,9 +328,30 @@ export class ProviderService {
             syncType: input.syncType !== false,
             syncRefill: input.syncRefill !== false,
             syncCancel: input.syncCancel !== false,
+            syncStatus: input.syncStatus !== false,
+            syncDescription: input.syncDescription === true,
+            syncAverageTime: input.syncAverageTime === true,
             disabledPolicy: input.disabledPolicy ?? "REQUIRE_REVIEW",
           },
-          update: { active: true },
+          update: {
+            active: true,
+            syncAll: input.syncAll !== false,
+            syncName: input.syncName !== false,
+            syncCost: input.syncCost !== false,
+            syncMin: input.syncMin !== false,
+            syncMax: input.syncMax !== false,
+            syncType: input.syncType !== false,
+            syncRefill: input.syncRefill !== false,
+            syncCancel: input.syncCancel !== false,
+            syncStatus: input.syncStatus !== false,
+            syncDescription: input.syncDescription === true,
+            syncAverageTime: input.syncAverageTime === true,
+            providerCostOverride:
+              input.syncAll === false && input.syncCost === false
+                ? record.rate
+                : null,
+            disabledPolicy: input.disabledPolicy ?? "REQUIRE_REVIEW",
+          },
         });
         created++;
       }

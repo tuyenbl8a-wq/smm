@@ -68,6 +68,26 @@ test("development seed defines exactly three default customer tiers without VIP"
   assert.doesNotMatch(seed, /code: "DAI_LY_VIP"|code: "VIP"/);
 });
 
+test("payment method management migration is additive and guarded", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260831120000_payment_method_management/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const contract of [
+    "exchange_rate",
+    "daily_transaction_limit",
+    "daily_amount_limit",
+    "bonus_percent",
+    "payment_methods_amount_range_check",
+    "payment_methods_active_sort_order_idx",
+  ])
+    assert.match(sql, new RegExp(contract));
+  assert.doesNotMatch(sql, /DROP TABLE|DROP COLUMN|TRUNCATE/);
+});
+
 test("customer price-group migration is additive, indexed and permissioned", () => {
   const sql = readFileSync(
     new URL(

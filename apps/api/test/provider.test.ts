@@ -12,6 +12,8 @@ test("provider decimals normalize exact standard and scientific values", () => {
   assert.equal(normalizeProviderDecimal("0012.50000000"), "12.5");
   assert.equal(normalizeProviderDecimal("1.25e3"), "1250");
   assert.equal(normalizeProviderDecimal("1e-8"), "0.00000001");
+  assert.equal(normalizeProviderDecimal("1.000000001"), "1.00000001");
+  assert.equal(normalizeProviderDecimal("0.12345678001"), "0.12345679");
   for (const invalid of [
     null,
     undefined,
@@ -19,7 +21,6 @@ test("provider decimals normalize exact standard and scientific values", () => {
     "NaN",
     Infinity,
     -1,
-    "1.000000001",
     "1000000000000",
     "1e999",
   ])

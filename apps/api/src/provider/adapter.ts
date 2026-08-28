@@ -75,12 +75,31 @@ export const normalizeProviderDecimal = (value: unknown) => {
     [wholeRaw, fractionRaw = ""] = expanded.split("."),
     whole = (wholeRaw ?? "0").replace(/^0+(?=\d)/, ""),
     fraction = fractionRaw.replace(/0+$/, "");
-  if (whole.length > 12 || fraction.length > 8)
+  if (whole.length > 12)
     throw new ProviderError(
       "PROVIDER_RESPONSE_INVALID",
-      "Provider decimal precision exceeds limits",
+      "Provider decimal overflow",
     );
-  return fraction ? `${whole}.${fraction}` : whole;
+  if (fraction.length <= 8) return fraction ? `${whole}.${fraction}` : whole;
+  const retained = fraction.slice(0, 8),
+    discarded = fraction.slice(8),
+    scale = 100000000n,
+    roundedUnits =
+      BigInt(whole) * scale +
+      BigInt(retained) +
+      (/[1-9]/.test(discarded) ? 1n : 0n),
+    roundedWhole = roundedUnits / scale,
+    roundedFraction = String(roundedUnits % scale)
+      .padStart(8, "0")
+      .replace(/0+$/, "");
+  if (String(roundedWhole).length > 12)
+    throw new ProviderError(
+      "PROVIDER_RESPONSE_INVALID",
+      "Provider decimal overflow",
+    );
+  return roundedFraction
+    ? `${roundedWhole}.${roundedFraction}`
+    : String(roundedWhole);
 };
 export class StandardSmmAdapter implements ProviderAdapter {
   constructor(
