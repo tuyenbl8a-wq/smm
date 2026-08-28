@@ -8,6 +8,7 @@ import { LifecycleWorker } from "./lifecycle.js";
 import { smtpConfig, SmtpTransport } from "./smtp.js";
 import { ReportSnapshotWorker } from "./report-snapshot.js";
 import { PaymentReconciliationWorker } from "./payment-reconcile.js";
+import { PriceGroupUpgradeWorker } from "./price-group-upgrade.js";
 const config = loadConfig(process.env, 4100);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -24,6 +25,7 @@ const smtp = smtpConfig(process.env),
   );
 const lifecycleWorker = new LifecycleWorker(prisma, config.encryptionKey);
 const reportWorker = new ReportSnapshotWorker(prisma);
+const priceGroupWorker = new PriceGroupUpgradeWorker(prisma);
 const binanceModule = await dynamicImport(
     new URL("../../api/dist/payment/binance.js", import.meta.url).href,
   ),
@@ -89,6 +91,28 @@ void reportWorker.once().catch(() => undefined);
 const reportPoll = setInterval(
   () => void reportWorker.once().catch(() => undefined),
   15 * 60 * 1000,
+);
+let priceGroupRunning = false;
+const priceGroupPoll = setInterval(
+  async () => {
+    if (priceGroupRunning) return;
+    priceGroupRunning = true;
+    try {
+      await priceGroupWorker.once();
+    } catch (error: any) {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          service: "worker",
+          event: "price_group_upgrade_failed",
+          message: error?.message ?? "unknown",
+        }),
+      );
+    } finally {
+      priceGroupRunning = false;
+    }
+  },
+  5 * 60 * 1000,
 );
 const syncPoll = setInterval(
   () => void syncWorker.once().catch(() => undefined),
@@ -163,6 +187,7 @@ function shutdown(): void {
   clearInterval(lifecyclePoll);
   clearInterval(reportPoll);
   clearInterval(paymentPoll);
+  clearInterval(priceGroupPoll);
   void prisma.$disconnect();
   server.close((error) => {
     if (error) {

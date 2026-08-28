@@ -15,6 +15,7 @@ test("admin user search is paginated and never selects password hashes", async (
         return [{ id: "user", email: "u@example.com", username: "user" }];
       },
     },
+    priceGroup: { findMany: async () => [] },
   });
   const result = await service.users({
     search: "user",
@@ -24,6 +25,125 @@ test("admin user search is paginated and never selects password hashes", async (
   assert.equal(result.total, 1);
   assert.equal(selection.passwordHash, undefined);
   assert.equal(selection.email, true);
+});
+
+test("manual price-group assignment preserves roles and writes immutable history", async () => {
+  const histories: any[] = [],
+    audits: any[] = [],
+    updates: any[] = [];
+  const tx = {
+    user: {
+      findUnique: async () => ({ id: "user", priceGroupId: "retail" }),
+      updateMany: async (input: any) => (updates.push(input), { count: 1 }),
+    },
+    priceGroup: {
+      findFirst: async () => ({
+        id: "vip",
+        code: "VIP_CUSTOM",
+        name: "VIP riêng",
+        active: true,
+      }),
+      findUnique: async () => ({
+        id: "retail",
+        code: "RETAIL",
+        name: "Khách lẻ",
+      }),
+    },
+    priceGroupHistory: {
+      create: async ({ data }: any) => (
+        histories.push(data),
+        { id: "history" }
+      ),
+    },
+    auditLog: { create: async ({ data }: any) => audits.push(data) },
+  };
+  const service = new AdminOperationsService({
+    $transaction: async (run: any) => run(tx),
+  });
+  const result = await service.assignPriceGroup("admin", "user", {
+    priceGroupId: "vip",
+    reason: "Đạt thỏa thuận đại lý",
+  });
+  assert.equal(result.changed, true);
+  assert.equal(updates[0].data.priceGroupId, "vip");
+  assert.equal(updates[0].data.roles, undefined);
+  assert.equal(histories[0].oldPriceGroupCode, "RETAIL");
+  assert.equal(histories[0].newPriceGroupCode, "VIP_CUSTOM");
+  assert.equal(histories[0].source, "MANUAL");
+  assert.equal(histories[0].actorId, "admin");
+  assert.equal(audits[0].action, "USER_PRICE_GROUP_CHANGE");
+});
+
+test("inactive price group is rejected", async () => {
+  const tx = {
+    user: { findUnique: async () => ({ id: "user", priceGroupId: null }) },
+    priceGroup: { findFirst: async () => null },
+  };
+  const service = new AdminOperationsService({
+    $transaction: async (run: any) => run(tx),
+  });
+  await assert.rejects(
+    () =>
+      service.assignPriceGroup("admin", "user", { priceGroupId: "disabled" }),
+    (error: AdminOperationError) => error.code === "PRICE_GROUP_NOT_FOUND",
+  );
+});
+
+test("generic profile mutation cannot change role or price group", async () => {
+  const writes: any[] = [];
+  const service = new AdminOperationsService({
+    $transaction: async (run: any) =>
+      run({
+        user: {
+          update: async ({ data }: any) => (writes.push(data), { id: "user" }),
+        },
+        auditLog: { create: async () => ({}) },
+      }),
+  });
+  (service as any).user = async () => ({ id: "user", priceGroupId: "retail" });
+  await service.updateUser("admin", "user", {
+    username: "member",
+    priceGroupId: "vip",
+    role: "SUPER_ADMIN",
+  });
+  assert.equal(writes[0].username, "member");
+  assert.equal(writes[0].priceGroupId, undefined);
+  assert.equal(writes[0].role, undefined);
+});
+
+test("bulk assignment rolls back when one conditional update conflicts", async () => {
+  let calls = 0;
+  const tx = {
+    priceGroup: {
+      findFirst: async () => ({
+        id: "vip",
+        code: "VIP",
+        name: "VIP",
+        active: true,
+      }),
+      findMany: async () => [{ id: "retail", code: "RETAIL", name: "Retail" }],
+    },
+    user: {
+      findMany: async () => [
+        { id: "one", priceGroupId: "retail" },
+        { id: "two", priceGroupId: "retail" },
+      ],
+      updateMany: async () => ({ count: ++calls === 1 ? 1 : 0 }),
+    },
+    priceGroupHistory: { create: async () => ({}) },
+    auditLog: { create: async () => ({}) },
+  };
+  const service = new AdminOperationsService({
+    $transaction: async (run: any) => run(tx),
+  });
+  await assert.rejects(
+    () =>
+      service.bulkAssignPriceGroup("admin", {
+        userIds: ["one", "two"],
+        priceGroupId: "vip",
+      }),
+    (error: AdminOperationError) => error.code === "PRICE_GROUP_CONFLICT",
+  );
 });
 
 test("super admin cannot ban or demote itself", async () => {

@@ -114,6 +114,13 @@ export class AuthHandler {
         if (!this.wallet) throw new Error("Wallet service unavailable");
         return this.ok(response, await this.wallet.summary(auth.user.id));
       }
+      if (request.method === "GET" && path === "/api/v1/customer/price-group") {
+        if (!this.admin) throw new Error("Admin service unavailable");
+        return this.ok(
+          response,
+          await this.admin.customerPriceGroup(auth.user.id),
+        );
+      }
       if (request.method === "GET" && path === "/api/v1/customer/catalog") {
         if (!this.catalog) throw new Error("Catalog service unavailable");
         const url = new URL(request.url ?? path, this.config.apiUrl);
@@ -244,6 +251,16 @@ export class AuthHandler {
           response,
           await this.admin!.users(Object.fromEntries(url.searchParams)),
         );
+      }
+      if (request.method === "GET" && path === "/api/v1/admin/price-groups") {
+        if (!canAccessAdmin(auth.access, "users.pricing.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.admin!.priceGroupConfiguration());
       }
       const adminUser = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(path);
       if (request.method === "GET" && adminUser) {
@@ -627,6 +644,79 @@ export class AuthHandler {
           /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/revoke-sessions$/.exec(
             path,
           );
+      const userPriceGroup =
+        /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/price-group$/.exec(path);
+      if (request.method === "POST" && userPriceGroup) {
+        if (!canAccessAdmin(auth.access, "users.pricing.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.admin!.assignPriceGroup(
+            auth.user.id,
+            userPriceGroup[1]!,
+            await this.body(request),
+          ),
+        );
+      }
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/admin/users/price-group/bulk/preview"
+      ) {
+        if (!canAccessAdmin(auth.access, "users.pricing.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.admin!.bulkPriceGroupPreview(await this.body(request)),
+        );
+      }
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/admin/users/price-group/bulk/apply"
+      ) {
+        if (!canAccessAdmin(auth.access, "users.pricing.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.admin!.bulkAssignPriceGroup(
+            auth.user.id,
+            await this.body(request),
+          ),
+        );
+      }
+      if (
+        request.method === "POST" &&
+        path === "/api/v1/admin/price-groups/settings"
+      ) {
+        if (!canAccessAdmin(auth.access, "users.pricing.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.admin!.updatePriceGroupSettings(
+            auth.user.id,
+            await this.body(request),
+          ),
+        );
+      }
       if (request.method === "POST" && userUpdate) {
         if (
           !canAccessAdmin(auth.access, "users.update") &&

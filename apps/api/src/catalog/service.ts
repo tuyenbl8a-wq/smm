@@ -30,6 +30,19 @@ const integer = (value: unknown, field: string, min = 0): number => {
     throw new CatalogError("INTEGER_INVALID", `${field} is invalid`);
   return result;
 };
+const nullableMoney = (value: unknown) =>
+  value === undefined || value === null || String(value).trim() === ""
+    ? null
+    : decimalInput(value, true);
+const upgradeMode = (value: unknown) => {
+  const result = String(value ?? "ALL");
+  if (result !== "ALL" && result !== "ANY")
+    throw new CatalogError(
+      "UPGRADE_MODE_INVALID",
+      "Invalid upgrade match mode",
+    );
+  return result;
+};
 
 export class CatalogService {
   private readonly bulk: BulkPricingService;
@@ -455,6 +468,17 @@ export class CatalogService {
             true,
           ),
           defaultMinProfit: decimalInput(input.defaultMinProfit ?? "0", true),
+          tierOrder: integer(input.tierOrder ?? 0, "tierOrder"),
+          publicDescription:
+            String(input.publicDescription ?? "").trim() || null,
+          upgradeEnabled: input.upgradeEnabled === true,
+          upgradeMatchMode: upgradeMode(input.upgradeMatchMode),
+          minSuccessfulDeposits: nullableMoney(input.minSuccessfulDeposits),
+          minTotalSpent: nullableMoney(input.minTotalSpent),
+          minCompletedOrders:
+            input.minCompletedOrders == null || input.minCompletedOrders === ""
+              ? null
+              : integer(input.minCompletedOrders, "minCompletedOrders"),
         },
       });
       await this.audit(
@@ -504,6 +528,40 @@ export class CatalogService {
             : {}),
           ...(input.defaultMinProfit !== undefined
             ? { defaultMinProfit: decimalInput(input.defaultMinProfit, true) }
+            : {}),
+          ...(input.tierOrder !== undefined
+            ? { tierOrder: integer(input.tierOrder, "tierOrder") }
+            : {}),
+          ...(input.publicDescription !== undefined
+            ? {
+                publicDescription:
+                  String(input.publicDescription).trim() || null,
+              }
+            : {}),
+          ...(input.upgradeEnabled !== undefined
+            ? { upgradeEnabled: input.upgradeEnabled === true }
+            : {}),
+          ...(input.upgradeMatchMode !== undefined
+            ? { upgradeMatchMode: upgradeMode(input.upgradeMatchMode) }
+            : {}),
+          ...(input.minSuccessfulDeposits !== undefined
+            ? {
+                minSuccessfulDeposits: nullableMoney(
+                  input.minSuccessfulDeposits,
+                ),
+              }
+            : {}),
+          ...(input.minTotalSpent !== undefined
+            ? { minTotalSpent: nullableMoney(input.minTotalSpent) }
+            : {}),
+          ...(input.minCompletedOrders !== undefined
+            ? {
+                minCompletedOrders:
+                  input.minCompletedOrders === "" ||
+                  input.minCompletedOrders === null
+                    ? null
+                    : integer(input.minCompletedOrders, "minCompletedOrders"),
+              }
             : {}),
         },
       });

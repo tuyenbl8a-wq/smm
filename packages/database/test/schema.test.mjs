@@ -21,7 +21,7 @@ test("money never uses floating point", () => {
 test("all Prisma enum values use multiline declarations", () => {
   assert.doesNotMatch(schema, /enum\s+\w+\s*\{[^\n{}]+\}/);
   const enums = [...schema.matchAll(/enum\s+(\w+)\s*\{([\s\S]*?)\n\}/g)];
-  assert.equal(enums.length, 17);
+  assert.equal(enums.length, 19);
   for (const [, , body] of enums) {
     const values = body
       .split("\n")
@@ -32,6 +32,21 @@ test("all Prisma enum values use multiline declarations", () => {
       true,
     );
   }
+});
+
+test("customer price-group migration is additive, indexed and permissioned", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260829120000_customer_price_groups/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /CREATE TABLE "price_group_history"/);
+  assert.match(sql, /price_group_history_user_id_created_at_idx/);
+  assert.match(sql, /price_groups_active_tier_order_idx/);
+  assert.match(sql, /users\.pricing\.manage/);
+  assert.doesNotMatch(sql, /DROP TABLE|DROP COLUMN/);
 });
 
 test("professional pricing migration is additive and indexed", () => {
