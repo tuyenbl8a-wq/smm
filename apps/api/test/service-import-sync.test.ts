@@ -95,7 +95,13 @@ test("import preview uses existing professional pricing for three default tiers"
   const result = await service.importPreview("provider", {
     externalIds: ["101"],
     categoryId: "category",
+    overrides: {
+      "101": { name: "Tên bán tại panel", min: 200, max: 20_000 },
+    },
   });
+  assert.equal(result.items[0]!.localName, "Tên bán tại panel");
+  assert.equal(result.items[0]!.min, 200);
+  assert.equal(result.items[0]!.max, 20_000);
   assert.equal(result.items[0]!.prices.KHACH_LE, "120.00000000");
   assert.equal(result.items[0]!.prices.CTV, "110.00000000");
   assert.equal(result.items[0]!.prices.DAI_LY, "105.00000000");
