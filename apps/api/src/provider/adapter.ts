@@ -134,18 +134,43 @@ export class StandardSmmAdapter implements ProviderAdapter {
         "PROVIDER_RESPONSE_INVALID",
         "Services response must be an array",
       );
-    return rows.map((x: any) => ({
-      externalId: String(x.service),
-      name: String(x.name),
-      category: String(x.category),
-      type: String(x.type ?? "Default"),
-      rate: normalizeProviderDecimal(x.rate),
-      min: Number(x.min),
-      max: Number(x.max),
-      refill: Boolean(x.refill),
-      cancel: Boolean(x.cancel),
-      raw: x,
-    }));
+    return rows.map((x: any) => {
+      const externalId = String(x.service ?? "").trim(),
+        name = String(x.name ?? "").trim(),
+        category = String(x.category ?? "").trim(),
+        min = Number(x.min),
+        max = Number(x.max);
+      if (
+        !/^[A-Za-z0-9_.:-]{1,100}$/.test(externalId) ||
+        !name ||
+        name.length > 255 ||
+        !category ||
+        category.length > 255 ||
+        !Number.isSafeInteger(min) ||
+        !Number.isSafeInteger(max) ||
+        min < 1 ||
+        max < min
+      )
+        throw new ProviderError(
+          "PROVIDER_RESPONSE_INVALID",
+          "Provider service contract is invalid",
+        );
+      return {
+        externalId,
+        name,
+        category,
+        type:
+          String(x.type ?? "Default")
+            .trim()
+            .slice(0, 80) || "Default",
+        rate: normalizeProviderDecimal(x.rate),
+        min,
+        max,
+        refill: x.refill === true || x.refill === 1 || x.refill === "1",
+        cancel: x.cancel === true || x.cancel === 1 || x.cancel === "1",
+        raw: x,
+      };
+    });
   }
   async createOrder(input: ProviderOrderInput) {
     const x = await this.call(

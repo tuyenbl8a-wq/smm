@@ -61,13 +61,52 @@ const permissions = [
   "reports.read",
   "wallets.adjust",
   "audit.read",
+  "services.view",
+  "pricing.view",
+  "pricing.manage",
+  "providers.view",
+  "staff.view",
+  "staff.manage",
+  "users.security.manage",
+  "settings.view",
+  "audit.view",
 ];
 try {
   await prisma.$transaction(async (tx) => {
     const normalGroup = await tx.priceGroup.upsert({
-      where: { code: "NORMAL" },
-      update: { active: true },
-      create: { code: "NORMAL", name: "Normal", active: true },
+      where: { code: "KHACH_LE" },
+      update: { active: true, name: "Khách lẻ", tierOrder: 0 },
+      create: {
+        code: "KHACH_LE",
+        name: "Khách lẻ",
+        active: true,
+        tierOrder: 0,
+        publicDescription: "Mức giá tiêu chuẩn dành cho khách hàng mới.",
+      },
+    });
+    await tx.priceGroup.upsert({
+      where: { code: "CTV" },
+      update: { active: true, name: "Cộng tác viên", tierOrder: 10 },
+      create: {
+        code: "CTV",
+        name: "Cộng tác viên",
+        active: true,
+        tierOrder: 10,
+        upgradeEnabled: true,
+        publicDescription: "Mức giá ưu đãi dành cho cộng tác viên.",
+      },
+    });
+    await tx.priceGroup.upsert({
+      where: { code: "DAI_LY" },
+      update: { active: true, name: "Đại lý", tierOrder: 20 },
+      create: {
+        code: "DAI_LY",
+        name: "Đại lý",
+        active: true,
+        tierOrder: 20,
+        upgradeEnabled: true,
+        publicDescription: "Mức giá dành cho khách hàng đại lý.",
+      },
     });
     for (const code of roles)
       await tx.role.upsert({

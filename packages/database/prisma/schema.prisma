@@ -139,6 +139,18 @@ enum PriceGroupChangeSource {
   AUTO
 }
 
+enum ProviderDisabledPolicy {
+  KEEP_ACTIVE
+  DISABLE_SERVICE
+  REQUIRE_REVIEW
+}
+
+enum ProviderSyncStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 model User {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email String @unique @db.VarChar(320)
@@ -191,6 +203,16 @@ model RolePermission {
   @@id([roleId, permissionId])
   @@index([permissionId])
   @@map("role_permissions")
+}
+model UserPermission {
+  userId String @map("user_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+  grantedBy String? @map("granted_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@id([userId, permissionId])
+  @@index([permissionId])
+  @@map("user_permissions")
 }
 model Session {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -392,8 +414,21 @@ model ProviderService {
   @@index([providerId, active])
   @@map("provider_services")
 }
+model Platform {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name String @unique @db.VarChar(120)
+  slug String @unique @db.VarChar(140)
+  icon String? @db.VarChar(255)
+  sortOrder Int @default(0) @map("sort_order")
+  active Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([active, sortOrder])
+  @@map("platforms")
+}
 model ServiceCategory {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  platformId String? @map("platform_id") @db.Uuid
   name String @db.VarChar(160)
   slug String @unique @db.VarChar(180)
   description String? @db.Text
@@ -403,6 +438,7 @@ model ServiceCategory {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([active, sortOrder])
+  @@index([platformId, active, sortOrder])
   @@map("service_categories")
 }
 model Service {
@@ -445,11 +481,61 @@ model ServiceMapping {
   markupPercent Decimal? @map("markup_percent") @db.Decimal(9, 6)
   fixedProfit Decimal? @map("fixed_profit") @db.Decimal(20, 8)
   minProfit Decimal @default(0) @map("min_profit") @db.Decimal(20, 8)
+  syncAll Boolean @default(true) @map("sync_all")
+  syncName Boolean @default(true) @map("sync_name")
+  syncCost Boolean @default(true) @map("sync_cost")
+  syncMin Boolean @default(true) @map("sync_min")
+  syncMax Boolean @default(true) @map("sync_max")
+  syncType Boolean @default(true) @map("sync_type")
+  syncRefill Boolean @default(true) @map("sync_refill")
+  syncCancel Boolean @default(true) @map("sync_cancel")
+  syncStatus Boolean @default(true) @map("sync_status")
+  syncDescription Boolean @default(false) @map("sync_description")
+  syncAverageTime Boolean @default(false) @map("sync_average_time")
+  providerCostOverride Decimal? @map("provider_cost_override") @db.Decimal(20, 8)
+  disabledPolicy ProviderDisabledPolicy @default(REQUIRE_REVIEW) @map("disabled_policy")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@unique([serviceId, providerServiceId])
   @@index([serviceId, active, priority])
   @@map("service_mappings")
+}
+
+model ProviderCategoryMapping {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerId String @map("provider_id") @db.Uuid
+  providerCategory String @map("provider_category") @db.VarChar(255)
+  platformId String? @map("platform_id") @db.Uuid
+  categoryId String @map("category_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([providerId, providerCategory])
+  @@index([categoryId])
+  @@map("provider_category_mappings")
+}
+
+model ProviderSyncLog {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerId String @map("provider_id") @db.Uuid
+  status ProviderSyncStatus @default(RUNNING)
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(3)
+  received Int @default(0)
+  created Int @default(0)
+  updated Int @default(0)
+  unchanged Int @default(0)
+  stale Int @default(0)
+  priceIncreased Int @default(0) @map("price_increased")
+  priceDecreased Int @default(0) @map("price_decreased")
+  requiresReview Int @default(0) @map("requires_review")
+  errors Int @default(0)
+  errorMessage String? @map("error_message") @db.VarChar(500)
+  metadata Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([providerId, startedAt])
+  @@index([status, startedAt])
+  @@map("provider_sync_logs")
 }
 model Order {
   id BigInt @id @default(autoincrement())

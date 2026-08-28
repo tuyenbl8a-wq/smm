@@ -21,7 +21,7 @@ test("money never uses floating point", () => {
 test("all Prisma enum values use multiline declarations", () => {
   assert.doesNotMatch(schema, /enum\s+\w+\s*\{[^\n{}]+\}/);
   const enums = [...schema.matchAll(/enum\s+(\w+)\s*\{([\s\S]*?)\n\}/g)];
-  assert.equal(enums.length, 19);
+  assert.equal(enums.length, 21);
   for (const [, , body] of enums) {
     const values = body
       .split("\n")
@@ -32,6 +32,40 @@ test("all Prisma enum values use multiline declarations", () => {
       true,
     );
   }
+});
+
+test("service import and staff migration is additive, indexed and permissioned", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260830120000_service_import_staff_ui/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const contract of [
+    "platforms",
+    "user_permissions",
+    "provider_category_mappings",
+    "provider_sync_logs",
+    "sync_all",
+    "sync_cost",
+    "disabled_policy",
+    "pricing.manage",
+    "staff.manage",
+  ])
+    assert.match(sql, new RegExp(contract.replace(".", "\\.")));
+  assert.doesNotMatch(sql, /DROP TABLE|DROP COLUMN|TRUNCATE/);
+});
+
+test("development seed defines exactly three default customer tiers without VIP", () => {
+  const seed = readFileSync(
+    new URL("../prisma/seed.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(seed, /code: "KHACH_LE"/);
+  assert.match(seed, /code: "CTV"/);
+  assert.match(seed, /code: "DAI_LY"/);
+  assert.doesNotMatch(seed, /code: "DAI_LY_VIP"|code: "VIP"/);
 });
 
 test("customer price-group migration is additive, indexed and permissioned", () => {

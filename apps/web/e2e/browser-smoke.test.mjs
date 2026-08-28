@@ -32,6 +32,10 @@ const routes = [
   "/admin/logs",
   "/admin/settings",
   "/admin/coupons",
+  "/admin/services",
+  "/admin/services/import",
+  "/admin/services/add",
+  "/admin/staff",
   "/admin/pricing",
 ];
 test("all production smoke destinations are registered", () => {
@@ -39,6 +43,21 @@ test("all production smoke destinations are registered", () => {
     assert.match(main, new RegExp(`\\"${route.replaceAll("/", "\\/")}\\"`));
   assert.match(page, /document\.getElementById/);
   assert.doesNotMatch(page, /status='\+status\.value/);
+});
+
+test("admin UX includes real import, staff, settings and three-mode theme journeys", () => {
+  for (const contract of [
+    "/api/v1/admin/providers/",
+    "/import/preview",
+    "/import/apply",
+    "/api/v1/admin/staff",
+    "Đồng bộ tất cả từ nhà cung cấp",
+    "Light",
+  ])
+    assert.match(page, new RegExp(contract.replaceAll("/", "\\/"), "i"));
+  assert.match(page, /themeModes=\['light','dark','system'\]/);
+  assert.match(page, /prefers-color-scheme/);
+  assert.match(page, /localStorage\.setItem\('smm_theme'/);
 });
 const browser = ["chromium", "chromium-browser", "google-chrome"].find(
   (name) => spawnSync("sh", ["-c", `command -v ${name}`]).status === 0,

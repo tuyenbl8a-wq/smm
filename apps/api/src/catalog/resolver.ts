@@ -34,15 +34,29 @@ export class PricingResolver {
     );
     if (!selectedMapping) throw new Error("PROVIDER_SERVICE_UNAVAILABLE");
     const selected: any = services.get(selectedMapping.providerServiceId);
-    const safetyCost = [...services.values()].reduce((max: bigint, x: any) => {
-      const value = moneyUnits(x.rate);
+    const effectiveCosts = mappings
+      .filter((mapping: any) => services.has(mapping.providerServiceId))
+      .map((mapping: any) => ({
+        mapping,
+        service: services.get(mapping.providerServiceId),
+        cost:
+          mapping.syncAll !== false || mapping.syncCost === true
+            ? services.get(mapping.providerServiceId).rate
+            : (mapping.providerCostOverride ??
+              services.get(mapping.providerServiceId).rate),
+      }));
+    const safetyCost = effectiveCosts.reduce((max: bigint, x: any) => {
+      const value = moneyUnits(x.cost);
       return value > max ? value : max;
     }, 0n);
     return {
       mapping: selectedMapping,
       providerService: selected,
       provider: available.get(selected.providerId),
-      providerCost: String(selected.rate),
+      providerCost: String(
+        effectiveCosts.find((row: any) => row.mapping.id === selectedMapping.id)
+          ?.cost ?? selected.rate,
+      ),
       safetyCost: safetyCost,
     };
   }
