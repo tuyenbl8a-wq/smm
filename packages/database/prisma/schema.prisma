@@ -331,6 +331,8 @@ model Deposit {
   sourceCurrency String @map("source_currency") @db.VarChar(10)
   baseCurrency String @map("base_currency") @db.Char(3)
   exchangeRate Decimal @map("exchange_rate") @db.Decimal(24, 12)
+  bonusRateSnapshot Decimal @default(0) @map("bonus_rate_snapshot") @db.Decimal(9, 6)
+  creditedAmount Decimal @map("credited_amount") @db.Decimal(20, 8)
   externalOrderId String? @unique @map("external_order_id") @db.VarChar(128)
   externalTransactionId String? @unique @map("external_transaction_id") @db.VarChar(128)
   expiresAt DateTime @map("expires_at") @db.Timestamptz(3)

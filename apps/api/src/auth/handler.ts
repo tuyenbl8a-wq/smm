@@ -514,6 +514,21 @@ export class AuthHandler {
             ...(u.searchParams.get("status")
               ? { status: u.searchParams.get("status")! }
               : {}),
+            ...(u.searchParams.get("method")
+              ? { method: u.searchParams.get("method")! }
+              : {}),
+            ...(u.searchParams.get("user")
+              ? { user: u.searchParams.get("user")! }
+              : {}),
+            ...(u.searchParams.get("transactionId")
+              ? { transactionId: u.searchParams.get("transactionId")! }
+              : {}),
+            ...(u.searchParams.get("from")
+              ? { from: u.searchParams.get("from")! }
+              : {}),
+            ...(u.searchParams.get("to")
+              ? { to: u.searchParams.get("to")! }
+              : {}),
             take: Number(u.searchParams.get("limit") ?? "50"),
           }),
         );

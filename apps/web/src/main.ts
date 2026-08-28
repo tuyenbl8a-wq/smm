@@ -115,6 +115,8 @@ const server = createServer((request, response) => {
       "/admin/logs",
       "/admin/settings",
       "/admin/payments",
+      "/admin/payments/methods",
+      "/admin/payments/history",
       "/account",
       "/referral",
       "/admin/coupons",
@@ -172,9 +174,16 @@ const server = createServer((request, response) => {
                                             ? adminSupportPage(
                                                 config.apiUrl.origin,
                                               )
-                                            : path === "/admin/payments"
+                                            : [
+                                                  "/admin/payments",
+                                                  "/admin/payments/methods",
+                                                  "/admin/payments/history",
+                                                ].includes(path)
                                               ? adminPaymentsPage(
                                                   config.apiUrl.origin,
+                                                  path.endsWith("/history")
+                                                    ? "history"
+                                                    : "methods",
                                                 )
                                               : path === "/admin/deposits"
                                                 ? adminDepositsPage(
