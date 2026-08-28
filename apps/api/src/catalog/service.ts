@@ -539,6 +539,9 @@ export class CatalogService {
       if (!before)
         throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
       const data: any = {
+        ...(input.categoryId !== undefined
+          ? { categoryId: String(input.categoryId) }
+          : {}),
         ...(input.name !== undefined ? { name: name(input.name) } : {}),
         ...(input.description !== undefined
           ? {
@@ -588,6 +591,24 @@ export class CatalogService {
         manualSyncOverride.syncMin = false;
       if (input.max !== undefined && Number(input.max) !== before.max)
         manualSyncOverride.syncMax = false;
+      if (input.type !== undefined && input.type !== before.type)
+        manualSyncOverride.syncType = false;
+      if (input.refill !== undefined && input.refill !== before.refill)
+        manualSyncOverride.syncRefill = false;
+      if (input.cancel !== undefined && input.cancel !== before.cancel)
+        manualSyncOverride.syncCancel = false;
+      if (
+        input.description !== undefined &&
+        (String(input.description).trim() || null) !== before.description
+      )
+        manualSyncOverride.syncDescription = false;
+      if (
+        input.averageTime !== undefined &&
+        (String(input.averageTime).trim() || null) !== before.averageTime
+      )
+        manualSyncOverride.syncAverageTime = false;
+      if (input.active !== undefined && Boolean(input.active) !== before.active)
+        manualSyncOverride.syncStatus = false;
       if (Object.keys(manualSyncOverride).length)
         await tx.serviceMapping.updateMany({
           where: { serviceId: id, active: true },

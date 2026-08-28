@@ -125,13 +125,37 @@ export class ProviderService {
         "Select at least one service",
       );
     const rows = await this.adapter(provider).getServices(),
-      selected = rows.filter((row) => externalIds.includes(row.externalId));
+      selected = rows.filter((row) => externalIds.includes(row.externalId)),
+      overrides =
+        input.overrides && typeof input.overrides === "object"
+          ? input.overrides
+          : {};
     if (selected.length !== externalIds.length)
       throw new ProviderConfigError(
         "PROVIDER_SERVICE_MISSING",
         "A selected provider service is unavailable",
       );
-    return selected;
+    return selected.map((row) => {
+      const override = overrides[row.externalId];
+      if (!override || typeof override !== "object") return row;
+      const min = override.min === undefined ? row.min : Number(override.min),
+        max = override.max === undefined ? row.max : Number(override.max),
+        name =
+          override.name === undefined
+            ? row.name
+            : String(override.name).trim().slice(0, 500);
+      if (!name || !Number.isSafeInteger(min) || !Number.isSafeInteger(max))
+        throw new ProviderConfigError(
+          "IMPORT_OVERRIDE_INVALID",
+          "Invalid service override",
+        );
+      if (min < 1 || max < min)
+        throw new ProviderConfigError(
+          "IMPORT_RANGE_INVALID",
+          "Invalid imported service range",
+        );
+      return { ...row, name, min, max };
+    });
   }
 
   async importPreview(id: string, input: any) {

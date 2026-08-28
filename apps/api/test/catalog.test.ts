@@ -139,3 +139,59 @@ test("catalog mutations create an audit record in the same transaction", async (
   assert.equal(audits[0].actorId, "admin-1");
   assert.equal(audits[0].action, "CATEGORY_CREATE");
 });
+
+test("manual service fields disable only their provider sync controls", async () => {
+  let mappingUpdate: any;
+  const before = {
+      id: "service-1",
+      categoryId: "category-1",
+      name: "Tên từ NCC",
+      description: "Mô tả NCC",
+      type: "DEFAULT",
+      averageTime: "1 giờ",
+      refill: true,
+      cancel: false,
+      active: true,
+      min: 10,
+      max: 1000,
+    },
+    tx: any = {
+      service: {
+        findUnique: async () => before,
+        update: async ({ data }: any) => ({ ...before, ...data }),
+      },
+      serviceMapping: {
+        updateMany: async (query: any) => ((mappingUpdate = query), query),
+      },
+      auditLog: { create: async ({ data }: any) => data },
+    },
+    db = { $transaction: async (work: any) => work(tx) };
+  await new CatalogService(db).updateService("admin-1", "service-1", {
+    categoryId: "category-2",
+    name: "Tên chỉnh tay",
+    min: 20,
+    max: 2000,
+    type: "CUSTOM_COMMENTS",
+    refill: false,
+    cancel: true,
+    description: "Mô tả chỉnh tay",
+    averageTime: "2 giờ",
+    active: false,
+  });
+  assert.deepEqual(mappingUpdate.where, {
+    serviceId: "service-1",
+    active: true,
+  });
+  assert.deepEqual(mappingUpdate.data, {
+    syncAll: false,
+    syncName: false,
+    syncMin: false,
+    syncMax: false,
+    syncType: false,
+    syncRefill: false,
+    syncCancel: false,
+    syncDescription: false,
+    syncAverageTime: false,
+    syncStatus: false,
+  });
+});

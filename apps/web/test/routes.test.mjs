@@ -62,6 +62,15 @@ test("catalog and provider audit controls are wired to authenticated APIs", () =
   assert.match(page, /data-mapping/);
   assert.match(page, /admin\/providers\/\$\{id\}/);
 });
+test("service administration follows platform-category-service and invalidates edited imports", () => {
+  assert.match(page, /Nền tảng → Danh mục → Dịch vụ/);
+  assert.match(page, /data-collapse/);
+  assert.match(page, /serviceEditForm\.onsubmit/);
+  assert.match(page, /data-override-name/);
+  assert.match(page, /Dữ liệu đã đổi\. Hãy Xem trước lại/);
+  assert.match(page, /overrides/);
+  assert.match(page, /Người dùng & nhân sự/);
+});
 test("professional pricing UI requires preview before transactional apply", () => {
   assert.match(page, /function adminPricingPage/);
   assert.match(page, /pricing\/bulk\/preview/);
