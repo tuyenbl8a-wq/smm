@@ -17,6 +17,42 @@ const secretKeys = [
   "vietQrClientId",
   "vietQrApiKey",
 ];
+const adapterConfigKeys: Record<string, string[]> = {
+  MANUAL: ["bankName", "accountNumber", "accountName"],
+  VIETQR: [
+    "bankName",
+    "bankBin",
+    "accountNumber",
+    "accountName",
+    "vietQrClientId",
+    "vietQrApiKey",
+    "qrTemplate",
+  ],
+  CASSO: [
+    "bankName",
+    "accountNumber",
+    "accountName",
+    "cassoApiKey",
+    "webhookSecret",
+  ],
+  BINANCE: [
+    "asset",
+    "network",
+    "walletAddress",
+    "integrationMode",
+    "apiKey",
+    "apiSecret",
+  ],
+};
+const safeConfigKeys = [
+  "bankName",
+  "bankBin",
+  "qrTemplate",
+  "asset",
+  "network",
+  "walletAddress",
+  "integrationMode",
+];
 
 export class PaymentSettingsService {
   constructor(
@@ -39,7 +75,9 @@ export class PaymentSettingsService {
 
   private publicMethod(row: any) {
     let configured = false,
-      accountMasked: string | null = null;
+      accountMasked: string | null = null,
+      safeConfig: Record<string, unknown> = {},
+      secretConfigured: Record<string, boolean> = {};
     if (row.configEncrypted) {
       const config = JSON.parse(
         decryptSecret(row.configEncrypted, this.encryptionKey),
@@ -48,7 +86,28 @@ export class PaymentSettingsService {
       accountMasked = config.accountNumber
         ? maskSecret(String(config.accountNumber))
         : null;
+      safeConfig = Object.fromEntries(
+        safeConfigKeys
+          .filter((key) => config[key] != null)
+          .map((key) => [key, config[key]]),
+      );
+      secretConfigured = Object.fromEntries(
+        [
+          "accountNumber",
+          "accountName",
+          "vietQrClientId",
+          "vietQrApiKey",
+          "cassoApiKey",
+          "webhookSecret",
+          "apiKey",
+          "apiSecret",
+        ].map((key) => [key, Boolean(config[key])]),
+      );
     }
+    const missing = this.missingConfig(String(row.providerType), {
+      ...safeConfig,
+      ...secretConfigured,
+    });
     const { configEncrypted: _secret, ...safe } = row;
     return {
       ...safe,
@@ -59,8 +118,33 @@ export class PaymentSettingsService {
       bonusPercent: String(row.bonusPercent),
       configured,
       accountMasked,
-      webhookUrl: `${process.env.API_URL ?? "http://localhost:4000"}/webhooks/payments/${row.code}`,
+      config: safeConfig,
+      secretConfigured,
+      setupStatus: !configured
+        ? "NOT_CONFIGURED"
+        : missing.length
+          ? "MISSING_INFO"
+          : row.active
+            ? "ACTIVE"
+            : "READY_TO_TEST",
+      missingFields: missing,
+      webhookUrl: `${process.env.API_URL ?? "http://localhost:4000"}/webhooks/payments/${String(row.providerType).toLowerCase()}`,
     };
+  }
+
+  private missingConfig(providerType: string, config: any) {
+    const required: Record<string, string[]> = {
+      MANUAL: ["bankName", "accountNumber", "accountName"],
+      VIETQR: ["bankName", "bankBin", "accountNumber", "accountName"],
+      CASSO: ["bankName", "accountNumber", "accountName", "webhookSecret"],
+      BINANCE: ["asset", "network", "walletAddress"],
+    };
+    if (
+      providerType === "BINANCE" &&
+      String(config.integrationMode ?? "MANUAL") === "AUTO"
+    )
+      required.BINANCE!.push("apiKey", "apiSecret");
+    return (required[providerType] ?? []).filter((key) => !config[key]);
   }
 
   async methods(includeInactive = true) {
@@ -69,6 +153,49 @@ export class PaymentSettingsService {
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     });
     return rows.map((row: any) => this.publicMethod(row));
+  }
+
+  async testMethod(id: string) {
+    const row = await this.db.paymentMethod.findUnique({ where: { id } });
+    if (!row) throw new Error("PAYMENT_METHOD_NOT_FOUND");
+    const config = row.configEncrypted
+      ? JSON.parse(decryptSecret(row.configEncrypted, this.encryptionKey))
+      : {};
+    const missing = this.missingConfig(String(row.providerType), config);
+    if (missing.length)
+      throw new Error(
+        `PAYMENT_METHOD_MISSING_${missing.join("_").toUpperCase()}`,
+      );
+    if (row.providerType === "VIETQR")
+      return {
+        ok: true,
+        live: false,
+        message: "Đã tạo QR thử từ thông tin ngân hàng.",
+        qrUrl: `https://img.vietqr.io/image/${encodeURIComponent(config.bankBin)}-${encodeURIComponent(config.accountNumber)}-${encodeURIComponent(config.qrTemplate ?? "compact2")}.png?amount=10000&addInfo=TEST-${encodeURIComponent(row.code)}&accountName=${encodeURIComponent(config.accountName)}`,
+      };
+    if (row.providerType === "CASSO") {
+      if (!config.cassoApiKey)
+        return {
+          ok: true,
+          live: false,
+          message:
+            "Webhook đã đủ cấu hình; thêm Casso API Key để kiểm tra kết nối trực tiếp.",
+        };
+      const response = await fetch("https://oauth.casso.vn/v2/userInfo", {
+        headers: { Authorization: `Apikey ${config.cassoApiKey}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) throw new Error("CASSO_CONNECTION_FAILED");
+      return { ok: true, live: true, message: "Kết nối Casso thành công." };
+    }
+    return {
+      ok: true,
+      live: false,
+      message:
+        row.providerType === "BINANCE"
+          ? "Địa chỉ ví hợp lệ về cấu hình. Chưa kiểm tra giao dịch Binance live."
+          : "Thông tin chuyển khoản thủ công đã đầy đủ.",
+    };
   }
 
   async saveMethod(actorId: string, id: string | null, input: any) {
@@ -105,16 +232,9 @@ export class PaymentSettingsService {
       sortOrder < 0
     )
       throw new Error("PAYMENT_LIMIT_INVALID");
-    const secrets = [
-        "accountNumber",
-        "accountName",
-        "apiKey",
-        "apiSecret",
-        "merchantId",
-        "webhookSecret",
-      ],
+    const configKeys = adapterConfigKeys[providerType]!,
       secretInput = Object.fromEntries(
-        secrets
+        configKeys
           .filter((key) => typeof input[key] === "string" && input[key].trim())
           .map((key) => [key, input[key].trim()]),
       );
@@ -133,6 +253,14 @@ export class PaymentSettingsService {
           this.encryptionKey,
         );
       }
+      const completeConfig = configEncrypted
+        ? JSON.parse(decryptSecret(configEncrypted, this.encryptionKey))
+        : {};
+      const missing = this.missingConfig(providerType, completeConfig);
+      if (input.active === true && missing.length)
+        throw new Error(
+          `PAYMENT_METHOD_MISSING_${missing.join("_").toUpperCase()}`,
+        );
       const data = {
         code: String(input.code ?? existing?.code ?? "")
           .trim()
@@ -187,6 +315,18 @@ export class PaymentSettingsService {
   }
 
   async webhookToken(fallback = "") {
+    const method = this.db.paymentMethod?.findFirst
+      ? await this.db.paymentMethod.findFirst({
+          where: { providerType: "CASSO", active: true },
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        })
+      : null;
+    if (method?.configEncrypted) {
+      const config = JSON.parse(
+        decryptSecret(method.configEncrypted, this.encryptionKey),
+      );
+      if (config.webhookSecret) return String(config.webhookSecret);
+    }
     const row = await this.row("cassoWebhookSecureToken");
     return row?.encrypted && typeof row.value === "string"
       ? decryptSecret(row.value, this.encryptionKey)

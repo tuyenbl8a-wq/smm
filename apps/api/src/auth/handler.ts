@@ -1017,6 +1017,21 @@ export class AuthHandler {
       }
       const paymentMethodUpdate =
         /^\/api\/v1\/admin\/payment-methods\/([0-9a-f-]{36})$/.exec(path);
+      const paymentMethodTest =
+        /^\/api\/v1\/admin\/payment-methods\/([0-9a-f-]{36})\/test$/.exec(path);
+      if (request.method === "POST" && paymentMethodTest) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.paymentSettings!.testMethod(paymentMethodTest[1]!),
+        );
+      }
       if (request.method === "POST" && paymentMethodUpdate) {
         if (!canAccessAdmin(auth.access, "payments.manage"))
           return this.error(
