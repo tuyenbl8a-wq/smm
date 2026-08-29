@@ -241,7 +241,7 @@ export class AuthHandler {
       )
         return this.ok(response, await this.support!.unreadCount(auth.user.id));
       if (request.method === "GET" && path === "/api/v1/admin/users") {
-        if (!canAccessAdmin(auth.access, "users.read"))
+        if (!canAccessAdmin(auth.access, "users.view"))
           return this.error(
             response,
             403,
@@ -276,7 +276,7 @@ export class AuthHandler {
       }
       const adminUser = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(path);
       if (request.method === "GET" && adminUser) {
-        if (!canAccessAdmin(auth.access, "users.read"))
+        if (!canAccessAdmin(auth.access, "users.view"))
           return this.error(
             response,
             403,
@@ -286,7 +286,7 @@ export class AuthHandler {
         return this.ok(response, await this.admin!.user(adminUser[1]!));
       }
       if (request.method === "GET" && path === "/api/v1/admin/orders") {
-        if (!canAccessAdmin(auth.access, "orders.read"))
+        if (!canAccessAdmin(auth.access, "orders.view"))
           return this.error(
             response,
             403,
@@ -303,7 +303,7 @@ export class AuthHandler {
         path,
       );
       if (request.method === "GET" && adminOrder) {
-        if (!canAccessAdmin(auth.access, "orders.read"))
+        if (!canAccessAdmin(auth.access, "orders.view"))
           return this.error(
             response,
             403,
@@ -399,7 +399,10 @@ export class AuthHandler {
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/settings") {
-        if (!canAccessAdmin(auth.access, "settings.manage"))
+        if (
+          !canAccessAdmin(auth.access, "settings.view") &&
+          !canAccessAdmin(auth.access, "settings.manage")
+        )
           return this.error(
             response,
             403,
@@ -412,7 +415,10 @@ export class AuthHandler {
         request.method === "GET" &&
         path === "/api/v1/admin/payment-settings"
       ) {
-        if (!canAccessAdmin(auth.access, "payments.manage"))
+        if (
+          !canAccessAdmin(auth.access, "payments.view") &&
+          !canAccessAdmin(auth.access, "payments.manage")
+        )
           return this.error(
             response,
             403,
@@ -425,7 +431,10 @@ export class AuthHandler {
         request.method === "GET" &&
         path === "/api/v1/admin/payment-methods"
       ) {
-        if (!canAccessAdmin(auth.access, "payments.manage"))
+        if (
+          !canAccessAdmin(auth.access, "payments.view") &&
+          !canAccessAdmin(auth.access, "payments.manage")
+        )
           return this.error(
             response,
             403,
@@ -441,7 +450,10 @@ export class AuthHandler {
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/tickets") {
-        if (!canAccessAdmin(auth.access, "tickets.manage"))
+        if (
+          !canAccessAdmin(auth.access, "support.view") &&
+          !canAccessAdmin(auth.access, "support.manage")
+        )
           return this.error(
             response,
             403,
@@ -675,7 +687,7 @@ export class AuthHandler {
       ) {
         if (
           !canAccessAdmin(auth.access, "pricing.view") &&
-          !canAccessAdmin(auth.access, "services.manage")
+          !canAccessAdmin(auth.access, "pricing.manage")
         )
           return this.error(
             response,
@@ -692,7 +704,10 @@ export class AuthHandler {
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/providers") {
-        if (!canAccessAdmin(auth.access, "providers.manage"))
+        if (
+          !canAccessAdmin(auth.access, "providers.view") &&
+          !canAccessAdmin(auth.access, "providers.manage")
+        )
           return this.error(
             response,
             403,
@@ -751,7 +766,10 @@ export class AuthHandler {
         );
       }
       if (request.method === "GET" && providerDetail) {
-        if (!canAccessAdmin(auth.access, "providers.manage"))
+        if (
+          !canAccessAdmin(auth.access, "providers.view") &&
+          !canAccessAdmin(auth.access, "providers.manage")
+        )
           return this.error(
             response,
             403,
@@ -1298,10 +1316,7 @@ export class AuthHandler {
         path.startsWith("/api/v1/admin/pricing/")
       ) {
         this.checkBurst(request, "admin-pricing-mutation");
-        if (
-          !canAccessAdmin(auth.access, "pricing.manage") &&
-          !canAccessAdmin(auth.access, "services.manage")
-        )
+        if (!canAccessAdmin(auth.access, "pricing.manage"))
           return this.error(
             response,
             403,

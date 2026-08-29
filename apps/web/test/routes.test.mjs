@@ -106,6 +106,12 @@ test("simple pricing UI hides technical engine controls and keeps preview/apply"
   assert.match(pricingPage, /Đại lý/);
   assert.match(pricingPage, /NPP/);
   assert.match(pricingPage, /Cài đặt nâng cao/);
+  assert.match(pricingPage, /name="platformId"/);
+  assert.match(pricingPage, /function cascade/);
+  assert.match(pricingPage, /mappedServiceIds/);
+  assert.match(pricingPage, /Không có dịch vụ phù hợp bộ lọc/);
+  assert.match(pricingPage, /compactMoney/);
+  assert.doesNotMatch(pricingPage, /<b>Khách hàng<\/b><span>Lợi nhuận/);
   assert.doesNotMatch(pricingPage, /id="groupForm"/);
   assert.doesNotMatch(pricingPage, /name="pricingMode"/);
 });
