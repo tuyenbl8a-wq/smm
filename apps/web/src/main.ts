@@ -25,6 +25,7 @@ import {
   adminCouponsPage,
   adminPricingPage,
   adminServicesPage,
+  adminServiceEditorPage,
   adminServiceImportPage,
   adminServiceAddPage,
   adminStaffPage,
@@ -34,6 +35,21 @@ const config = loadConfig(process.env, 3000);
 const server = createServer((request, response) => {
   const path = new URL(request.url ?? "/", config.appUrl).pathname;
   const requestUrl = new URL(request.url ?? "/", config.appUrl);
+  const serviceEditorMatch = /^\/admin\/services\/([0-9a-f-]{36})\/edit$/.exec(
+    path,
+  );
+  if (request.method === "GET" && serviceEditorMatch) {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.setHeader(
+      "content-security-policy",
+      `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${config.apiUrl.origin}; base-uri 'none'; frame-ancestors 'none'`,
+    );
+    response.setHeader("x-content-type-options", "nosniff");
+    response.end(
+      adminServiceEditorPage(config.apiUrl.origin, serviceEditorMatch[1]!),
+    );
+    return;
+  }
   if (request.method === "GET" && path === "/health") {
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.end(

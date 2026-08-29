@@ -1,5 +1,6 @@
-import { decimalInput, resolveCustomerRate } from "./pricing.js";
+import { decimalInput, moneyUnits, resolveCustomerRate } from "./pricing.js";
 import { BulkPricingService } from "./bulk-pricing.js";
+import { repriceMappedServices } from "./repricing.js";
 
 export class CatalogError extends Error {
   constructor(
@@ -34,6 +35,13 @@ const nullableMoney = (value: unknown) =>
   value === undefined || value === null || String(value).trim() === ""
     ? null
     : decimalInput(value, true);
+const moneyText = (value: bigint) => {
+  const sign = value < 0n ? "-" : "",
+    absolute = value < 0n ? -value : value;
+  return `${sign}${absolute / 100000000n}.${String(
+    absolute % 100000000n,
+  ).padStart(8, "0")}`;
+};
 const upgradeMode = (value: unknown) => {
   const result = String(value ?? "ALL");
   if (result !== "ALL" && result !== "ANY")
@@ -322,6 +330,431 @@ export class CatalogService {
         : [],
     };
   }
+
+  async serviceEditor(id: string, includePricing = true) {
+    const service = await this.db.service.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!service)
+      throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
+    const [mappings, groups, rules] = await Promise.all([
+      this.db.serviceMapping.findMany({
+        where: { serviceId: id },
+        orderBy: [{ active: "desc" }, { priority: "asc" }],
+      }),
+      includePricing
+        ? this.db.priceGroup.findMany({
+            where: { code: { in: ["KHACH_LE", "CTV", "DAI_LY"] } },
+          })
+        : [],
+      includePricing
+        ? this.db.priceRule.findMany({ where: { serviceId: id } })
+        : [],
+    ]);
+    const providerServices = mappings.length
+      ? await this.db.providerService.findMany({
+          where: {
+            id: {
+              in: mappings.map((mapping: any) => mapping.providerServiceId),
+            },
+          },
+        })
+      : [];
+    const providers = providerServices.length
+      ? await this.db.provider.findMany({
+          where: {
+            id: { in: providerServices.map((row: any) => row.providerId) },
+            deletedAt: null,
+          },
+          select: { id: true, name: true, status: true },
+        })
+      : [];
+    const groupById = new Map(groups.map((group: any) => [group.id, group]));
+    const { providerCost, rate, ...serviceWithoutPricing } = service;
+    return {
+      service: includePricing
+        ? { ...service, providerCost: String(providerCost), rate: String(rate) }
+        : serviceWithoutPricing,
+      mappings,
+      providerServices: providerServices.map((row: any) => ({
+        ...(includePricing
+          ? { ...row, rate: String(row.rate) }
+          : {
+              id: row.id,
+              providerId: row.providerId,
+              externalId: row.externalId,
+              name: row.name,
+              min: row.min,
+              max: row.max,
+              type: row.type,
+              refill: row.refill,
+              cancel: row.cancel,
+              active: row.active,
+              stale: row.stale,
+              lastSyncedAt: row.lastSyncedAt,
+            }),
+        raw: undefined,
+        description:
+          typeof row.raw?.description === "string" ? row.raw.description : null,
+        averageTime:
+          typeof row.raw?.averageTime === "string" ? row.raw.averageTime : null,
+      })),
+      providers,
+      pricing: rules
+        .map((rule: any) => {
+          const group: any = groupById.get(rule.priceGroupId);
+          return group
+            ? {
+                code: group.code,
+                mode: rule.fixedRate != null ? "FIXED" : "PERCENT",
+                value: String(rule.fixedRate ?? rule.markupPercent ?? 0),
+                minProfit: String(
+                  rule.minProfit ?? group.defaultMinProfit ?? 0,
+                ),
+              }
+            : null;
+        })
+        .filter(Boolean),
+    };
+  }
+
+  async serviceSourcePreview(id: string, providerServiceId: string) {
+    const [current, target] = await Promise.all([
+      this.serviceEditor(id, true),
+      this.db.providerService.findFirst({
+        where: { id: providerServiceId, active: true, stale: false },
+      }),
+    ]);
+    if (!target)
+      throw new CatalogError(
+        "PROVIDER_SERVICE_NOT_FOUND",
+        "Provider service not found",
+      );
+    const provider = await this.db.provider.findFirst({
+      where: { id: target.providerId, deletedAt: null },
+      select: { id: true, name: true, status: true },
+    });
+    if (!provider)
+      throw new CatalogError("PROVIDER_NOT_FOUND", "Provider not found");
+    const activeMapping = current.mappings.find((row: any) => row.active),
+      activeProviderService = current.providerServices.find(
+        (row: any) => row.id === activeMapping?.providerServiceId,
+      ),
+      saleRate = String(current.service.rate),
+      currentCost = String(current.service.providerCost),
+      targetCost = String(target.rate);
+    return {
+      localServiceId: id,
+      current: {
+        source: current.service.source,
+        providerServiceId: activeProviderService?.id ?? null,
+        externalId: activeProviderService?.externalId ?? null,
+        providerCost: currentCost,
+        saleRate,
+        margin: moneyText(moneyUnits(saleRate) - moneyUnits(currentCost)),
+        min: current.service.min,
+        max: current.service.max,
+        type: current.service.type,
+      },
+      target: {
+        provider,
+        providerServiceId: target.id,
+        externalId: target.externalId,
+        name: target.name,
+        providerCost: String(target.rate),
+        saleRate,
+        marginIfKept: moneyText(moneyUnits(saleRate) - moneyUnits(targetCost)),
+        min: target.min,
+        max: target.max,
+        type: target.type,
+        refill: target.refill,
+        cancel: target.cancel,
+        status: target.active ? "ACTIVE" : "INACTIVE",
+        description:
+          typeof target.raw?.description === "string"
+            ? target.raw.description
+            : null,
+        averageTime:
+          typeof target.raw?.averageTime === "string"
+            ? target.raw.averageTime
+            : null,
+      },
+    };
+  }
+
+  async updateServiceEditor(actorId: string, id: string, input: any) {
+    const requestedSource = String(input.source ?? "API");
+    if (!["MANUAL", "API"].includes(requestedSource))
+      throw new CatalogError(
+        "SERVICE_SOURCE_INVALID",
+        "Invalid service source",
+      );
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.service.findUnique({ where: { id } });
+      if (!before)
+        throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
+      const oldMappings = await tx.serviceMapping.findMany({
+        where: { serviceId: id },
+        orderBy: { priority: "asc" },
+      });
+      const oldActiveProviderServiceId = oldMappings.find(
+        (row: any) => row.active,
+      )?.providerServiceId;
+      let target: any = null,
+        mapping: any = null;
+      const manualFields = new Set<string>(
+        Array.isArray(input.manualFields) ? input.manualFields.map(String) : [],
+      );
+      const syncNames = [
+        "Name",
+        "Description",
+        "Cost",
+        "Min",
+        "Max",
+        "Type",
+        "Refill",
+        "Cancel",
+        "Status",
+        "AverageTime",
+      ];
+      const sync: any = { syncAll: input.syncAll === true };
+      for (const suffix of syncNames)
+        sync[`sync${suffix}`] = sync.syncAll || input[`sync${suffix}`] === true;
+      for (const field of manualFields) {
+        const suffix =
+          field === "providerCost"
+            ? "Cost"
+            : field === "averageTime"
+              ? "AverageTime"
+              : field.charAt(0).toUpperCase() + field.slice(1);
+        if (syncNames.includes(suffix)) {
+          sync.syncAll = false;
+          sync[`sync${suffix}`] = false;
+        }
+      }
+      const data: any = {
+        source: requestedSource,
+        ...(input.categoryId !== undefined
+          ? { categoryId: String(input.categoryId) }
+          : {}),
+        ...(input.name !== undefined ? { name: name(input.name) } : {}),
+        ...(input.description !== undefined
+          ? {
+              description:
+                String(input.description).trim().slice(0, 5000) || null,
+            }
+          : {}),
+        ...(input.type !== undefined
+          ? { type: name(input.type).slice(0, 80) }
+          : {}),
+        ...(input.min !== undefined
+          ? { min: integer(input.min, "min", 1) }
+          : {}),
+        ...(input.max !== undefined
+          ? { max: integer(input.max, "max", 1) }
+          : {}),
+        ...(input.averageTime !== undefined
+          ? {
+              averageTime:
+                String(input.averageTime).trim().slice(0, 100) || null,
+            }
+          : {}),
+        ...(input.refill !== undefined
+          ? { refill: input.refill === true }
+          : {}),
+        ...(input.cancel !== undefined
+          ? { cancel: input.cancel === true }
+          : {}),
+        ...(input.active !== undefined
+          ? { active: input.active === true }
+          : {}),
+        ...(input.restrictFromApi !== undefined
+          ? { restrictFromApi: input.restrictFromApi === true }
+          : {}),
+      };
+      if (requestedSource === "MANUAL") {
+        await tx.serviceMapping.updateMany({
+          where: { serviceId: id, active: true },
+          data: { active: false, syncAll: false },
+        });
+      } else {
+        const providerServiceId = String(input.providerServiceId ?? "");
+        target = await tx.providerService.findFirst({
+          where: { id: providerServiceId, active: true, stale: false },
+        });
+        if (!target)
+          throw new CatalogError(
+            "PROVIDER_SERVICE_NOT_FOUND",
+            "Provider service not found",
+          );
+        const provider = await tx.provider.findFirst({
+          where: {
+            id: target.providerId,
+            status: { in: ["ACTIVE", "DEGRADED"] },
+            deletedAt: null,
+          },
+        });
+        if (!provider)
+          throw new CatalogError(
+            "PROVIDER_UNAVAILABLE",
+            "Provider unavailable",
+          );
+        const providerValues: any = {
+          name: target.name,
+          description:
+            typeof target.raw?.description === "string"
+              ? target.raw.description.slice(0, 5000)
+              : undefined,
+          providerCost: String(target.rate),
+          min: target.min,
+          max: target.max,
+          type: target.type,
+          refill: target.refill,
+          cancel: target.cancel,
+          active: target.active,
+          averageTime:
+            typeof target.raw?.averageTime === "string"
+              ? target.raw.averageTime.slice(0, 100)
+              : undefined,
+        };
+        const fieldSync: Record<string, string> = {
+          name: "syncName",
+          description: "syncDescription",
+          providerCost: "syncCost",
+          min: "syncMin",
+          max: "syncMax",
+          type: "syncType",
+          refill: "syncRefill",
+          cancel: "syncCancel",
+          active: "syncStatus",
+          averageTime: "syncAverageTime",
+        };
+        for (const [field, flag] of Object.entries(fieldSync))
+          if (
+            providerValues[field] !== undefined &&
+            !manualFields.has(field) &&
+            sync[flag]
+          )
+            data[field] = providerValues[field];
+        if ((data.min ?? before.min) > (data.max ?? before.max))
+          throw new CatalogError(
+            "RANGE_INVALID",
+            "Maximum must be at least minimum",
+          );
+        await tx.serviceMapping.updateMany({
+          where: {
+            serviceId: id,
+            active: true,
+            providerServiceId: { not: target.id },
+          },
+          data: { active: false },
+        });
+        mapping = await tx.serviceMapping.upsert({
+          where: {
+            serviceId_providerServiceId: {
+              serviceId: id,
+              providerServiceId: target.id,
+            },
+          },
+          create: {
+            serviceId: id,
+            providerServiceId: target.id,
+            priority: 0,
+            active: true,
+            ...sync,
+            providerCostOverride: sync.syncCost ? null : before.providerCost,
+            disabledPolicy: input.disabledPolicy ?? "REQUIRE_REVIEW",
+          },
+          update: {
+            priority: 0,
+            active: true,
+            ...sync,
+            providerCostOverride: sync.syncCost ? null : before.providerCost,
+            disabledPolicy: input.disabledPolicy ?? "REQUIRE_REVIEW",
+          },
+        });
+      }
+      if ((data.min ?? before.min) > (data.max ?? before.max))
+        throw new CatalogError(
+          "RANGE_INVALID",
+          "Maximum must be at least minimum",
+        );
+      const shouldReprice =
+        requestedSource === "API" &&
+        input.remapPricing === "REPRICE" &&
+        target &&
+        sync.syncCost;
+      if (shouldReprice) delete data.providerCost;
+      let service = await tx.service.update({ where: { id }, data });
+      const groups = await tx.priceGroup.findMany({
+        where: { active: true, code: { in: ["KHACH_LE", "CTV", "DAI_LY"] } },
+      });
+      if (input.pricing && groups.length !== 3)
+        throw new CatalogError(
+          "DEFAULT_TIERS_MISSING",
+          "Default tiers missing",
+        );
+      for (const group of groups) {
+        const tier = input.pricing?.[group.code];
+        if (!tier) continue;
+        const mode = String(tier.mode);
+        if (!["PERCENT", "FIXED"].includes(mode))
+          throw new CatalogError(
+            "PRICING_MODE_INVALID",
+            "Invalid pricing mode",
+          );
+        const value = decimalInput(tier.value, true),
+          rule = {
+            fixedRate: mode === "FIXED" ? value : null,
+            markupPercent: mode === "PERCENT" ? value : null,
+            fixedProfit: null,
+            minProfit: group.defaultMinProfit,
+          },
+          resolved = resolveCustomerRate({
+            service,
+            group,
+            override: rule,
+            providerCost: service.providerCost,
+          });
+        if (mode === "FIXED" && moneyUnits(resolved) > moneyUnits(value))
+          throw new CatalogError(
+            "PRICE_BELOW_SAFETY_FLOOR",
+            `Giá ${group.name} thấp hơn mức an toàn`,
+          );
+        await tx.priceRule.upsert({
+          where: {
+            priceGroupId_serviceId: { priceGroupId: group.id, serviceId: id },
+          },
+          create: { priceGroupId: group.id, serviceId: id, ...rule },
+          update: rule,
+        });
+      }
+      if (shouldReprice) {
+        await repriceMappedServices(
+          tx,
+          target.providerId,
+          [target.id],
+          "service-provider-remap",
+        );
+        service = await tx.service.findUnique({ where: { id } });
+      }
+      const action =
+        before.source === "MANUAL" && requestedSource === "API"
+          ? "SERVICE_SOURCE_MANUAL_TO_PROVIDER"
+          : before.source === "API" && requestedSource === "MANUAL"
+            ? "SERVICE_SOURCE_PROVIDER_TO_MANUAL"
+            : requestedSource === "API" &&
+                oldActiveProviderServiceId !== target?.id
+              ? "SERVICE_PROVIDER_REMAP"
+              : "SERVICE_EDITOR_UPDATE";
+      await this.audit(tx, actorId, action, "service", id, before, {
+        ...service,
+        mappingId: mapping?.id ?? null,
+        sync,
+      });
+      return { service, mapping, action };
+    });
+  }
   async upsertMapping(actorId: string, input: any) {
     const data = {
       serviceId: String(input.serviceId),
@@ -510,6 +943,7 @@ export class CatalogService {
     const data = {
       categoryId: String(input.categoryId),
       name: name(input.name),
+      source: "MANUAL",
       description: input.description
         ? String(input.description).slice(0, 10000)
         : null,

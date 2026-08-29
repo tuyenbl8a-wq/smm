@@ -65,11 +65,22 @@ test("catalog and provider audit controls are wired to authenticated APIs", () =
 test("service administration follows platform-category-service and invalidates edited imports", () => {
   assert.match(page, /Nền tảng → Danh mục → Dịch vụ/);
   assert.match(page, /data-collapse/);
-  assert.match(page, /serviceEditForm\.onsubmit/);
+  assert.match(page, /admin\/services\/'\+s\.id\+'\/edit/);
   assert.match(page, /data-override-name/);
   assert.match(page, /Dữ liệu đã đổi\. Hãy Xem trước lại/);
   assert.match(page, /overrides/);
   assert.match(page, /Người dùng & nhân sự/);
+});
+test("full service editor wires source, sync, pricing and remap controls", () => {
+  assert.match(page, /function adminServiceEditorPage/);
+  assert.match(page, /Nguồn dịch vụ/);
+  assert.match(page, /API nhà cung cấp/);
+  assert.match(page, /source-preview/);
+  assert.match(page, /manualFields/);
+  assert.match(page, /syncDescription/);
+  assert.match(page, /PRICE_BELOW_SAFETY_FLOOR|minimum profit/);
+  assert.match(page, /SERVICE_PROVIDER_REMAP|result\.action/);
+  assert.match(page, /Cài đặt nâng cao/);
 });
 test("payment method form is adapter-specific and submits only visible fields", () => {
   assert.match(page, /data-adapters/);

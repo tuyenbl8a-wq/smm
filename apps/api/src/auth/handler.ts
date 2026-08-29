@@ -598,6 +598,76 @@ export class AuthHandler {
           ),
         );
       }
+      const serviceEditor =
+        /^\/api\/v1\/admin\/services\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "GET" && serviceEditor) {
+        if (
+          !canAccessAdmin(auth.access, "services.view") &&
+          !canAccessAdmin(auth.access, "services.manage")
+        )
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(
+          response,
+          await this.catalog!.serviceEditor(
+            serviceEditor[1]!,
+            canAccessAdmin(auth.access, "pricing.view") ||
+              canAccessAdmin(auth.access, "pricing.manage"),
+          ),
+        );
+      }
+      const sourcePreview =
+        /^\/api\/v1\/admin\/services\/([0-9a-f-]{36})\/source-preview$/.exec(
+          path,
+        );
+      if (request.method === "POST" && sourcePreview) {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const body = await this.body(request);
+        return this.ok(
+          response,
+          await this.catalog!.serviceSourcePreview(
+            sourcePreview[1]!,
+            String(body.providerServiceId ?? ""),
+          ),
+        );
+      }
+      const editorUpdate =
+        /^\/api\/v1\/admin\/services\/([0-9a-f-]{36})\/editor$/.exec(path);
+      if (request.method === "POST" && editorUpdate) {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const body = await this.body(request);
+        if (body.pricing && !canAccessAdmin(auth.access, "pricing.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Pricing permission required",
+          );
+        return this.ok(
+          response,
+          await this.catalog!.updateServiceEditor(
+            auth.user.id,
+            editorUpdate[1]!,
+            body,
+          ),
+        );
+      }
       if (
         request.method === "GET" &&
         (path === "/api/v1/admin/pricing" ||

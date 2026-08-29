@@ -161,6 +161,22 @@ export class ProviderSyncWorker {
           (syncAll || selected.mapping.syncCancel)
             ? { cancel: providerRow.cancel }
             : {}),
+          ...(service.active === false &&
+          (syncAll || selected.mapping.syncStatus)
+            ? { active: true }
+            : {}),
+          ...(typeof providerRow.raw?.description === "string" &&
+          (syncAll || selected.mapping.syncDescription)
+            ? {
+                description: providerRow.raw.description.slice(0, 5000),
+              }
+            : {}),
+          ...(typeof providerRow.raw?.averageTime === "string" &&
+          (syncAll || selected.mapping.syncAverageTime)
+            ? {
+                averageTime: providerRow.raw.averageTime.slice(0, 100),
+              }
+            : {}),
         };
       if (Object.keys(syncedFields).length)
         await tx.service.update({

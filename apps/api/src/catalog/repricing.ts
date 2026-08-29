@@ -145,6 +145,21 @@ export async function repriceMappedServices(
           ...(sourceRow.cancel !== undefined && (syncAll || mapping.syncCancel)
             ? { cancel: sourceRow.cancel }
             : {}),
+          ...(service.active === false && (syncAll || mapping.syncStatus)
+            ? { active: true }
+            : {}),
+          ...(typeof sourceRow.raw?.description === "string" &&
+          (syncAll || mapping.syncDescription)
+            ? {
+                description: sourceRow.raw.description.slice(0, 5000),
+              }
+            : {}),
+          ...(typeof sourceRow.raw?.averageTime === "string" &&
+          (syncAll || mapping.syncAverageTime)
+            ? {
+                averageTime: sourceRow.raw.averageTime.slice(0, 100),
+              }
+            : {}),
         };
       if (Object.keys(syncedFields).length)
         await tx.service.update({
