@@ -260,22 +260,9 @@ export class ProviderService {
         changedProviderServiceIds.push(providerService.id);
         if (priorMapping && action === "UPDATE") {
           const mapping = priorMapping;
-          const all = mapping.syncAll === true;
-          await tx.service.update({
-            where: { id: mapping.serviceId },
-            data: {
-              ...(all || mapping.syncName ? { name: record.name } : {}),
-              ...(all || mapping.syncMin ? { min: record.min } : {}),
-              ...(all || mapping.syncMax ? { max: record.max } : {}),
-              ...(all || mapping.syncType ? { type: record.type } : {}),
-              ...(all || mapping.syncRefill ? { refill: record.refill } : {}),
-              ...(all || mapping.syncCancel ? { cancel: record.cancel } : {}),
-            },
-          });
-          await tx.serviceMapping.update({
-            where: { id: mapping.id },
-            data: {
-              syncAll: input.syncAll !== false,
+          const all = input.syncAll !== false,
+            currentSync = {
+              syncAll: all,
               syncName: input.syncName !== false,
               syncCost: input.syncCost !== false,
               syncMin: input.syncMin !== false,
@@ -286,6 +273,42 @@ export class ProviderService {
               syncStatus: input.syncStatus !== false,
               syncDescription: input.syncDescription === true,
               syncAverageTime: input.syncAverageTime === true,
+            };
+          await tx.service.update({
+            where: { id: mapping.serviceId },
+            data: {
+              ...(all || currentSync.syncName ? { name: record.name } : {}),
+              ...(all || currentSync.syncCost
+                ? { providerCost: record.rate }
+                : {}),
+              ...(all || currentSync.syncMin ? { min: record.min } : {}),
+              ...(all || currentSync.syncMax ? { max: record.max } : {}),
+              ...(all || currentSync.syncType ? { type: record.type } : {}),
+              ...(all || currentSync.syncRefill
+                ? { refill: record.refill }
+                : {}),
+              ...(all || currentSync.syncCancel
+                ? { cancel: record.cancel }
+                : {}),
+              ...(all || currentSync.syncStatus ? { active: true } : {}),
+              ...(typeof record.raw?.description === "string" &&
+              (all || currentSync.syncDescription)
+                ? {
+                    description: record.raw.description.slice(0, 5000),
+                  }
+                : {}),
+              ...(typeof record.raw?.averageTime === "string" &&
+              (all || currentSync.syncAverageTime)
+                ? {
+                    averageTime: record.raw.averageTime.slice(0, 100),
+                  }
+                : {}),
+            },
+          });
+          await tx.serviceMapping.update({
+            where: { id: mapping.id },
+            data: {
+              ...currentSync,
               providerCostOverride:
                 input.syncAll === false && input.syncCost === false
                   ? record.rate

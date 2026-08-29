@@ -68,9 +68,15 @@ export class OrderService {
           tx,
         );
         const { mapping, providerService: ps, provider, group } = resolved;
+        const manual = service.source === "MANUAL";
+        if (!manual && (!mapping || !ps || !provider))
+          throw new OrderError(
+            "PROVIDER_MAPPING_UNAVAILABLE",
+            "Provider mapping unavailable",
+          );
         const saleRate = resolved.rate;
         const originalCharge = orderAmount(saleRate, quantity),
-          providerCost = orderAmount(ps.rate, quantity),
+          providerCost = orderAmount(resolved.providerCost, quantity),
           coupon = input.couponCode
             ? await this.promotions.reserve(
                 tx,
@@ -92,7 +98,7 @@ export class OrderService {
           data: {
             userId,
             serviceId,
-            providerId: provider.id,
+            providerId: manual ? null : provider.id,
             providerSubmitKey: submitKey,
             link,
             quantity,
@@ -103,13 +109,14 @@ export class OrderService {
             couponCode: coupon?.coupon.code,
             priceGroupIdSnapshot: group?.id,
             priceGroupCodeSnapshot: group?.code,
-            providerRate: String(ps.rate),
+            providerRate: String(resolved.providerCost),
             providerCost,
             profit,
             status: "PENDING",
             input: {
-              providerServiceId: ps.id,
-              providerExternalServiceId: ps.externalId,
+              source: manual ? "MANUAL" : "API",
+              providerServiceId: ps?.id ?? null,
+              providerExternalServiceId: ps?.externalId ?? null,
             },
           },
         });
@@ -149,7 +156,8 @@ export class OrderService {
             details: { source: "customer" },
           },
         });
-        await tx.providerOutbox.create({ data: { orderId: order.id } });
+        if (!manual)
+          await tx.providerOutbox.create({ data: { orderId: order.id } });
         return this.serialize(order);
       });
     } catch (error: any) {

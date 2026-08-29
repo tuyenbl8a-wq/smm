@@ -78,7 +78,7 @@ export class ResellerService {
       });
       const [services, group, rules] = await Promise.all([
         this.db.service.findMany({
-          where: { active: true },
+          where: { active: true, restrictFromApi: false },
           select: {
             id: true,
             name: true,

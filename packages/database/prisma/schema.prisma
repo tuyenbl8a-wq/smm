@@ -455,6 +455,7 @@ model Service {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   categoryId String @map("category_id") @db.Uuid
   name String @db.VarChar(255)
+  source String @default("API") @db.VarChar(20)
   description String? @db.Text
   type String @db.VarChar(80)
   pricingModel String @default("PER_THOUSAND") @map("pricing_model") @db.VarChar(40)
@@ -473,6 +474,7 @@ model Service {
   averageTime String? @map("average_time") @db.VarChar(100)
   refill Boolean @default(false)
   cancel Boolean @default(false)
+  restrictFromApi Boolean @default(false) @map("restrict_from_api")
   customFields Json? @map("custom_fields")
   sortOrder Int @default(0) @map("sort_order")
   active Boolean @default(true)

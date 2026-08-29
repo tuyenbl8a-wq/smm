@@ -61,13 +61,12 @@ export class PricingResolver {
     };
   }
   async resolveCustomerPrice(userId: string, serviceId: string, tx = this.db) {
-    const [service, user, effective] = await Promise.all([
+    const [service, user] = await Promise.all([
       tx.service.findUnique({ where: { id: serviceId } }),
       tx.user.findUnique({
         where: { id: userId },
         select: { priceGroupId: true },
       }),
-      this.resolveEffectiveProviderCost(serviceId, tx),
     ]);
     if (
       !service ||
@@ -76,6 +75,16 @@ export class PricingResolver {
       service.priceReviewStatus === "PRICE_REVIEW"
     )
       throw new Error("SERVICE_UNAVAILABLE");
+    const effective =
+      service.source === "MANUAL"
+        ? {
+            mapping: null,
+            providerService: null,
+            provider: null,
+            providerCost: String(service.providerCost),
+            safetyCost: moneyUnits(service.providerCost),
+          }
+        : await this.resolveEffectiveProviderCost(serviceId, tx);
     const group = user?.priceGroupId
       ? await tx.priceGroup.findFirst({
           where: { id: user.priceGroupId, active: true },

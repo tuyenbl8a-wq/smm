@@ -227,3 +227,17 @@ test("phase 17-20 migration adds durable reconciliation, promotion snapshots and
   assert.match(sql, /discount_amount/);
   assert.match(sql, /daily_report_snapshots_date_timezone_key/);
 });
+
+test("service editor migration preserves identities and only adds routing state", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260902120000_service_source_editor/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS "source"/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS "restrict_from_api"/);
+  assert.match(sql, /NOT EXISTS[\s\S]+service_mappings/);
+  assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
+});
