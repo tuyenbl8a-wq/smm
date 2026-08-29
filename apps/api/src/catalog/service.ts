@@ -58,6 +58,14 @@ export class CatalogService {
     return this.bulk.apply(actorId, input);
   }
 
+  simplePricingPreview(input: any) {
+    return this.bulk.previewSimple(input);
+  }
+
+  simplePricingApply(actorId: string, input: any) {
+    return this.bulk.applySimple(actorId, input);
+  }
+
   async pricingAlerts() {
     const [open, items] = await Promise.all([
       this.db.priceAlert.count({ where: { status: "OPEN" } }),

@@ -32,7 +32,13 @@ const services = [
 function database(overrides: any = {}) {
   const updates: any[] = [],
     history: any[] = [],
-    audits: any[] = [];
+    audits: any[] = [],
+    rules: any[] = [];
+  const groups = [
+    { id: "retail", code: "KHACH_LE", defaultMinProfit: "5" },
+    { id: "agency", code: "CTV", defaultMinProfit: "5" },
+    { id: "distributor", code: "DAI_LY", defaultMinProfit: "5" },
+  ];
   const tx: any = {
     service: {
       findMany: async () => services,
@@ -44,8 +50,15 @@ function database(overrides: any = {}) {
     },
     providerService: { findMany: async () => [] },
     serviceMapping: { findMany: async () => [] },
-    priceGroup: { findFirst: async () => null },
-    priceRule: { findMany: async () => [], upsert: async () => ({}) },
+    priceGroup: {
+      findFirst: async ({ where }: any) =>
+        groups.find((group) => group.id === where.id) ?? null,
+      findMany: async () => groups,
+    },
+    priceRule: {
+      findMany: async () => [],
+      upsert: async ({ create }: any) => (rules.push(create), create),
+    },
     servicePriceHistory: {
       create: async ({ data }: any) => history.push(data),
     },
@@ -71,6 +84,7 @@ function database(overrides: any = {}) {
     updates,
     history,
     audits,
+    rules,
   };
 }
 
@@ -88,6 +102,27 @@ test("bulk preview applies signed adjustments and minimum-profit floor", async (
   );
   assert.equal(result.items[0].warning, "SAFETY_FLOOR");
   assert.equal(result.items[0].newProfit, "10.00000000");
+});
+
+test("simple three-tier pricing previews and applies in one transaction", async () => {
+  const { db, rules, audits } = database(),
+    pricing = new BulkPricingService(db),
+    input = { tiers: { KHACH_LE: "30", CTV: "20", DAI_LY: "10" } },
+    preview = await pricing.previewSimple(input);
+  assert.equal(preview.count, 2);
+  assert.deepEqual(preview.items[0].prices, {
+    KHACH_LE: "130.00000000",
+    CTV: "120.00000000",
+    DAI_LY: "110.00000000",
+  });
+  const applied = await pricing.applySimple("admin", input);
+  assert.deepEqual(applied, { applied: 2, tiers: 3 });
+  assert.equal(rules.length, 6);
+  assert.equal(audits.length, 3);
+  assert.deepEqual(
+    [...new Set(rules.map((rule) => rule.markupPercent))],
+    ["30.00000000", "20.00000000", "10.00000000"],
+  );
 });
 
 test("bulk apply updates every service, writes history and one audit atomically", async () => {
