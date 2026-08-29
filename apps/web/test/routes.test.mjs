@@ -83,13 +83,20 @@ test("payment method form is adapter-specific and submits only visible fields", 
   assert.match(page, /READY_TO_TEST/);
   assert.match(page, /payment-methods\/'\+editing\+'\/test/);
 });
-test("professional pricing UI requires preview before transactional apply", () => {
-  assert.match(page, /function adminPricingPage/);
-  assert.match(page, /pricing\/bulk\/preview/);
-  assert.match(page, /pricing\/bulk\/apply/);
-  assert.match(page, /previewSignature/);
-  assert.match(page, /Bảng giá chuyên nghiệp/);
-  assert.match(page, /Cảnh báo giá/);
+test("simple pricing UI hides technical engine controls and keeps preview/apply", () => {
+  const pricingPage = page.slice(
+    page.indexOf("export function adminPricingPage"),
+  );
+  assert.match(pricingPage, /function adminPricingPage/);
+  assert.match(pricingPage, /pricing\/simple\/preview/);
+  assert.match(pricingPage, /pricing\/simple\/apply/);
+  assert.match(pricingPage, /previewSignature/);
+  assert.match(pricingPage, /Khách hàng/);
+  assert.match(pricingPage, /Đại lý/);
+  assert.match(pricingPage, /NPP/);
+  assert.match(pricingPage, /Cài đặt nâng cao/);
+  assert.doesNotMatch(pricingPage, /id="groupForm"/);
+  assert.doesNotMatch(pricingPage, /name="pricingMode"/);
 });
 test("rendered scripts bind DOM nodes explicitly and omit empty enum filters", () => {
   assert.match(page, /document\.getElementById/);

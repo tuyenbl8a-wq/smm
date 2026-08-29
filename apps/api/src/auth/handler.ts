@@ -1240,6 +1240,16 @@ export class AuthHandler {
           );
         if (!this.catalog) throw new Error("Catalog service unavailable");
         const body = await this.body(request);
+        if (path === "/api/v1/admin/pricing/simple/preview")
+          return this.ok(
+            response,
+            await this.catalog.simplePricingPreview(body),
+          );
+        if (path === "/api/v1/admin/pricing/simple/apply")
+          return this.ok(
+            response,
+            await this.catalog.simplePricingApply(auth.user.id, body),
+          );
         if (path === "/api/v1/admin/pricing/bulk/preview")
           return this.ok(response, await this.catalog.bulkPreview(body));
         if (path === "/api/v1/admin/pricing/bulk/apply")

@@ -27,6 +27,9 @@ type BulkInput = {
   fixedProfit?: unknown;
   minProfit?: unknown;
 };
+type SimpleTierInput = Omit<BulkInput, "priceGroupId"> & {
+  tiers: Record<string, unknown>;
+};
 
 const signedUnits = (value: unknown): bigint => {
   const raw = String(value ?? "0").trim();
@@ -210,88 +213,142 @@ export class BulkPricingService {
     return this.previewWith(this.db, input);
   }
 
-  async apply(actorId: string, input: BulkInput) {
-    return this.db.$transaction(async (tx: any) => {
-      const preview = await this.previewWith(tx, input);
-      const directAdjustment =
-        (input.percentDelta != null && String(input.percentDelta) !== "") ||
-        (input.fixedDelta != null && String(input.fixedDelta) !== "");
-      for (const item of preview.items) {
-        if (preview.priceGroup) {
-          await tx.priceRule.upsert({
-            where: {
-              priceGroupId_serviceId: {
-                priceGroupId: preview.priceGroup.id,
-                serviceId: item.serviceId,
-              },
-            },
-            create: {
+  private async applyWith(tx: any, actorId: string, input: BulkInput) {
+    const preview = await this.previewWith(tx, input);
+    const directAdjustment =
+      (input.percentDelta != null && String(input.percentDelta) !== "") ||
+      (input.fixedDelta != null && String(input.fixedDelta) !== "");
+    for (const item of preview.items) {
+      if (preview.priceGroup) {
+        await tx.priceRule.upsert({
+          where: {
+            priceGroupId_serviceId: {
               priceGroupId: preview.priceGroup.id,
               serviceId: item.serviceId,
-              fixedRate: directAdjustment ? item.newRate : null,
-              markupPercent:
-                input.markupPercent == null
-                  ? null
-                  : decimal(input.markupPercent),
-              fixedProfit:
-                input.fixedProfit == null ? null : decimal(input.fixedProfit),
-              minProfit: item.minProfit,
             },
-            update: {
-              fixedRate: directAdjustment ? item.newRate : null,
-              ...(input.markupPercent != null
-                ? { markupPercent: decimal(input.markupPercent) }
-                : {}),
-              ...(input.fixedProfit != null
-                ? { fixedProfit: decimal(input.fixedProfit) }
-                : {}),
-              minProfit: item.minProfit,
-            },
-          });
-        } else {
-          await tx.service.update({
-            where: { id: item.serviceId },
+          },
+          create: {
+            priceGroupId: preview.priceGroup.id,
+            serviceId: item.serviceId,
+            fixedRate: directAdjustment ? item.newRate : null,
+            markupPercent:
+              input.markupPercent == null ? null : decimal(input.markupPercent),
+            fixedProfit:
+              input.fixedProfit == null ? null : decimal(input.fixedProfit),
+            minProfit: item.minProfit,
+          },
+          update: {
+            fixedRate: directAdjustment ? item.newRate : null,
+            ...(input.markupPercent != null
+              ? { markupPercent: decimal(input.markupPercent) }
+              : {}),
+            ...(input.fixedProfit != null
+              ? { fixedProfit: decimal(input.fixedProfit) }
+              : {}),
+            minProfit: item.minProfit,
+          },
+        });
+      } else {
+        await tx.service.update({
+          where: { id: item.serviceId },
+          data: {
+            rate: item.newRate,
+            ...(input.pricingMode
+              ? { pricingMode: String(input.pricingMode) }
+              : {}),
+            ...(input.markupPercent != null
+              ? { defaultMarkupPercent: decimal(input.markupPercent) }
+              : {}),
+            ...(input.fixedProfit != null
+              ? { defaultFixedProfit: decimal(input.fixedProfit) }
+              : {}),
+            ...(input.minProfit != null
+              ? { defaultMinProfit: item.minProfit }
+              : {}),
+          },
+        });
+        if (item.currentRate !== item.newRate)
+          await tx.servicePriceHistory.create({
             data: {
-              rate: item.newRate,
-              ...(input.pricingMode
-                ? { pricingMode: String(input.pricingMode) }
-                : {}),
-              ...(input.markupPercent != null
-                ? { defaultMarkupPercent: decimal(input.markupPercent) }
-                : {}),
-              ...(input.fixedProfit != null
-                ? { defaultFixedProfit: decimal(input.fixedProfit) }
-                : {}),
-              ...(input.minProfit != null
-                ? { defaultMinProfit: item.minProfit }
-                : {}),
+              serviceId: item.serviceId,
+              oldProviderCost: item.providerCost,
+              newProviderCost: item.providerCost,
+              oldSaleRate: item.currentRate,
+              newSaleRate: item.newRate,
+              changePercent: item.changePercent,
+              reason: "PRICE_GROUP_RULE",
+              source: "admin-bulk-pricing",
+              metadata: { actorId, warning: item.warning, input },
             },
           });
-          if (item.currentRate !== item.newRate)
-            await tx.servicePriceHistory.create({
-              data: {
-                serviceId: item.serviceId,
-                oldProviderCost: item.providerCost,
-                newProviderCost: item.providerCost,
-                oldSaleRate: item.currentRate,
-                newSaleRate: item.newRate,
-                changePercent: item.changePercent,
-                reason: "PRICE_GROUP_RULE",
-                source: "admin-bulk-pricing",
-                metadata: { actorId, warning: item.warning, input },
-              },
-            });
-        }
       }
-      await tx.auditLog.create({
-        data: {
-          actorId,
-          action: "BULK_PRICING_APPLY",
-          resource: "service_pricing",
-          after: { filters: input, count: preview.count, items: preview.items },
-        },
-      });
-      return { applied: preview.count, items: preview.items };
+    }
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: "BULK_PRICING_APPLY",
+        resource: "service_pricing",
+        after: { filters: input, count: preview.count, items: preview.items },
+      },
+    });
+    return { applied: preview.count, items: preview.items };
+  }
+
+  async apply(actorId: string, input: BulkInput) {
+    return this.db.$transaction((tx: any) =>
+      this.applyWith(tx, actorId, input),
+    );
+  }
+
+  private async tierInputs(db: any, input: SimpleTierInput) {
+    const codes = ["KHACH_LE", "CTV", "DAI_LY"],
+      groups = await db.priceGroup.findMany({
+        where: { active: true, code: { in: codes } },
+      }),
+      byCode = new Map(groups.map((group: any) => [group.code, group]));
+    if (groups.length !== codes.length)
+      throw new BulkPricingError(
+        "DEFAULT_TIERS_MISSING",
+        "Thiếu một trong ba cấp giá mặc định",
+      );
+    return codes.map((code) => ({
+      ...input,
+      tiers: undefined,
+      priceGroupId: (byCode.get(code) as any).id,
+      pricingMode: "COST_PLUS_PERCENT",
+      markupPercent: input.tiers[code],
+    }));
+  }
+
+  async previewSimple(input: SimpleTierInput) {
+    const inputs = await this.tierInputs(this.db, input),
+      previews = await Promise.all(
+        inputs.map((tierInput) => this.previewWith(this.db, tierInput)),
+      ),
+      rows = new Map<string, any>();
+    for (const preview of previews)
+      for (const item of preview.items) {
+        const row = rows.get(item.serviceId) ?? {
+          serviceId: item.serviceId,
+          service: item.service,
+          providerCost: item.providerCost,
+          prices: {},
+          warnings: [],
+        };
+        row.prices[preview.priceGroup!.code] = item.newRate;
+        if (item.warning) row.warnings.push(item.warning);
+        rows.set(item.serviceId, row);
+      }
+    return { count: rows.size, items: [...rows.values()] };
+  }
+
+  async applySimple(actorId: string, input: SimpleTierInput) {
+    return this.db.$transaction(async (tx: any) => {
+      const inputs = await this.tierInputs(tx, input);
+      const results = [];
+      for (const tierInput of inputs)
+        results.push(await this.applyWith(tx, actorId, tierInput));
+      return { applied: results[0]?.applied ?? 0, tiers: results.length };
     });
   }
 }
