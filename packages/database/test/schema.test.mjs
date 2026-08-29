@@ -241,3 +241,27 @@ test("service editor migration preserves identities and only adds routing state"
   assert.match(sql, /NOT EXISTS[\s\S]+service_mappings/);
   assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
 });
+
+test("granular admin permission migration is additive and idempotent", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260903120000_granular_admin_permissions/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const permission of [
+    "orders.view",
+    "orders.manage",
+    "users.view",
+    "users.manage",
+    "payments.view",
+    "coupons.view",
+    "coupons.manage",
+    "support.view",
+    "support.manage",
+  ])
+    assert.match(sql, new RegExp(`'${permission.replace(".", "\\.")}'`));
+  assert.match(sql, /ON CONFLICT \("code"\) DO NOTHING/);
+  assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
+});

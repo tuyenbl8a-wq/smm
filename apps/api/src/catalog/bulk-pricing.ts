@@ -17,6 +17,7 @@ export class BulkPricingError extends Error {
 
 type BulkInput = {
   categoryId?: string;
+  platformId?: string;
   providerId?: string;
   serviceIds?: string[];
   priceGroupId?: string;
@@ -56,7 +57,11 @@ export class BulkPricingService {
     let providerServiceIds: string[] | undefined;
     if (input.providerId) {
       const providerServices = await db.providerService.findMany({
-        where: { providerId: String(input.providerId) },
+        where: {
+          providerId: String(input.providerId),
+          active: true,
+          stale: false,
+        },
         select: { id: true },
       });
       providerServiceIds = providerServices.map((row: any) => row.id);
@@ -81,9 +86,30 @@ export class BulkPricingService {
         ? requested.filter((id) => mappedIds!.includes(id))
         : requested
       : mappedIds;
+    let platformCategoryIds: string[] | undefined;
+    if (input.platformId) {
+      const categories = await db.serviceCategory.findMany({
+        where: {
+          platformId: String(input.platformId),
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      const categoryIds = categories.map((row: any) => String(row.id));
+      platformCategoryIds = categoryIds;
+      if (input.categoryId && !categoryIds.includes(String(input.categoryId)))
+        throw new BulkPricingError(
+          "CATEGORY_OUT_OF_PLATFORM",
+          "Danh mục không thuộc nền tảng đã chọn",
+        );
+    }
     const where: any = {
       deletedAt: null,
-      ...(input.categoryId ? { categoryId: String(input.categoryId) } : {}),
+      ...(input.categoryId
+        ? { categoryId: String(input.categoryId) }
+        : platformCategoryIds
+          ? { categoryId: { in: platformCategoryIds } }
+          : {}),
       ...(candidates ? { id: { in: candidates } } : {}),
     };
     const services = await db.service.findMany({
@@ -95,6 +121,16 @@ export class BulkPricingService {
       throw new BulkPricingError(
         "SERVICES_NOT_FOUND",
         "Không có dịch vụ phù hợp bộ lọc",
+      );
+    if (
+      requested.length &&
+      requested.some(
+        (id) => !services.some((service: any) => String(service.id) === id),
+      )
+    )
+      throw new BulkPricingError(
+        "SERVICE_OUT_OF_SCOPE",
+        "Một hoặc nhiều dịch vụ không thuộc bộ lọc đã chọn",
       );
     return services;
   }

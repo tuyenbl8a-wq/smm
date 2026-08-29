@@ -70,6 +70,15 @@ const permissions = [
   "users.security.manage",
   "settings.view",
   "audit.view",
+  "orders.view",
+  "orders.manage",
+  "users.view",
+  "users.manage",
+  "payments.view",
+  "coupons.view",
+  "coupons.manage",
+  "support.view",
+  "support.manage",
 ];
 try {
   await prisma.$transaction(async (tx) => {

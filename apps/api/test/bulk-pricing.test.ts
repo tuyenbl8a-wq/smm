@@ -18,7 +18,7 @@ const services = [
   },
   {
     id: "service-2",
-    categoryId: "category-1",
+    categoryId: "category-2",
     name: "Likes",
     rate: "105.00000000",
     providerCost: "100.00000000",
@@ -41,15 +41,38 @@ function database(overrides: any = {}) {
   ];
   const tx: any = {
     service: {
-      findMany: async () => services,
+      findMany: async ({ where }: any) =>
+        services.filter(
+          (service) =>
+            (!where.categoryId ||
+              (typeof where.categoryId === "string"
+                ? service.categoryId === where.categoryId
+                : where.categoryId.in.includes(service.categoryId))) &&
+            (!where.id || where.id.in.includes(service.id)),
+        ),
       update: async ({ where, data }: any) => {
         updates.push({ where, data });
         if (overrides.failOn === where.id) throw new Error("WRITE_FAILED");
         return data;
       },
     },
-    providerService: { findMany: async () => [] },
-    serviceMapping: { findMany: async () => [] },
+    serviceCategory: {
+      findMany: async ({ where }: any) =>
+        [
+          { id: "category-1", platformId: "platform-1" },
+          { id: "category-2", platformId: "platform-2" },
+        ].filter((row) => row.platformId === where.platformId),
+    },
+    providerService: {
+      findMany: async ({ where }: any) =>
+        where.providerId === "provider-1" ? [{ id: "provider-service-1" }] : [],
+    },
+    serviceMapping: {
+      findMany: async ({ where }: any) =>
+        where.providerServiceId.in.includes("provider-service-1")
+          ? [{ serviceId: "service-1" }]
+          : [],
+    },
     priceGroup: {
       findFirst: async ({ where }: any) =>
         groups.find((group) => group.id === where.id) ?? null,
@@ -91,7 +114,6 @@ function database(overrides: any = {}) {
 test("bulk preview applies signed adjustments and minimum-profit floor", async () => {
   const { db } = database();
   const result = await new BulkPricingService(db).preview({
-    categoryId: "category-1",
     percentDelta: "-20",
     minProfit: "10",
   });
@@ -102,6 +124,44 @@ test("bulk preview applies signed adjustments and minimum-profit floor", async (
   );
   assert.equal(result.items[0].warning, "SAFETY_FLOOR");
   assert.equal(result.items[0].newProfit, "10.00000000");
+});
+
+test("platform and provider filters scope services consistently", async () => {
+  const { db } = database();
+  const pricing = new BulkPricingService(db);
+  const platform = await pricing.preview({ platformId: "platform-2" });
+  assert.deepEqual(
+    platform.items.map((item: any) => item.serviceId),
+    ["service-2"],
+  );
+  const provider = await pricing.preview({ providerId: "provider-1" });
+  assert.deepEqual(
+    provider.items.map((item: any) => item.serviceId),
+    ["service-1"],
+  );
+});
+
+test("pricing rejects a category or selected service outside the cascading scope", async () => {
+  const { db } = database();
+  const pricing = new BulkPricingService(db);
+  await assert.rejects(
+    () =>
+      pricing.preview({
+        platformId: "platform-1",
+        categoryId: "category-2",
+      }),
+    (error: any) => error.code === "CATEGORY_OUT_OF_PLATFORM",
+  );
+  await assert.rejects(
+    () =>
+      pricing.preview({
+        providerId: "provider-1",
+        serviceIds: ["service-2"],
+      }),
+    (error: any) =>
+      error.code === "SERVICES_NOT_FOUND" ||
+      error.code === "SERVICE_OUT_OF_SCOPE",
+  );
 });
 
 test("simple three-tier pricing previews and applies in one transaction", async () => {

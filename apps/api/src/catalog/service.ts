@@ -245,14 +245,14 @@ export class CatalogService {
       this.db.service.findMany({
         where: { deletedAt: null },
         orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-        take: 200,
+        take: 5000,
       }),
       this.db.priceGroup.findMany({ orderBy: { name: "asc" } }),
       this.db.priceRule.findMany({ take: 500 }),
       this.db.providerService.findMany({
         where: { active: true },
         orderBy: { name: "asc" },
-        take: 500,
+        take: 5000,
       }),
       this.db.provider.findMany({
         where: { deletedAt: null },

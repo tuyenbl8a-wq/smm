@@ -53,6 +53,37 @@ test("catalog administration requires services.manage", () => {
   );
 });
 
+test("canonical staff permissions remain distinct from commercial price tiers", () => {
+  assert.equal(
+    canAccessAdmin(
+      { roles: ["STAFF"], permissions: ["orders.view"] },
+      "orders.read",
+    ),
+    true,
+  );
+  assert.equal(
+    canAccessAdmin(
+      { roles: ["STAFF"], permissions: ["services.view"] },
+      "services.manage",
+    ),
+    false,
+  );
+  assert.equal(
+    canAccessAdmin(
+      { roles: ["STAFF"], permissions: ["pricing.view"] },
+      "pricing.manage",
+    ),
+    false,
+  );
+  assert.equal(
+    canAccessAdmin(
+      { roles: ["STAFF"], permissions: ["payments.view"] },
+      "payments.manage",
+    ),
+    false,
+  );
+});
+
 test("customer catalog is scoped to active categories and never exposes provider cost", async () => {
   const category = { id: "category-1", name: "Social", slug: "social" };
   let serviceWhere: any;
