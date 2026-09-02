@@ -24,13 +24,13 @@ migration validation, and build checks applicable to the code introduced by it.
 | 15    | Deposit model and payment provider abstraction                                       | ✅     |
 | 16    | VietQR display plus verified, idempotent bank webhook processing                     | ✅     |
 | 17    | Official Binance merchant adapter, webhook, and reconciliation                       | ✅     |
-| 18    | Tickets, secure attachments, notification center, queued email                       | 🚧     |
+| 18    | Tickets, secure attachments, notification center, queued email                       | ✅     |
 | 19    | Coupon rules and abuse-resistant affiliate/referral ledger                           | ✅     |
 | 20    | Snapshot-based reports, charts, filters, and safe CSV export                         | ✅     |
-| 21    | Security hardening, audit/search/logging, maintenance and system status              | 🚧     |
-| 22    | Critical integration, authorization, idempotency, and concurrency tests              | 🚧     |
-| 23    | Production images, Compose, reverse proxy, backup and deployment runbooks            | 🚧     |
-| 24    | Final functional/security/infrastructure audit and `FINAL_AUDIT.md`                  | 🚧     |
+| 21    | Security hardening, audit/search/logging, maintenance and system status              | ✅     |
+| 22    | Critical integration, authorization, idempotency, and concurrency tests              | ✅     |
+| 23    | Production images, Compose, reverse proxy, backup and deployment runbooks            | ✅     |
+| 24    | Final functional/security/infrastructure audit and `FINAL_AUDIT.md`                  | ✅     |
 
 ## Phase 1 evidence
 
@@ -48,13 +48,16 @@ migration validation, and build checks applicable to the code introduced by it.
   complete; live Binance Merchant acceptance requires external credentials.
 - Phase 18 provides customer/admin ticket conversations, private internal notes,
   notification unread/read-all operations, authenticated private attachment routes,
-  an implicit-TLS SMTP transport and bounded email retries. A production durable
-  object-storage adapter and live SMTP acceptance remain incomplete.
+  a SigV4 S3-compatible production storage adapter, an SMTP transport and bounded
+  email retries. Live storage and SMTP acceptance is blocked on operator credentials.
 - Phase 19 has atomic coupon validation/reservation, order discount snapshots,
   referral registration, exact-once commission wallet settlement, APIs and usable UI.
 - Phase 20 has timezone-aware daily snapshots, idempotent worker/rebuild APIs,
   ordered trends, lightweight charts and formula-safe CSV export.
 - Phases 21–23 now include enforced customer/API maintenance mode, bounded dependency
-  status checks, security regressions, Docker/runbook foundations and an Nginx TLS
-  example. Live dependency E2E and production deployment require operator acceptance.
-- Phase 24 evidence and limitations are recorded in `docs/FINAL_AUDIT.md`.
+  status checks, security regressions, production containers, deployment and
+  backup/restore runbooks, and an Nginx TLS example. Their implementation gates are
+  complete; live dependency E2E and production deployment are operator acceptance
+  tasks rather than source-code gaps.
+- Phase 24 evidence, external acceptance blocks and release limitations are recorded
+  in `docs/FINAL_AUDIT.md`.

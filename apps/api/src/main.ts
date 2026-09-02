@@ -21,6 +21,7 @@ import { CassoWebhook } from "./payment/casso.js";
 import { AdminOperationsService } from "./admin/operations.js";
 import { PaymentSettingsService } from "./payment/settings.js";
 import { LocalStorage } from "./storage/local.js";
+import { S3Storage } from "./storage/s3.js";
 import { PromotionService } from "./promotion/service.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
@@ -39,9 +40,19 @@ const paymentSettings = new PaymentSettingsService(
   prisma,
   config.encryptionKey,
 );
-const attachmentStorage =
-  config.environment === "production"
-    ? undefined
+const s3Configured = Boolean(process.env.S3_ENDPOINT?.trim());
+const attachmentStorage = s3Configured
+  ? new S3Storage({
+      endpoint: process.env.S3_ENDPOINT ?? "",
+      region: process.env.S3_REGION ?? "",
+      bucket: process.env.S3_BUCKET ?? "",
+      accessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
+    })
+  : config.environment === "production"
+    ? (() => {
+        throw new Error("DURABLE_STORAGE_REQUIRED");
+      })()
     : new LocalStorage(process.env.ATTACHMENT_PATH ?? ".data/attachments");
 const adminOperations = new AdminOperationsService(prisma);
 const binanceProvider = new BinanceMerchantProvider(
