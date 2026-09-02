@@ -19,7 +19,6 @@ import {
 } from "../admin/operations.js";
 import { PaymentSettingsService } from "../payment/settings.js";
 import { stringifyJson } from "../http/json.js";
-import type { LocalStorage } from "../storage/local.js";
 import { PromotionError, PromotionService } from "../promotion/service.js";
 import { endpointFromUrl, probeTcp } from "@smm/health";
 import {
@@ -32,6 +31,14 @@ import {
 } from "./security.js";
 
 const SESSION_SECONDS = 60 * 60 * 24 * 7;
+interface AttachmentStorage {
+  put(
+    name: string,
+    mime: string,
+    data: any,
+  ): Promise<{ key: string; size: number }>;
+  read(key: string): Promise<any>;
+}
 const authPaths = new Set([
   "/api/v1/auth/register",
   "/api/v1/auth/login",
@@ -54,7 +61,7 @@ export class AuthHandler {
     private readonly support?: SupportService,
     private readonly admin?: AdminOperationsService,
     private readonly paymentSettings?: PaymentSettingsService,
-    private readonly storage?: LocalStorage,
+    private readonly storage?: AttachmentStorage,
     private readonly promotions?: PromotionService,
   ) {}
   async handle(
