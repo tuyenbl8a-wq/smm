@@ -89,12 +89,12 @@ declare module "node:crypto" {
     toString(encoding: string): string;
   };
   export function createHash(algorithm: string): {
-    update(value: string): { digest(encoding?: string): any };
+    update(value: string | any): { digest(encoding?: string): any };
   };
   export function createHmac(
     algorithm: string,
-    key: string,
-  ): { update(value: string): { digest(encoding: string): string } };
+    key: string | any,
+  ): { update(value: string | any): { digest(encoding?: string): any } };
   export function timingSafeEqual(left: unknown, right: unknown): boolean;
   export function scrypt(
     password: string,

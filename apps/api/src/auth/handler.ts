@@ -19,7 +19,6 @@ import {
 } from "../admin/operations.js";
 import { PaymentSettingsService } from "../payment/settings.js";
 import { stringifyJson } from "../http/json.js";
-import type { LocalStorage } from "../storage/local.js";
 import { PromotionError, PromotionService } from "../promotion/service.js";
 import { endpointFromUrl, probeTcp } from "@smm/health";
 import {
@@ -32,6 +31,14 @@ import {
 } from "./security.js";
 
 const SESSION_SECONDS = 60 * 60 * 24 * 7;
+interface AttachmentStorage {
+  put(
+    name: string,
+    mime: string,
+    data: any,
+  ): Promise<{ key: string; size: number }>;
+  read(key: string): Promise<any>;
+}
 const authPaths = new Set([
   "/api/v1/auth/register",
   "/api/v1/auth/login",
@@ -54,7 +61,7 @@ export class AuthHandler {
     private readonly support?: SupportService,
     private readonly admin?: AdminOperationsService,
     private readonly paymentSettings?: PaymentSettingsService,
-    private readonly storage?: LocalStorage,
+    private readonly storage?: AttachmentStorage,
     private readonly promotions?: PromotionService,
   ) {}
   async handle(
@@ -786,7 +793,10 @@ export class AuthHandler {
           path,
         );
       if (request.method === "GET" && adminWallet) {
-        if (!canAccessAdmin(auth.access))
+        if (
+          !canAccessAdmin(auth.access, "users.view") &&
+          !canAccessAdmin(auth.access, "wallet.manage")
+        )
           return this.error(
             response,
             403,
@@ -1510,7 +1520,7 @@ export class AuthHandler {
         path.endsWith("/mutations")
       ) {
         this.checkBurst(request, "admin-wallet-mutation");
-        if (!canAccessAdmin(auth.access, "wallets.adjust"))
+        if (!canAccessAdmin(auth.access, "wallet.manage"))
           return this.error(
             response,
             403,
@@ -1519,6 +1529,12 @@ export class AuthHandler {
           );
         if (!this.wallet) throw new Error("Wallet service unavailable");
         const body = await this.body(request);
+        const reason = String(body.reason ?? "").trim();
+        if (reason.length < 3 || reason.length > 200)
+          throw new InputError(
+            "WALLET_REASON_INVALID",
+            "Reason must be 3–200 characters",
+          );
         const type = String(body.type ?? "");
         if (!["ADMIN_ADD", "ADMIN_SUBTRACT", "ADJUSTMENT"].includes(type))
           throw new InputError(
@@ -1547,9 +1563,13 @@ export class AuthHandler {
             ...(body.referenceId
               ? { referenceId: String(body.referenceId).slice(0, 128) }
               : {}),
-            ...(body.description
-              ? { description: String(body.description) }
-              : {}),
+            description: reason,
+            metadata: {
+              reason,
+              ...(body.internalNote
+                ? { internalNote: String(body.internalNote).slice(0, 500) }
+                : {}),
+            },
           }),
         );
       }

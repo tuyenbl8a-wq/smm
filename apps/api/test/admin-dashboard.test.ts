@@ -21,13 +21,20 @@ test("SUPER_ADMIN and explicitly permitted staff can access admin APIs", () => {
   );
   assert.equal(
     canAccessAdmin(
-      { roles: ["STAFF"], permissions: ["wallets.adjust"] },
-      "wallets.adjust",
+      { roles: ["STAFF"], permissions: ["wallet.manage"] },
+      "wallet.manage",
     ),
     true,
   );
   assert.equal(
-    canAccessAdmin({ roles: ["USER"], permissions: [] }, "wallets.adjust"),
+    canAccessAdmin({ roles: ["USER"], permissions: [] }, "wallet.manage"),
+    false,
+  );
+  assert.equal(
+    canAccessAdmin(
+      { roles: ["STAFF"], permissions: ["users.manage"] },
+      "wallet.manage",
+    ),
     false,
   );
 });

@@ -190,7 +190,14 @@ test("idempotency retries do not double credit and conflicts are rejected", asyn
 test("history is user-scoped and admin mutation creates audit", async () => {
   const db = new FakeDb();
   const service = new WalletService(db);
-  await service.mutate(mutation({ actorId: "admin-id", audit: true }));
+  await service.mutate(
+    mutation({
+      actorId: "admin-id",
+      audit: true,
+      description: "Điều chỉnh theo yêu cầu",
+      metadata: { internalNote: "Phiếu hỗ trợ 123" },
+    }),
+  );
   await service.mutate(
     mutation({ userId: "user-b", idempotencyKey: "wallet:test:userb" }),
   );
@@ -198,4 +205,5 @@ test("history is user-scoped and admin mutation creates audit", async () => {
   assert.equal(history.total, 1);
   assert.equal(history.items[0]?.userId, "user-a");
   assert.equal(db.audits.length, 1);
+  assert.equal(db.audits[0].after.reason, "Điều chỉnh theo yêu cầu");
 });
