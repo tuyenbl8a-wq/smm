@@ -33,7 +33,7 @@ external merchant, SMTP, object-storage, or production network was exercised.
 - Production must provide independent high-entropy secrets, HTTPS, private
   PostgreSQL/Redis networks, durable storage, log redaction and tested backups.
 
-## External acceptance prerequisites
+## External live acceptance pending
 
 - Live provider order/refill/cancel and reconciliation certification requires
   provider endpoint credentials.

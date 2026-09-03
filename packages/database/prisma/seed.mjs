@@ -60,6 +60,7 @@ const permissions = [
   "logs.read",
   "reports.read",
   "wallets.adjust",
+  "wallet.manage",
   "audit.read",
   "services.view",
   "pricing.view",
