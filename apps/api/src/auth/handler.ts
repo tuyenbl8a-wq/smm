@@ -205,7 +205,7 @@ export class AuthHandler {
           ),
         );
       }
-      const orderDetail = /^\/api\/v1\/customer\/orders\/([0-9a-f-]{36})$/.exec(
+      const orderDetail = /^\/api\/v1\/customer\/orders\/([0-9]{6,}|[0-9a-f-]{36})$/.exec(
         path,
       );
       if (request.method === "GET" && orderDetail)
@@ -306,7 +306,7 @@ export class AuthHandler {
           await this.admin!.orders(Object.fromEntries(url.searchParams)),
         );
       }
-      const adminOrder = /^\/api\/v1\/admin\/orders\/([0-9a-f-]{36})$/.exec(
+      const adminOrder = /^\/api\/v1\/admin\/orders\/([0-9]{6,}|[0-9a-f-]{36})$/.exec(
         path,
       );
       if (request.method === "GET" && adminOrder) {

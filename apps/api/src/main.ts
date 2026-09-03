@@ -54,7 +54,7 @@ const attachmentStorage = s3Configured
         throw new Error("DURABLE_STORAGE_REQUIRED");
       })()
     : new LocalStorage(process.env.ATTACHMENT_PATH ?? ".data/attachments");
-const adminOperations = new AdminOperationsService(prisma);
+const adminOperations = new AdminOperationsService(prisma, config.encryptionKey);
 const binanceProvider = new BinanceMerchantProvider(
   "https://bpay.binanceapi.com",
   process.env.BINANCE_MERCHANT_API_KEY ?? "",

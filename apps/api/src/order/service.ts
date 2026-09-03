@@ -170,11 +170,13 @@ export class OrderService {
       throw error;
     }
   }
-  async detail(userId: string, publicId: string) {
+  async detail(userId: string, reference: string) {
+    const numericId = /^\d+$/.test(reference) ? BigInt(reference) - 100000n : null;
     const order = await this.db.order.findFirst({
-      where: { publicId, userId },
+      where: numericId !== null && numericId > 0n ? { id: numericId, userId } : { publicId: reference, userId },
     });
     if (!order) throw new OrderError("ORDER_NOT_FOUND", "Order not found");
+    const service = await this.db.service.findUnique({ where: { id: order.serviceId }, select: { id: true, name: true } });
     const [history, refills, cancellations] = await Promise.all([
       this.db.orderHistory.findMany({
         where: { orderId: order.id },
@@ -191,6 +193,7 @@ export class OrderService {
     ]);
     return {
       ...this.serialize(order),
+      service,
       refundedAmount: String(order.refundedAmount),
       startCount: order.startCount,
       remains: order.remains,
@@ -218,19 +221,24 @@ export class OrderService {
         take: limit,
       }),
     ]);
+    const serviceIds = [...new Set(rows.map((x: any) => x.serviceId))];
+    const services = serviceIds.length ? await this.db.service.findMany({ where: { id: { in: serviceIds } }, select: { id: true, name: true } }) : [];
+    const serviceMap = new Map(services.map((x: any) => [x.id, x]));
     return {
       page,
       limit,
       total,
       pages: Math.ceil(total / limit),
-      items: rows.map((x: any) => this.serialize(x)),
+      items: rows.map((x: any) => this.serialize({ ...x, service: serviceMap.get(x.serviceId) })),
     };
   }
   private serialize(x: any) {
     return {
       id: String(x.id),
       publicId: x.publicId,
+      orderNumber: String(100000n + BigInt(x.id)),
       serviceId: x.serviceId,
+      service: x.service ?? undefined,
       link: x.link,
       quantity: x.quantity,
       charge: String(x.charge),

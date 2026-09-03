@@ -43,7 +43,7 @@ export class AdminOperationError extends Error {
 
 export class AdminOperationsService {
   private snapshots: DailySnapshotService;
-  constructor(private db: any) {
+  constructor(private db: any, private encryptionKey = "") {
     this.snapshots = new DailySnapshotService(db);
   }
 
@@ -935,6 +935,7 @@ export class AdminOperationsService {
       user = uuidFilter(query.user, "USER_FILTER_INVALID"),
       service = uuidFilter(query.service, "SERVICE_FILTER_INVALID"),
       search = optional(query.search),
+      searchOrderId = search && /^[0-9]+$/.test(search) && BigInt(search) > 100000n ? BigInt(search) - 100000n : null,
       where: any = {
         ...(status ? { status } : {}),
         ...(provider ? { providerId: provider } : {}),
@@ -955,6 +956,7 @@ export class AdminOperationsService {
         ...(search
           ? {
               OR: [
+                ...(searchOrderId ? [{ id: { equals: searchOrderId } }] : []),
                 { publicId: { equals: search } },
                 { providerOrderId: { equals: search } },
                 { link: { contains: search } },
@@ -1011,6 +1013,7 @@ export class AdminOperationsService {
     return {
       items: items.map((item: any) => ({
         ...item,
+        orderNumber: String(100000n + BigInt(item.id)),
         user: userMap.get(item.userId),
         service: serviceMap.get(item.serviceId),
         provider: item.providerId ? providerMap.get(item.providerId) : null,
@@ -1022,8 +1025,9 @@ export class AdminOperationsService {
     };
   }
 
-  async order(publicId: string) {
-    const order = await this.db.order.findUnique({ where: { publicId } });
+  async order(reference: string) {
+    const numericId = /^[0-9]+$/.test(reference) ? BigInt(reference) - 100000n : null;
+    const order = await this.db.order.findFirst({ where: numericId !== null && numericId > 0n ? { id: numericId } : { publicId: reference } });
     if (!order)
       throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
     const [history, logs, refills, cancellations, user, service, provider] =
@@ -1055,6 +1059,7 @@ export class AdminOperationsService {
       ]);
     return {
       ...order,
+      orderNumber: String(100000n + BigInt(order.id)),
       user,
       service,
       provider,
@@ -1063,6 +1068,36 @@ export class AdminOperationsService {
       refills,
       cancellations,
     };
+  }
+
+  async syncOrderFromProvider(actorId: string, reference: string) {
+    const numericId = /^[0-9]+$/.test(reference) ? BigInt(reference) - 100000n : null;
+    const order = await this.db.order.findFirst({ where: numericId !== null && numericId > 0n ? { id: numericId } : { publicId: reference } });
+    if (!order) throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+    if (!order.providerId || !order.providerOrderId) throw new AdminOperationError("PROVIDER_ORDER_MISSING", "Order is not linked to a provider order");
+    const provider = await this.db.provider.findFirst({ where: { id: order.providerId, deletedAt: null } });
+    if (!provider) throw new AdminOperationError("PROVIDER_NOT_FOUND", "Provider not found");
+    const adapter = new StandardSmmAdapter(provider.apiUrl, decryptSecret(provider.apiKeyEncrypted, this.encryptionKey), provider.timeoutMs);
+    const x = await adapter.getOrderStatus(String(order.providerOrderId));
+    const status = String(x?.status ?? "").trim().toUpperCase().replaceAll(" ", "_");
+    const remains = x?.remains == null ? Number(order.remains ?? 0) : Number(x.remains);
+    const startCount = x?.start_count == null ? null : Number(x.start_count);
+    const allowed = ["PENDING", "PROCESSING", "IN_PROGRESS", "COMPLETED", "PARTIAL", "CANCELED", "FAILED"];
+    if (!allowed.includes(status) || !Number.isInteger(remains) || remains < 0 || remains > Number(order.quantity) || (startCount !== null && (!Number.isInteger(startCount) || startCount < 0)))
+      throw new AdminOperationError("PROVIDER_RESPONSE_INVALID", "Provider order status is invalid");
+    return this.applyProviderOrderSync(actorId, order.id, status, remains, startCount);
+  }
+
+  private async applyProviderOrderSync(actorId: string, orderId: bigint, status: string, remains: number, startCount: number | null) {
+    return this.db.$transaction(async (tx: any) => {
+      const current = await tx.order.findUnique({ where: { id: orderId } });
+      if (!current) throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+      const refundTarget = status === "PARTIAL" ? orderAmount(current.saleRate, remains) : null;
+      const updated = await tx.order.update({ where: { id: orderId }, data: { status, remains, startCount } });
+      await tx.orderHistory.create({ data: { orderId, fromStatus: current.status, toStatus: status, actorId, details: { source: "ADMIN_PROVIDER_SYNC", remains, startCount } } });
+      await tx.auditLog.create({ data: { actorId, action: "ORDER_PROVIDER_SYNC", resource: "Order", resourceId: current.publicId, before: { status: current.status, remains: current.remains, startCount: current.startCount }, after: { status, remains, startCount } } });
+      return { orderNumber: String(100000n + BigInt(updated.id)), publicId: updated.publicId, status: updated.status, remains: updated.remains, startCount: updated.startCount, refundedAmount: String(updated.refundedAmount), providerOrderId: updated.providerOrderId };
+    });
   }
 
   async reports(from?: Date, to?: Date) {
@@ -1309,3 +1344,6 @@ export class AdminOperationsService {
   }
 }
 import { DailySnapshotService } from "@smm/database";
+import { StandardSmmAdapter } from "../provider/adapter.js";
+import { decryptSecret } from "../provider/crypto.js";
+import { orderAmount } from "../order/service.js";
