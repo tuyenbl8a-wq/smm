@@ -21,6 +21,11 @@
     "db:validate": "pnpm --filter @smm/database db:validate",
     "db:migrate": "pnpm --filter @smm/database db:migrate",
     "db:migrate:deploy": "pnpm --filter @smm/database db:migrate:deploy",
-    "db:seed": "pnpm --filter @smm/database db:seed"
+    "db:seed": "pnpm --filter @smm/database db:seed",
+    "test:e2e": "node --test apps/web/e2e/*.test.mjs"
+  },
+  "devDependencies": {
+    "prettier": "3.9.6",
+    "typescript": "5.9.2"
   }
 }

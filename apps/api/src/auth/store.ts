@@ -45,6 +45,15 @@ export interface AdminDashboard {
   providers: { active: number; inactive: number };
   services: { active: number; inactive: number };
   alerts: Array<{ type: string; message: string; count: number }>;
+  priceAlerts: {
+    open: number;
+    recent: Array<{
+      id: string;
+      type: string;
+      severity: string;
+      title: string;
+    }>;
+  };
   activity: Array<{
     date: string;
     orders: number;
@@ -69,6 +78,7 @@ export interface AuthStore {
     username: string;
     passwordHash: string;
     referralCode: string;
+    referredByCode?: string;
   }): Promise<AuthUser>;
   updatePassword(userId: string, passwordHash: string): Promise<void>;
   createSession(input: {
@@ -133,17 +143,50 @@ export class PrismaAuthStore implements AuthStore {
     username: string;
     passwordHash: string;
     referralCode: string;
+    referredByCode?: string;
   }) {
     return this.db.$transaction(async (tx: any) => {
       const role = await tx.role.findUniqueOrThrow({ where: { code: "USER" } });
-      const group = await tx.priceGroup.findUniqueOrThrow({
-        where: { code: "NORMAL" },
-      });
+      const group =
+        (await tx.priceGroup.findUnique({ where: { code: "KHACH_LE" } })) ??
+        (await tx.priceGroup.findUniqueOrThrow({ where: { code: "NORMAL" } }));
+      const { referredByCode, ...userInput } = input;
+      const referrer = referredByCode
+        ? await tx.user.findUnique({
+            where: { referralCode: referredByCode.trim().toUpperCase() },
+          })
+        : null;
+      if (referredByCode && !referrer) throw new Error("REFERRAL_CODE_INVALID");
       const user = await tx.user.create({
-        data: { ...input, status: "ACTIVE", priceGroupId: group.id },
+        data: { ...userInput, status: "ACTIVE", priceGroupId: group.id },
       });
       await tx.userRole.create({ data: { userId: user.id, roleId: role.id } });
       await tx.wallet.create({ data: { userId: user.id, currency: "USD" } });
+      await tx.affiliate.create({
+        data: {
+          userId: user.id,
+          code: user.referralCode,
+          commissionRate: "10.000000",
+        },
+      });
+      if (referrer) {
+        const affiliate = await tx.affiliate.upsert({
+          where: { userId: referrer.id },
+          create: {
+            userId: referrer.id,
+            code: referrer.referralCode,
+            commissionRate: "10.000000",
+          },
+          update: {},
+        });
+        await tx.referral.create({
+          data: {
+            affiliateId: affiliate.id,
+            referrerId: referrer.id,
+            referredUserId: user.id,
+          },
+        });
+      }
       return user;
     });
   }
@@ -217,8 +260,18 @@ export class PrismaAuthStore implements AuthStore {
     const grants = await this.db.rolePermission.findMany({
       where: { roleId: { in: roles.map((x: any) => x.id) } },
     });
+    const userGrants = await this.db.userPermission.findMany({
+      where: { userId },
+    });
     const permissions = await this.db.permission.findMany({
-      where: { id: { in: grants.map((x: any) => x.permissionId) } },
+      where: {
+        id: {
+          in: [
+            ...grants.map((x: any) => x.permissionId),
+            ...userGrants.map((x: any) => x.permissionId),
+          ],
+        },
+      },
     });
     return {
       roles: roles.map((x: any) => x.code),
@@ -337,6 +390,8 @@ export class PrismaAuthStore implements AuthStore {
       inactiveServices,
       activityRecords,
       recentOrders,
+      openPriceAlerts,
+      recentPriceAlerts,
     ] = await Promise.all([
       this.db.user.count({ where: { deletedAt: null } }),
       this.db.user.count({ where: { status: "ACTIVE", deletedAt: null } }),
@@ -390,8 +445,28 @@ export class PrismaAuthStore implements AuthStore {
         orderBy: { createdAt: "desc" },
         take: 8,
       }),
+      this.db.priceAlert
+        ? this.db.priceAlert.count({ where: { status: "OPEN" } })
+        : 0,
+      this.db.priceAlert
+        ? this.db.priceAlert.findMany({
+            where: { status: "OPEN" },
+            select: { id: true, type: true, severity: true, title: true },
+            orderBy: { createdAt: "desc" },
+            take: 5,
+          })
+        : [],
     ]);
     const alerts = [
+      ...(openPriceAlerts
+        ? [
+            {
+              type: "pricing",
+              message: "Cảnh báo giá đang chờ xử lý",
+              count: openPriceAlerts,
+            },
+          ]
+        : []),
       ...(failedOrders
         ? [
             {
@@ -454,6 +529,10 @@ export class PrismaAuthStore implements AuthStore {
       providers: { active: activeProviders, inactive: inactiveProviders },
       services: { active: activeServices, inactive: inactiveServices },
       alerts,
+      priceAlerts: {
+        open: openPriceAlerts,
+        recent: recentPriceAlerts,
+      },
       activity: buildAdminActivity(activityRecords),
       recentOrders: recentOrders.map((order: any) => ({
         ...order,

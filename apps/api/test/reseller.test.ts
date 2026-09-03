@@ -40,3 +40,64 @@ test("status cannot cross user boundary", async () => {
     /not found/,
   );
 });
+
+test("API v2 refill reuses ownership-safe lifecycle service", async () => {
+  const requests: any[] = [],
+    db: any = {
+      order: {
+        findFirst: async ({ where }: any) => {
+          assert.equal(where.userId, "u");
+          return { id: 1n, publicId: "public", userId: "u" };
+        },
+      },
+    },
+    lifecycle: any = {
+      request: async (...args: any[]) => {
+        requests.push(args);
+        return { id: "refill-id" };
+      },
+    },
+    service = new ResellerService(db, {} as any, lifecycle);
+  const result = await service.execute(
+    "unused",
+    { action: "refill", order: "1", idempotency_key: "refill-request-123" },
+    { id: "key", userId: "u" },
+  );
+  assert.deepEqual(result, { refill: "refill-id" });
+  assert.deepEqual(requests[0], [
+    "u",
+    "public",
+    "refill",
+    "refill-request-123",
+  ]);
+});
+
+test("API v2 multiple status remains scoped and bounded", async () => {
+  let where: any;
+  const service = new ResellerService(
+    {
+      order: {
+        findMany: async (input: any) => {
+          where = input.where;
+          return [
+            {
+              id: 1n,
+              charge: "1.00000000",
+              startCount: 10,
+              status: "COMPLETED",
+              remains: 0,
+            },
+          ];
+        },
+      },
+    } as any,
+    {} as any,
+  );
+  const result = await service.execute(
+    "unused",
+    { action: "status", orders: "1,2" },
+    { userId: "u" },
+  );
+  assert.equal(where.userId, "u");
+  assert.equal(result["1"].status, "COMPLETED");
+});

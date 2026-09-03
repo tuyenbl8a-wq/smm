@@ -27,9 +27,23 @@ export function canAccessAdmin(
   access: { roles: readonly string[]; permissions: readonly string[] },
   permission = "reports.read",
 ): boolean {
+  const aliases: Record<string, readonly string[]> = {
+    "orders.read": ["orders.view"],
+    "orders.update": ["orders.manage"],
+    "users.read": ["users.view"],
+    "users.update": ["users.manage"],
+    "users.ban": ["users.manage"],
+    "payments.view": ["payments.manage"],
+    "coupons.view": ["coupons.manage"],
+    "support.view": ["support.manage", "tickets.manage"],
+    "tickets.manage": ["support.manage"],
+    "audit.read": ["audit.view"],
+    "logs.read": ["audit.view"],
+  };
+  const accepted = new Set([permission, ...(aliases[permission] ?? [])]);
   return (
     access.roles.includes("SUPER_ADMIN") ||
-    access.permissions.includes(permission)
+    access.permissions.some((candidate) => accepted.has(candidate))
   );
 }
 export function buildAdminActivity(

@@ -4,225 +4,411 @@ import {
   maskSecret,
 } from "../provider/crypto.js";
 
+const publicKeys = [
+  "cassoEnabled",
+  "bankName",
+  "bankBin",
+  "bankAccountNumber",
+  "bankAccountName",
+];
+const secretKeys = [
+  "cassoApiKey",
+  "cassoWebhookSecureToken",
+  "vietQrClientId",
+  "vietQrApiKey",
+];
+const adapterConfigKeys: Record<string, string[]> = {
+  MANUAL: ["bankName", "accountNumber", "accountName"],
+  VIETQR: [
+    "bankName",
+    "bankBin",
+    "accountNumber",
+    "accountName",
+    "vietQrClientId",
+    "vietQrApiKey",
+    "qrTemplate",
+  ],
+  CASSO: [
+    "bankName",
+    "accountNumber",
+    "accountName",
+    "cassoApiKey",
+    "webhookSecret",
+  ],
+  BINANCE: [
+    "asset",
+    "network",
+    "walletAddress",
+    "integrationMode",
+    "apiKey",
+    "apiSecret",
+  ],
+};
+const safeConfigKeys = [
+  "bankName",
+  "bankBin",
+  "qrTemplate",
+  "asset",
+  "network",
+  "walletAddress",
+  "integrationMode",
+];
+
 export class PaymentSettingsService {
   constructor(
-    private readonly db: any,
-    private readonly encryptionKey: string,
+    private db: any,
+    private encryptionKey: string,
   ) {}
 
-  async getAdminSettings() {
-    const rows = await this.db.setting.findMany({
-      where: {
-        group: {
-          in: ["payments.casso", "payments.bank", "payments.vietqr"],
-        },
-      },
+  private async row(key: string) {
+    return this.db.setting.findUnique({
+      where: { group_key: { group: "payments", key } },
     });
+  }
 
-    const map = new Map<string, any>(
-      rows.map(
-        (row: any) => [`${row.group}:${row.key}`, row] as [string, any],
-      ),
-    );
+  private decimal(value: unknown, field: string, scale = 8) {
+    const raw = String(value ?? "0").trim();
+    if (!new RegExp(`^(?:0|[1-9]\\d*)(?:\\.\\d{1,${scale}})?$`).test(raw))
+      throw new Error(`${field.toUpperCase()}_INVALID`);
+    return raw;
+  }
 
-    const read = (group: string, key: string) =>
-      map.get(`${group}:${key}`)?.value ?? null;
-
-    const readSecret = (group: string, key: string) => {
-      const row = map.get(`${group}:${key}`);
-      if (!row?.value) return null;
-
-      const raw = String(row.value);
-
-      if (!row.encrypted) {
-        return raw;
-      }
-
-      try {
-        return decryptSecret(raw, this.encryptionKey);
-      } catch {
-        return null;
-      }
-    };
-
-    const maskedSecret = (group: string, key: string) => {
-      const value = readSecret(group, key);
-      return value ? maskSecret(value) : null;
-    };
-
-    return {
-      casso: {
-        enabled: Boolean(read("payments.casso", "enabled")),
-        apiKeyConfigured: Boolean(
-          readSecret("payments.casso", "apiKey"),
-        ),
-        apiKeyMasked: maskedSecret("payments.casso", "apiKey"),
-        webhookTokenConfigured: Boolean(
-          readSecret("payments.casso", "webhookSecureToken"),
-        ),
-        webhookTokenMasked: maskedSecret(
-          "payments.casso",
-          "webhookSecureToken",
-        ),
-      },
-
-      bank: {
-        bankName: read("payments.bank", "bankName"),
-        bankBin: read("payments.bank", "bankBin"),
-        accountNumber: read("payments.bank", "accountNumber"),
-        accountName: read("payments.bank", "accountName"),
-      },
-
-      vietqr: {
-        clientIdConfigured: Boolean(
-          readSecret("payments.vietqr", "clientId"),
-        ),
-        clientIdMasked: maskedSecret("payments.vietqr", "clientId"),
-
-        apiKeyConfigured: Boolean(
-          readSecret("payments.vietqr", "apiKey"),
-        ),
-        apiKeyMasked: maskedSecret("payments.vietqr", "apiKey"),
-
-        webhookSecretConfigured: Boolean(
-          readSecret("payments.vietqr", "webhookSecret"),
-        ),
-        webhookSecretMasked: maskedSecret(
-          "payments.vietqr",
+  private publicMethod(row: any) {
+    let configured = false,
+      accountMasked: string | null = null,
+      safeConfig: Record<string, unknown> = {},
+      secretConfigured: Record<string, boolean> = {};
+    if (row.configEncrypted) {
+      const config = JSON.parse(
+        decryptSecret(row.configEncrypted, this.encryptionKey),
+      );
+      configured = Object.keys(config).length > 0;
+      accountMasked = config.accountNumber
+        ? maskSecret(String(config.accountNumber))
+        : null;
+      safeConfig = Object.fromEntries(
+        safeConfigKeys
+          .filter((key) => config[key] != null)
+          .map((key) => [key, config[key]]),
+      );
+      secretConfigured = Object.fromEntries(
+        [
+          "accountNumber",
+          "accountName",
+          "vietQrClientId",
+          "vietQrApiKey",
+          "cassoApiKey",
           "webhookSecret",
-        ),
-      },
+          "apiKey",
+          "apiSecret",
+        ].map((key) => [key, Boolean(config[key])]),
+      );
+    }
+    const missing = this.missingConfig(String(row.providerType), {
+      ...safeConfig,
+      ...secretConfigured,
+    });
+    const { configEncrypted: _secret, ...safe } = row;
+    return {
+      ...safe,
+      minAmount: String(row.minAmount),
+      maxAmount: String(row.maxAmount),
+      exchangeRate: String(row.exchangeRate),
+      dailyAmountLimit: String(row.dailyAmountLimit),
+      bonusPercent: String(row.bonusPercent),
+      configured,
+      accountMasked,
+      config: safeConfig,
+      secretConfigured,
+      setupStatus: !configured
+        ? "NOT_CONFIGURED"
+        : missing.length
+          ? "MISSING_INFO"
+          : row.active
+            ? "ACTIVE"
+            : "READY_TO_TEST",
+      missingFields: missing,
+      webhookUrl: `${process.env.API_URL ?? "http://localhost:4000"}/webhooks/payments/${String(row.providerType).toLowerCase()}`,
     };
   }
 
-  async updateAdminSettings(input: Record<string, unknown>) {
-    const writes: Array<{
-      group: string;
-      key: string;
-      value: unknown;
-      encrypted: boolean;
-    }> = [];
-
-    const push = (
-      group: string,
-      key: string,
-      value: unknown,
-      encrypted = false,
-    ) => {
-      if (value === undefined) return;
-
-      writes.push({
-        group,
-        key,
-        value,
-        encrypted,
-      });
+  private missingConfig(providerType: string, config: any) {
+    const required: Record<string, string[]> = {
+      MANUAL: ["bankName", "accountNumber", "accountName"],
+      VIETQR: ["bankName", "bankBin", "accountNumber", "accountName"],
+      CASSO: ["bankName", "accountNumber", "accountName", "webhookSecret"],
+      BINANCE: ["asset", "network", "walletAddress"],
     };
+    if (
+      providerType === "BINANCE" &&
+      String(config.integrationMode ?? "MANUAL") === "AUTO"
+    )
+      required.BINANCE!.push("apiKey", "apiSecret");
+    return (required[providerType] ?? []).filter((key) => !config[key]);
+  }
 
-    const pushSecret = (
-      group: string,
-      key: string,
-      value: unknown,
-    ) => {
-      if (value === undefined) return;
+  async methods(includeInactive = true) {
+    const rows = await this.db.paymentMethod.findMany({
+      where: includeInactive ? {} : { active: true },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    });
+    return rows.map((row: any) => this.publicMethod(row));
+  }
 
-      const raw = String(value).trim();
+  async testMethod(id: string) {
+    const row = await this.db.paymentMethod.findUnique({ where: { id } });
+    if (!row) throw new Error("PAYMENT_METHOD_NOT_FOUND");
+    const config = row.configEncrypted
+      ? JSON.parse(decryptSecret(row.configEncrypted, this.encryptionKey))
+      : {};
+    const missing = this.missingConfig(String(row.providerType), config);
+    if (missing.length)
+      throw new Error(
+        `PAYMENT_METHOD_MISSING_${missing.join("_").toUpperCase()}`,
+      );
+    if (row.providerType === "VIETQR")
+      return {
+        ok: true,
+        live: false,
+        message: "Đã tạo QR thử từ thông tin ngân hàng.",
+        qrUrl: `https://img.vietqr.io/image/${encodeURIComponent(config.bankBin)}-${encodeURIComponent(config.accountNumber)}-${encodeURIComponent(config.qrTemplate ?? "compact2")}.png?amount=10000&addInfo=TEST-${encodeURIComponent(row.code)}&accountName=${encodeURIComponent(config.accountName)}`,
+      };
+    if (row.providerType === "CASSO") {
+      if (!config.cassoApiKey)
+        return {
+          ok: true,
+          live: false,
+          message:
+            "Webhook đã đủ cấu hình; thêm Casso API Key để kiểm tra kết nối trực tiếp.",
+        };
+      const response = await fetch("https://oauth.casso.vn/v2/userInfo", {
+        headers: { Authorization: `Apikey ${config.cassoApiKey}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) throw new Error("CASSO_CONNECTION_FAILED");
+      return { ok: true, live: true, message: "Kết nối Casso thành công." };
+    }
+    return {
+      ok: true,
+      live: false,
+      message:
+        row.providerType === "BINANCE"
+          ? "Địa chỉ ví hợp lệ về cấu hình. Chưa kiểm tra giao dịch Binance live."
+          : "Thông tin chuyển khoản thủ công đã đầy đủ.",
+    };
+  }
 
-      if (!raw) return;
-
-      push(
-        group,
-        key,
-        encryptSecret(raw, this.encryptionKey),
-        true,
+  async saveMethod(actorId: string, id: string | null, input: any) {
+    const providerType = String(input.providerType ?? "").toUpperCase();
+    if (!["MANUAL", "VIETQR", "CASSO", "BINANCE"].includes(providerType))
+      throw new Error("PAYMENT_PROVIDER_TYPE_INVALID");
+    const minAmount = this.decimal(input.minAmount, "min_amount"),
+      maxAmount = this.decimal(input.maxAmount, "max_amount"),
+      dailyAmountLimit = this.decimal(
+        input.dailyAmountLimit,
+        "daily_amount_limit",
+      ),
+      exchangeRate = this.decimal(
+        input.exchangeRate ?? "1",
+        "exchange_rate",
+        12,
+      ),
+      bonusPercent = this.decimal(input.bonusPercent, "bonus_percent", 6);
+    const units = (value: string) => {
+      const [whole, fraction = ""] = value.split(".");
+      return (
+        BigInt(whole!) * 100000000n +
+        BigInt(fraction.padEnd(8, "0").slice(0, 8))
       );
     };
-
-    push(
-      "payments.casso",
-      "enabled",
-      Boolean(input.cassoEnabled),
-    );
-
-    pushSecret(
-      "payments.casso",
-      "apiKey",
-      input.cassoApiKey,
-    );
-
-    pushSecret(
-      "payments.casso",
-      "webhookSecureToken",
-      input.cassoWebhookSecureToken,
-    );
-
-    push(
-      "payments.bank",
-      "bankName",
-      String(input.bankName ?? "").trim(),
-    );
-
-    push(
-      "payments.bank",
-      "bankBin",
-      String(input.bankBin ?? "").trim(),
-    );
-
-    push(
-      "payments.bank",
-      "accountNumber",
-      String(input.bankAccountNumber ?? "").trim(),
-    );
-
-    push(
-      "payments.bank",
-      "accountName",
-      String(input.bankAccountName ?? "").trim(),
-    );
-
-    pushSecret(
-      "payments.vietqr",
-      "clientId",
-      input.vietqrClientId,
-    );
-
-    pushSecret(
-      "payments.vietqr",
-      "apiKey",
-      input.vietqrApiKey,
-    );
-
-    pushSecret(
-      "payments.vietqr",
-      "webhookSecret",
-      input.vietqrWebhookSecret,
-    );
-
-    await this.db.$transaction(
-      writes.map((item) =>
-        this.db.setting.upsert({
-          where: {
-            group_key: {
-              group: item.group,
-              key: item.key,
-            },
+    if (units(maxAmount) !== 0n && units(maxAmount) < units(minAmount))
+      throw new Error("PAYMENT_LIMIT_INVALID");
+    const dailyTransactionLimit = Number(input.dailyTransactionLimit ?? 0),
+      sortOrder = Number(input.sortOrder ?? 0);
+    if (
+      !Number.isSafeInteger(dailyTransactionLimit) ||
+      dailyTransactionLimit < 0 ||
+      !Number.isSafeInteger(sortOrder) ||
+      sortOrder < 0
+    )
+      throw new Error("PAYMENT_LIMIT_INVALID");
+    const configKeys = adapterConfigKeys[providerType]!,
+      secretInput = Object.fromEntries(
+        configKeys
+          .filter((key) => typeof input[key] === "string" && input[key].trim())
+          .map((key) => [key, input[key].trim()]),
+      );
+    return this.db.$transaction(async (tx: any) => {
+      const existing = id
+        ? await tx.paymentMethod.findUnique({ where: { id } })
+        : null;
+      if (id && !existing) throw new Error("PAYMENT_METHOD_NOT_FOUND");
+      let configEncrypted = existing?.configEncrypted ?? null;
+      if (Object.keys(secretInput).length) {
+        const prior = configEncrypted
+          ? JSON.parse(decryptSecret(configEncrypted, this.encryptionKey))
+          : {};
+        configEncrypted = encryptSecret(
+          JSON.stringify({ ...prior, ...secretInput }),
+          this.encryptionKey,
+        );
+      }
+      const completeConfig = configEncrypted
+        ? JSON.parse(decryptSecret(configEncrypted, this.encryptionKey))
+        : {};
+      const missing = this.missingConfig(providerType, completeConfig);
+      if (input.active === true && missing.length)
+        throw new Error(
+          `PAYMENT_METHOD_MISSING_${missing.join("_").toUpperCase()}`,
+        );
+      const data = {
+        code: String(input.code ?? existing?.code ?? "")
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9_-]/g, "")
+          .slice(0, 50),
+        name: String(input.name ?? "")
+          .trim()
+          .slice(0, 120),
+        providerType,
+        currency: String(input.currency ?? "USD")
+          .toUpperCase()
+          .slice(0, 10),
+        icon: input.icon ? String(input.icon).trim().slice(0, 2048) : null,
+        minAmount,
+        maxAmount,
+        exchangeRate,
+        dailyTransactionLimit,
+        dailyAmountLimit,
+        bonusPercent,
+        instructions: input.instructions
+          ? String(input.instructions).slice(0, 10000)
+          : null,
+        sortOrder,
+        active: input.active === true,
+        configEncrypted,
+      };
+      if (!data.code || !data.name) throw new Error("PAYMENT_METHOD_INVALID");
+      const row = existing
+        ? await tx.paymentMethod.update({ where: { id }, data })
+        : await tx.paymentMethod.create({ data });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: existing ? "PAYMENT_METHOD_UPDATE" : "PAYMENT_METHOD_CREATE",
+          resource: "PaymentMethod",
+          resourceId: row.id,
+          before: existing
+            ? { name: existing.name, active: existing.active }
+            : undefined,
+          after: {
+            code: row.code,
+            name: row.name,
+            providerType: row.providerType,
+            currency: row.currency,
+            active: row.active,
           },
+        },
+      });
+      return this.publicMethod(row);
+    });
+  }
 
-          update: {
-            value: item.value,
-            encrypted: item.encrypted,
-          },
+  async webhookToken(fallback = "") {
+    const method = this.db.paymentMethod?.findFirst
+      ? await this.db.paymentMethod.findFirst({
+          where: { providerType: "CASSO", active: true },
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        })
+      : null;
+    if (method?.configEncrypted) {
+      const config = JSON.parse(
+        decryptSecret(method.configEncrypted, this.encryptionKey),
+      );
+      if (config.webhookSecret) return String(config.webhookSecret);
+    }
+    const row = await this.row("cassoWebhookSecureToken");
+    return row?.encrypted && typeof row.value === "string"
+      ? decryptSecret(row.value, this.encryptionKey)
+      : fallback;
+  }
 
-          create: {
-            group: item.group,
-            key: item.key,
-            value: item.value,
-            encrypted: item.encrypted,
-          },
-        }),
+  async publicBank() {
+    const rows = await this.db.setting.findMany({
+      where: { group: "payments", key: { in: publicKeys } },
+    });
+    const values = Object.fromEntries(
+      rows.map((row: any) => [row.key, row.value]),
+    );
+    return {
+      bin: String(values.bankBin ?? process.env.BANK_BIN ?? ""),
+      name: String(values.bankName ?? process.env.BANK_NAME ?? ""),
+      account: String(
+        values.bankAccountNumber ?? process.env.BANK_ACCOUNT_NUMBER ?? "",
       ),
-    );
+      accountName: String(
+        values.bankAccountName ?? process.env.BANK_ACCOUNT_NAME ?? "",
+      ),
+    };
+  }
 
-    return this.getAdminSettings();
+  async adminView() {
+    const rows = await this.db.setting.findMany({
+        where: { group: "payments" },
+      }),
+      values: Record<string, unknown> = {};
+    for (const row of rows) {
+      if (row.encrypted) {
+        const raw =
+          typeof row.value === "string"
+            ? decryptSecret(row.value, this.encryptionKey)
+            : "";
+        values[row.key] = {
+          configured: Boolean(raw),
+          masked: raw ? maskSecret(raw) : null,
+        };
+      } else values[row.key] = row.value;
+    }
+    return {
+      ...values,
+      webhookUrl: `${process.env.API_URL ?? "http://localhost:4000"}/webhooks/payments/casso`,
+    };
+  }
+
+  async update(actorId: string, input: any) {
+    const entries = [
+      ...publicKeys
+        .filter((key) => input[key] !== undefined)
+        .map((key) => [key, input[key], false] as const),
+      ...secretKeys
+        .filter((key) => typeof input[key] === "string" && input[key].trim())
+        .map(
+          (key) =>
+            [
+              key,
+              encryptSecret(input[key].trim(), this.encryptionKey),
+              true,
+            ] as const,
+        ),
+    ];
+    if (!entries.length) throw new Error("PAYMENT_SETTINGS_EMPTY");
+    return this.db.$transaction(async (tx: any) => {
+      for (const [key, value, encrypted] of entries)
+        await tx.setting.upsert({
+          where: { group_key: { group: "payments", key } },
+          update: { value, encrypted },
+          create: { group: "payments", key, value, encrypted },
+        });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "PAYMENT_SETTINGS_UPDATE",
+          resource: "Setting",
+          resourceId: "payments",
+          after: { keys: entries.map(([key]) => key) },
+        },
+      });
+      return { updated: entries.map(([key]) => key) };
+    });
   }
 }

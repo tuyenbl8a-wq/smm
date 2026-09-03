@@ -176,6 +176,7 @@ export class WalletService {
                 balance: String(row.balanceAfter),
                 amount: signed,
                 type: mutation.type,
+                reason: mutation.description ?? null,
                 idempotencyKey: mutation.idempotencyKey,
               },
             },

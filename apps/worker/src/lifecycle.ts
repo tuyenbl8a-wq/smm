@@ -26,7 +26,7 @@ export class LifecycleWorker {
       let count = 0;
       const orders = await this.db.order.findMany({
         where: {
-          status: { in: ["PROCESSING", "IN_PROGRESS"] },
+          status: { in: ["PENDING", "PROCESSING", "IN_PROGRESS"] },
           providerOrderId: { not: null },
         },
         take: 50,

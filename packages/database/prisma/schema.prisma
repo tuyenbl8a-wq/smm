@@ -100,6 +100,57 @@ enum NotificationChannel {
   TELEGRAM
 }
 
+enum PricingMode {
+  FIXED
+  COST_PLUS_PERCENT
+  COST_PLUS_FIXED
+  COST_PLUS_PERCENT_AND_FIXED
+}
+
+enum PriceSafetyAction {
+  AUTO_RAISE
+  DISABLE_SERVICE
+  REQUIRE_REVIEW
+}
+
+enum PriceReviewStatus {
+  OK
+  PRICE_REVIEW
+}
+
+enum PriceAlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum PriceAlertStatus {
+  OPEN
+  RESOLVED
+}
+
+enum UpgradeMatchMode {
+  ALL
+  ANY
+}
+
+enum PriceGroupChangeSource {
+  MANUAL
+  AUTO
+}
+
+enum ProviderDisabledPolicy {
+  KEEP_ACTIVE
+  DISABLE_SERVICE
+  REQUIRE_REVIEW
+}
+
+enum ProviderSyncStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 model User {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email String @unique @db.VarChar(320)
@@ -109,11 +160,13 @@ model User {
   emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(3)
   avatarKey String? @map("avatar_key") @db.VarChar(512)
   priceGroupId String? @map("price_group_id") @db.Uuid
+  priceGroupEvaluatedAt DateTime? @map("price_group_evaluated_at") @db.Timestamptz(3)
   referralCode String @unique @map("referral_code") @db.VarChar(32)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([status, createdAt])
+  @@index([status, priceGroupEvaluatedAt])
   @@map("users")
 }
 
@@ -150,6 +203,16 @@ model RolePermission {
   @@id([roleId, permissionId])
   @@index([permissionId])
   @@map("role_permissions")
+}
+model UserPermission {
+  userId String @map("user_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+  grantedBy String? @map("granted_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@id([userId, permissionId])
+  @@index([permissionId])
+  @@map("user_permissions")
 }
 model Session {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -243,9 +306,17 @@ model PaymentMethod {
   maxAmount Decimal @map("max_amount") @db.Decimal(20, 8)
   feeFixed Decimal @default(0) @map("fee_fixed") @db.Decimal(20, 8)
   feePercent Decimal @default(0) @map("fee_percent") @db.Decimal(9, 6)
+  icon String? @db.VarChar(2048)
+  exchangeRate Decimal @default(1) @map("exchange_rate") @db.Decimal(24, 12)
+  dailyTransactionLimit Int @default(0) @map("daily_transaction_limit")
+  dailyAmountLimit Decimal @default(0) @map("daily_amount_limit") @db.Decimal(20, 8)
+  bonusPercent Decimal @default(0) @map("bonus_percent") @db.Decimal(9, 6)
+  instructions String? @db.Text
+  sortOrder Int @default(0) @map("sort_order")
   active Boolean @default(false)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([active, sortOrder])
   @@map("payment_methods")
 }
 model Deposit {
@@ -260,6 +331,8 @@ model Deposit {
   sourceCurrency String @map("source_currency") @db.VarChar(10)
   baseCurrency String @map("base_currency") @db.Char(3)
   exchangeRate Decimal @map("exchange_rate") @db.Decimal(24, 12)
+  bonusRateSnapshot Decimal @default(0) @map("bonus_rate_snapshot") @db.Decimal(9, 6)
+  creditedAmount Decimal @map("credited_amount") @db.Decimal(20, 8)
   externalOrderId String? @unique @map("external_order_id") @db.VarChar(128)
   externalTransactionId String? @unique @map("external_transaction_id") @db.VarChar(128)
   expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
@@ -269,6 +342,23 @@ model Deposit {
   @@index([userId, createdAt])
   @@index([status, expiresAt])
   @@map("deposits")
+}
+model PaymentReconciliationJob {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  depositId String @unique @map("deposit_id") @db.Uuid
+  provider String @db.VarChar(40)
+  status RequestStatus @default(PENDING)
+  attempts Int @default(0)
+  maxAttempts Int @default(8) @map("max_attempts")
+  nextAttemptAt DateTime @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  claimedAt DateTime? @map("claimed_at") @db.Timestamptz(3)
+  claimToken String? @unique @map("claim_token") @db.Uuid
+  lastError String? @map("last_error") @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([provider, status, nextAttemptAt])
+  @@index([status, claimedAt])
+  @@map("payment_reconciliation_jobs")
 }
 model PaymentWebhook {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -301,10 +391,15 @@ model Provider {
   lastSuccessAt DateTime? @map("last_success_at") @db.Timestamptz(3)
   lastFailureAt DateTime? @map("last_failure_at") @db.Timestamptz(3)
   lastSyncAt DateTime? @map("last_sync_at") @db.Timestamptz(3)
+  autoSyncEnabled Boolean @default(false) @map("auto_sync_enabled")
+  syncIntervalMinutes Int @default(15) @map("sync_interval_minutes")
+  nextSyncAt DateTime? @map("next_sync_at") @db.Timestamptz(3)
+  syncClaimedAt DateTime? @map("sync_claimed_at") @db.Timestamptz(3)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([status, priority])
+  @@index([autoSyncEnabled, nextSyncAt])
   @@map("providers")
 }
 model ProviderService {
@@ -321,6 +416,7 @@ model ProviderService {
   cancel Boolean @default(false)
   raw Json?
   active Boolean @default(true)
+  stale Boolean @default(false)
   lastSyncedAt DateTime @map("last_synced_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -328,8 +424,21 @@ model ProviderService {
   @@index([providerId, active])
   @@map("provider_services")
 }
+model Platform {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name String @unique @db.VarChar(120)
+  slug String @unique @db.VarChar(140)
+  icon String? @db.VarChar(255)
+  sortOrder Int @default(0) @map("sort_order")
+  active Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([active, sortOrder])
+  @@map("platforms")
+}
 model ServiceCategory {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  platformId String? @map("platform_id") @db.Uuid
   name String @db.VarChar(160)
   slug String @unique @db.VarChar(180)
   description String? @db.Text
@@ -339,22 +448,33 @@ model ServiceCategory {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([active, sortOrder])
+  @@index([platformId, active, sortOrder])
   @@map("service_categories")
 }
 model Service {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   categoryId String @map("category_id") @db.Uuid
   name String @db.VarChar(255)
+  source String @default("API") @db.VarChar(20)
   description String? @db.Text
   type String @db.VarChar(80)
   pricingModel String @default("PER_THOUSAND") @map("pricing_model") @db.VarChar(40)
   rate Decimal @db.Decimal(20, 8)
   providerCost Decimal @map("provider_cost") @db.Decimal(20, 8)
+  pricingMode PricingMode @default(COST_PLUS_PERCENT_AND_FIXED) @map("pricing_mode_strategy")
+  defaultMarkupPercent Decimal @default(0) @map("default_markup_percent") @db.Decimal(9, 6)
+  defaultFixedProfit Decimal @default(0) @map("default_fixed_profit") @db.Decimal(20, 8)
+  defaultMinProfit Decimal @default(0) @map("default_min_profit") @db.Decimal(20, 8)
+  autoDecrease Boolean @default(true) @map("auto_decrease")
+  safetyAction PriceSafetyAction @default(AUTO_RAISE) @map("safety_action")
+  maxAutomaticIncreasePercent Decimal @default(50) @map("max_automatic_increase_percent") @db.Decimal(9, 6)
+  priceReviewStatus PriceReviewStatus @default(OK) @map("price_review_status")
   min Int
   max Int
   averageTime String? @map("average_time") @db.VarChar(100)
   refill Boolean @default(false)
   cancel Boolean @default(false)
+  restrictFromApi Boolean @default(false) @map("restrict_from_api")
   customFields Json? @map("custom_fields")
   sortOrder Int @default(0) @map("sort_order")
   active Boolean @default(true)
@@ -373,11 +493,61 @@ model ServiceMapping {
   markupPercent Decimal? @map("markup_percent") @db.Decimal(9, 6)
   fixedProfit Decimal? @map("fixed_profit") @db.Decimal(20, 8)
   minProfit Decimal @default(0) @map("min_profit") @db.Decimal(20, 8)
+  syncAll Boolean @default(true) @map("sync_all")
+  syncName Boolean @default(true) @map("sync_name")
+  syncCost Boolean @default(true) @map("sync_cost")
+  syncMin Boolean @default(true) @map("sync_min")
+  syncMax Boolean @default(true) @map("sync_max")
+  syncType Boolean @default(true) @map("sync_type")
+  syncRefill Boolean @default(true) @map("sync_refill")
+  syncCancel Boolean @default(true) @map("sync_cancel")
+  syncStatus Boolean @default(true) @map("sync_status")
+  syncDescription Boolean @default(false) @map("sync_description")
+  syncAverageTime Boolean @default(false) @map("sync_average_time")
+  providerCostOverride Decimal? @map("provider_cost_override") @db.Decimal(20, 8)
+  disabledPolicy ProviderDisabledPolicy @default(REQUIRE_REVIEW) @map("disabled_policy")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@unique([serviceId, providerServiceId])
   @@index([serviceId, active, priority])
   @@map("service_mappings")
+}
+
+model ProviderCategoryMapping {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerId String @map("provider_id") @db.Uuid
+  providerCategory String @map("provider_category") @db.VarChar(255)
+  platformId String? @map("platform_id") @db.Uuid
+  categoryId String @map("category_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([providerId, providerCategory])
+  @@index([categoryId])
+  @@map("provider_category_mappings")
+}
+
+model ProviderSyncLog {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerId String @map("provider_id") @db.Uuid
+  status ProviderSyncStatus @default(RUNNING)
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(3)
+  received Int @default(0)
+  created Int @default(0)
+  updated Int @default(0)
+  unchanged Int @default(0)
+  stale Int @default(0)
+  priceIncreased Int @default(0) @map("price_increased")
+  priceDecreased Int @default(0) @map("price_decreased")
+  requiresReview Int @default(0) @map("requires_review")
+  errors Int @default(0)
+  errorMessage String? @map("error_message") @db.VarChar(500)
+  metadata Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([providerId, startedAt])
+  @@index([status, startedAt])
+  @@map("provider_sync_logs")
 }
 model Order {
   id BigInt @id @default(autoincrement())
@@ -393,6 +563,11 @@ model Order {
   remains Int?
   saleRate Decimal @map("sale_rate") @db.Decimal(20, 8)
   charge Decimal @db.Decimal(20, 8)
+  originalCharge Decimal @default(0) @map("original_charge") @db.Decimal(20, 8)
+  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(20, 8)
+  couponCode String? @map("coupon_code") @db.VarChar(50)
+  priceGroupIdSnapshot String? @map("price_group_id_snapshot") @db.Uuid
+  priceGroupCodeSnapshot String? @map("price_group_code_snapshot") @db.VarChar(50)
   providerRate Decimal @map("provider_rate") @db.Decimal(20, 8)
   providerCost Decimal @map("provider_cost") @db.Decimal(20, 8)
   profit Decimal @db.Decimal(20, 8)
@@ -577,14 +752,65 @@ model AffiliateCommission {
   @@index([status, createdAt])
   @@map("affiliate_commissions")
 }
+model DailyReportSnapshot {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  date DateTime @db.Date
+  timezone String @db.VarChar(64)
+  revenue Decimal @default(0) @db.Decimal(20, 8)
+  providerCost Decimal @default(0) @map("provider_cost") @db.Decimal(20, 8)
+  grossProfit Decimal @default(0) @map("gross_profit") @db.Decimal(20, 8)
+  depositAmount Decimal @default(0) @map("deposit_amount") @db.Decimal(20, 8)
+  refundedAmount Decimal @default(0) @map("refunded_amount") @db.Decimal(20, 8)
+  totalOrders Int @default(0) @map("total_orders")
+  failedOrders Int @default(0) @map("failed_orders")
+  partialOrders Int @default(0) @map("partial_orders")
+  newUsers Int @default(0) @map("new_users")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([date, timezone])
+  @@index([timezone, date])
+  @@map("daily_report_snapshots")
+}
 model PriceGroup {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name String @unique @db.VarChar(100)
   code String @unique @db.VarChar(50)
   active Boolean @default(true)
+  defaultMarkupPercent Decimal @default(0) @map("default_markup_percent") @db.Decimal(9, 6)
+  defaultFixedProfit Decimal @default(0) @map("default_fixed_profit") @db.Decimal(20, 8)
+  defaultMinProfit Decimal @default(0) @map("default_min_profit") @db.Decimal(20, 8)
+  tierOrder Int @default(0) @map("tier_order")
+  publicDescription String? @map("public_description") @db.Text
+  upgradeEnabled Boolean @default(false) @map("upgrade_enabled")
+  upgradeMatchMode UpgradeMatchMode @default(ALL) @map("upgrade_match_mode")
+  minSuccessfulDeposits Decimal? @map("min_successful_deposits") @db.Decimal(20, 8)
+  minTotalSpent Decimal? @map("min_total_spent") @db.Decimal(20, 8)
+  minCompletedOrders Int? @map("min_completed_orders")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([active, tierOrder])
   @@map("price_groups")
+}
+
+model PriceGroupHistory {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  oldPriceGroupId String? @map("old_price_group_id") @db.Uuid
+  oldPriceGroupCode String? @map("old_price_group_code") @db.VarChar(50)
+  oldPriceGroupName String? @map("old_price_group_name") @db.VarChar(100)
+  newPriceGroupId String @map("new_price_group_id") @db.Uuid
+  newPriceGroupCode String @map("new_price_group_code") @db.VarChar(50)
+  newPriceGroupName String @map("new_price_group_name") @db.VarChar(100)
+  source PriceGroupChangeSource
+  actorId String? @map("actor_id") @db.Uuid
+  reason String? @db.VarChar(500)
+  metadata Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([userId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([source, createdAt])
+  @@map("price_group_history")
 }
 model PriceRule {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -597,7 +823,51 @@ model PriceRule {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@unique([priceGroupId, serviceId])
+  @@index([serviceId])
   @@map("price_rules")
+}
+
+model ServicePriceHistory {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceId String @map("service_id") @db.Uuid
+  providerId String? @map("provider_id") @db.Uuid
+  providerServiceId String? @map("provider_service_id") @db.Uuid
+  oldProviderCost Decimal @map("old_provider_cost") @db.Decimal(20, 8)
+  newProviderCost Decimal @map("new_provider_cost") @db.Decimal(20, 8)
+  oldSaleRate Decimal @map("old_sale_rate") @db.Decimal(20, 8)
+  newSaleRate Decimal @map("new_sale_rate") @db.Decimal(20, 8)
+  changePercent Decimal @map("change_percent") @db.Decimal(20, 8)
+  reason String @db.VarChar(40)
+  source String @db.VarChar(80)
+  metadata Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([serviceId, createdAt])
+  @@index([providerId, createdAt])
+  @@index([providerServiceId, createdAt])
+  @@index([createdAt])
+  @@map("service_price_history")
+}
+
+model PriceAlert {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceId String? @map("service_id") @db.Uuid
+  providerId String? @map("provider_id") @db.Uuid
+  providerServiceId String? @map("provider_service_id") @db.Uuid
+  type String @db.VarChar(50)
+  severity PriceAlertSeverity
+  status PriceAlertStatus @default(OPEN)
+  title String @db.VarChar(180)
+  message String @db.VarChar(500)
+  metadata Json?
+  resolvedBy String? @map("resolved_by") @db.Uuid
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@index([status, severity, createdAt])
+  @@index([serviceId, createdAt])
+  @@index([providerId, createdAt])
+  @@map("price_alerts")
 }
 model AuditLog {
   id BigInt @id @default(autoincrement())

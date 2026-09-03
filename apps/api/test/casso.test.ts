@@ -86,3 +86,34 @@ test("Casso wrong amount enters manual review without wallet credit", async () =
   assert.equal(result.results[0].status, "MANUAL_REVIEW");
   assert.equal(state.walletCredits, 0);
 });
+
+test("Casso never credits an expired deposit or an unknown transfer code", async () => {
+  const { db, state } = database();
+  state.deposit.expiresAt = new Date(Date.now() - 60_000);
+  const expired = await new CassoWebhook(db, "secure").process(
+    JSON.stringify({
+      data: {
+        id: "bank-expired",
+        amount: "100.00000000",
+        currency: "VND",
+        description: deposit.code,
+      },
+    }),
+    "secure",
+  );
+  assert.equal(expired.results[0].status, "MANUAL_REVIEW");
+  assert.equal(state.walletCredits, 0);
+
+  const unknown = await new CassoWebhook(db, "secure").process(
+    JSON.stringify({
+      data: {
+        id: "bank-unknown",
+        amount: "100.00000000",
+        description: "no matching transfer code",
+      },
+    }),
+    "secure",
+  );
+  assert.equal(unknown.results[0].status, "MANUAL_REVIEW");
+  assert.equal(state.walletCredits, 0);
+});

@@ -54,6 +54,7 @@ export class SubmitWorker {
     const controller = new AbortController(),
       timer = setTimeout(() => controller.abort(), provider.timeoutMs);
     const start = Date.now();
+    let acceptedProviderOrderId: string | null = null;
     try {
       const body = new URLSearchParams({
         key: decrypt(provider.apiKeyEncrypted, this.encryptionKey),
@@ -70,10 +71,11 @@ export class SubmitWorker {
       });
       const json = await response.json();
       if (!response.ok || !json?.order) throw new Error("PROVIDER_REJECTED");
+      acceptedProviderOrderId = String(json.order);
       await this.db.$transaction(async (tx: any) => {
         await tx.order.update({
           where: { id: order.id },
-          data: { providerOrderId: String(json.order), status: "PROCESSING" },
+          data: { providerOrderId: acceptedProviderOrderId, status: "PROCESSING" },
         });
         await tx.orderHistory.create({
           data: {
@@ -89,10 +91,10 @@ export class SubmitWorker {
             providerId: provider.id,
             operation: "CREATE_ORDER",
             requestId: order.providerSubmitKey,
-            status: "SUCCEEDED",
+            status: "COMPLETED",
             latencyMs: Date.now() - start,
             requestMasked: { service: external, quantity: order.quantity },
-            responseMasked: { order: String(json.order) },
+            responseMasked: { order: acceptedProviderOrderId },
           },
         });
         await tx.providerOutbox.update({
@@ -102,10 +104,10 @@ export class SubmitWorker {
       });
       return true;
     } catch (error: any) {
-      const unknown = error?.name === "AbortError";
+      const unknown = error?.name === "AbortError" || acceptedProviderOrderId !== null;
       await this.fail(
         claimed.id,
-        unknown ? "TIMEOUT_UNKNOWN" : "SUBMIT_FAILED",
+        acceptedProviderOrderId !== null ? "PROVIDER_ACCEPTED_LOCAL_COMMIT_FAILED" : unknown ? "TIMEOUT_UNKNOWN" : "SUBMIT_FAILED",
         unknown,
         Number(claimed.attempts) + 1,
       );

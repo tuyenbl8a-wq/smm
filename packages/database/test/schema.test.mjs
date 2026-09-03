@@ -21,7 +21,7 @@ test("money never uses floating point", () => {
 test("all Prisma enum values use multiline declarations", () => {
   assert.doesNotMatch(schema, /enum\s+\w+\s*\{[^\n{}]+\}/);
   const enums = [...schema.matchAll(/enum\s+(\w+)\s*\{([\s\S]*?)\n\}/g)];
-  assert.equal(enums.length, 12);
+  assert.equal(enums.length, 21);
   for (const [, , body] of enums) {
     const values = body
       .split("\n")
@@ -32,6 +32,118 @@ test("all Prisma enum values use multiline declarations", () => {
       true,
     );
   }
+});
+
+test("service import and staff migration is additive, indexed and permissioned", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260830120000_service_import_staff_ui/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const contract of [
+    "platforms",
+    "user_permissions",
+    "provider_category_mappings",
+    "provider_sync_logs",
+    "sync_all",
+    "sync_cost",
+    "disabled_policy",
+    "pricing.manage",
+    "staff.manage",
+  ])
+    assert.match(sql, new RegExp(contract.replace(".", "\\.")));
+  assert.doesNotMatch(sql, /DROP TABLE|DROP COLUMN|TRUNCATE/);
+});
+
+test("development seed defines exactly three default customer tiers without VIP", () => {
+  const seed = readFileSync(
+    new URL("../prisma/seed.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(seed, /code: "KHACH_LE"/);
+  assert.match(seed, /code: "CTV"/);
+  assert.match(seed, /code: "DAI_LY"/);
+  assert.doesNotMatch(seed, /code: "DAI_LY_VIP"|code: "VIP"/);
+});
+
+test("payment method management migration is additive and guarded", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260831120000_payment_method_management/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const contract of [
+    "exchange_rate",
+    "daily_transaction_limit",
+    "daily_amount_limit",
+    "bonus_percent",
+    "payment_methods_amount_range_check",
+    "payment_methods_active_sort_order_idx",
+  ])
+    assert.match(sql, new RegExp(contract));
+  assert.doesNotMatch(sql, /DROP TABLE|DROP COLUMN|TRUNCATE/);
+});
+
+test("payment bonus snapshot migration backfills safely and preserves deposits", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260901120000_payment_bonus_snapshot/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /ADD COLUMN "bonus_rate_snapshot"/);
+  assert.match(sql, /ADD COLUMN "credited_amount"/);
+  assert.match(sql, /UPDATE "deposits" SET "credited_amount" = "net_amount"/);
+  assert.match(sql, /ALTER COLUMN "credited_amount" SET NOT NULL/);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DROP COLUMN/i);
+});
+
+test("customer price-group migration is additive, indexed and permissioned", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260829120000_customer_price_groups/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /CREATE TABLE "price_group_history"/);
+  assert.match(sql, /price_group_history_user_id_created_at_idx/);
+  assert.match(sql, /price_groups_active_tier_order_idx/);
+  assert.match(sql, /users\.pricing\.manage/);
+  assert.doesNotMatch(sql, /DROP TABLE|DROP COLUMN/);
+});
+
+test("professional pricing migration is additive and indexed", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260825120000_professional_pricing/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /service_price_history/);
+  assert.match(sql, /default_markup_percent/);
+  assert.match(sql, /price_group_id_snapshot/);
+  assert.match(sql, /providers_auto_sync_enabled_next_sync_at_idx/);
+  assert.match(sql, /service_price_history_service_id_created_at_idx/);
+});
+
+test("pricing operations migration adds alert workflow and history metadata", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260827120000_pricing_operations/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /PriceAlertSeverity/);
+  assert.match(sql, /service_price_history.*metadata/s);
+  assert.match(sql, /price_alerts_status_severity_created_at_idx/);
 });
 test("external payment identities are unique", () => {
   assert.match(schema, /externalTransactionId String\? @unique/);
@@ -97,4 +209,74 @@ test("lifecycle action migration persists bounded retry and stale claims", () =>
   assert.match(sql, /"next_attempt_at"/);
   assert.match(sql, /"claimed_at"/);
   assert.match(sql, /status_next_attempt_at_index/);
+});
+
+test("phase 17-20 migration adds durable reconciliation, promotion snapshots and reports", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260819160000_phase17_19_20_completion/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /payment_reconciliation_jobs/);
+  assert.match(sql, /claim_token/);
+  assert.match(sql, /payment_reconciliation_jobs_deposit_id_key/);
+  assert.match(sql, /attempts_check/);
+  assert.match(sql, /original_charge/);
+  assert.match(sql, /discount_amount/);
+  assert.match(sql, /daily_report_snapshots_date_timezone_key/);
+});
+
+test("service editor migration preserves identities and only adds routing state", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260902120000_service_source_editor/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS "source"/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS "restrict_from_api"/);
+  assert.match(sql, /NOT EXISTS[\s\S]+service_mappings/);
+  assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
+});
+
+test("granular admin permission migration is additive and idempotent", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260903120000_granular_admin_permissions/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const permission of [
+    "orders.view",
+    "orders.manage",
+    "users.view",
+    "users.manage",
+    "payments.view",
+    "coupons.view",
+    "coupons.manage",
+    "support.view",
+    "support.manage",
+  ])
+    assert.match(sql, new RegExp(`'${permission.replace(".", "\\.")}'`));
+  assert.match(sql, /ON CONFLICT \("code"\) DO NOTHING/);
+  assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
+});
+
+test("wallet manage permission migration preserves legacy grants additively", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260904090000_wallet_manage_permission/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /'wallet\.manage'/);
+  assert.match(sql, /'wallets\.adjust'/);
+  assert.match(sql, /user_permissions/);
+  assert.match(sql, /ON CONFLICT \("user_id", "permission_id"\) DO NOTHING/);
+  assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
 });

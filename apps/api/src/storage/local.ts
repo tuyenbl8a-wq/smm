@@ -22,14 +22,15 @@ export class LocalStorage {
       /[\\/]/.test(name)
     )
       throw new Error("ATTACHMENT_INVALID");
-    const signatures: any = {
-      "image/png": "89504e47",
-      "image/jpeg": "ffd8ff",
-      "image/webp": "52494646",
-      "application/pdf": "25504446",
-    };
-    if (data.subarray(0, 4).toString("hex") !== signatures[mime])
-      throw new Error("MIME_MISMATCH");
+    const hex = data.subarray(0, 12).toString("hex"),
+      valid =
+        (mime === "image/png" && hex.startsWith("89504e470d0a1a0a")) ||
+        (mime === "image/jpeg" && hex.startsWith("ffd8ff")) ||
+        (mime === "application/pdf" && hex.startsWith("255044462d")) ||
+        (mime === "image/webp" &&
+          hex.startsWith("52494646") &&
+          hex.slice(16, 24) === "57454250");
+    if (!valid) throw new Error("MIME_MISMATCH");
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const key = randomBytes(24).toString("hex");
     await writeFile(join(this.root, key), data, { mode: 0o600 });
