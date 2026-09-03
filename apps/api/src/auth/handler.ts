@@ -793,7 +793,10 @@ export class AuthHandler {
           path,
         );
       if (request.method === "GET" && adminWallet) {
-        if (!canAccessAdmin(auth.access))
+        if (
+          !canAccessAdmin(auth.access, "users.view") &&
+          !canAccessAdmin(auth.access, "wallet.manage")
+        )
           return this.error(
             response,
             403,
@@ -1517,7 +1520,7 @@ export class AuthHandler {
         path.endsWith("/mutations")
       ) {
         this.checkBurst(request, "admin-wallet-mutation");
-        if (!canAccessAdmin(auth.access, "wallets.adjust"))
+        if (!canAccessAdmin(auth.access, "wallet.manage"))
           return this.error(
             response,
             403,
@@ -1526,6 +1529,12 @@ export class AuthHandler {
           );
         if (!this.wallet) throw new Error("Wallet service unavailable");
         const body = await this.body(request);
+        const reason = String(body.reason ?? "").trim();
+        if (reason.length < 3 || reason.length > 200)
+          throw new InputError(
+            "WALLET_REASON_INVALID",
+            "Reason must be 3–200 characters",
+          );
         const type = String(body.type ?? "");
         if (!["ADMIN_ADD", "ADMIN_SUBTRACT", "ADJUSTMENT"].includes(type))
           throw new InputError(
@@ -1554,9 +1563,13 @@ export class AuthHandler {
             ...(body.referenceId
               ? { referenceId: String(body.referenceId).slice(0, 128) }
               : {}),
-            ...(body.description
-              ? { description: String(body.description) }
-              : {}),
+            description: reason,
+            metadata: {
+              reason,
+              ...(body.internalNote
+                ? { internalNote: String(body.internalNote).slice(0, 500) }
+                : {}),
+            },
           }),
         );
       }

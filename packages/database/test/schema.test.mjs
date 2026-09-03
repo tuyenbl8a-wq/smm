@@ -265,3 +265,18 @@ test("granular admin permission migration is additive and idempotent", () => {
   assert.match(sql, /ON CONFLICT \("code"\) DO NOTHING/);
   assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
 });
+
+test("wallet manage permission migration preserves legacy grants additively", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260904090000_wallet_manage_permission/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /'wallet\.manage'/);
+  assert.match(sql, /'wallets\.adjust'/);
+  assert.match(sql, /user_permissions/);
+  assert.match(sql, /ON CONFLICT \("user_id", "permission_id"\) DO NOTHING/);
+  assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
+});

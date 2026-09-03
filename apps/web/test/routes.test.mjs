@@ -109,7 +109,7 @@ test("simple pricing UI hides technical engine controls and keeps preview/apply"
   assert.match(pricingPage, /name="platformId"/);
   assert.match(pricingPage, /function cascade/);
   assert.match(pricingPage, /mappedServiceIds/);
-  assert.match(pricingPage, /Không có dịch vụ phù hợp bộ lọc/);
+  assert.match(pricingPage, /Không có dịch vụ phù hợp với bộ lọc đã chọn/);
   assert.match(pricingPage, /compactMoney/);
   assert.doesNotMatch(pricingPage, /<b>Khách hàng<\/b><span>Lợi nhuận/);
   assert.doesNotMatch(pricingPage, /id="groupForm"/);
@@ -117,8 +117,45 @@ test("simple pricing UI hides technical engine controls and keeps preview/apply"
 });
 test("rendered scripts bind DOM nodes explicitly and omit empty enum filters", () => {
   assert.match(page, /document\.getElementById/);
-  assert.match(page, /const search=byId\('search'\),from=byId\('from'\)/);
+  assert.match(
+    page,
+    /const search=byId\('search'\),orderUser=byId\('orderUser'\)/,
+  );
   assert.match(page, /if\(selectedStatus\)q\.set\('status',selectedStatus\)/);
   assert.doesNotMatch(page, /status='\+status\.value/);
   assert.match(page, /document\.getElementById\(\$\{JSON\.stringify\(id\)\}\)/);
+});
+
+test("simplified admin UX keeps advanced capabilities permission-aware", () => {
+  const navigation = page.slice(
+    page.indexOf("const adminNavLink"),
+    page.indexOf("export function adminModulePage"),
+  );
+  for (const label of [
+    "Tổng quan",
+    "Đơn hàng",
+    "Dịch vụ",
+    "Bảng giá",
+    "Người dùng",
+    "Nạp tiền / Thanh toán",
+    "Nhà cung cấp",
+    "Hỗ trợ",
+    "Cài đặt",
+  ])
+    assert.match(navigation, new RegExp(label.replace("/", "\\/")));
+  assert.doesNotMatch(navigation, /Mã giảm giá/);
+  assert.match(page, /data-admin-permission="pricing\.manage"/);
+  assert.match(page, /data-admin-permission="wallet\.manage"/);
+  assert.match(page, /applyAdminPermissions/);
+});
+
+test("wallet adjustment lives in user detail and uses idempotent ledger API", () => {
+  assert.match(page, /Số dư hiện tại/);
+  assert.match(page, /Cộng tiền/);
+  assert.match(page, /Trừ tiền/);
+  assert.match(page, /Lịch sử số dư/);
+  assert.match(page, /admin-wallet:'\+crypto\.randomUUID/);
+  assert.match(page, /reason:data\.reason/);
+  assert.match(page, /internalNote:data\.internalNote/);
+  assert.match(page, /wallets\/\$\{id\}\/mutations/);
 });
