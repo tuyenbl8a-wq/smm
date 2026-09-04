@@ -574,11 +574,14 @@ model Order {
   status OrderStatus @default(PENDING)
   input Json?
   refundedAmount Decimal @default(0) @map("refunded_amount") @db.Decimal(20, 8)
+  manualOverride Boolean @default(false) @map("manual_override")
+  manualOverrideAt DateTime? @map("manual_override_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@unique([providerId, providerOrderId])
   @@index([userId, createdAt])
   @@index([status, updatedAt])
+  @@index([manualOverride, status, updatedAt])
   @@index([serviceId, createdAt])
   @@map("orders")
 }

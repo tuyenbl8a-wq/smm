@@ -23,3 +23,15 @@ test("stale and timed-out provider mutations are never blindly resent", () => {
 test("provider receives stable request identity for supported idempotency", () => {
   assert.match(source, /request_id: row\.idempotency_key/);
 });
+
+test("automatic lifecycle polls pending orders but skips manual overrides", () => {
+  assert.match(source, /"PENDING", "PROCESSING", "IN_PROGRESS"/);
+  assert.match(source, /manualOverride: false/);
+  assert.match(source, /current\.manualOverride/);
+});
+
+test("worker uses shared charge-based idempotent refund helper", () => {
+  assert.match(source, /partialRefundTarget\([\s\S]*current\.charge/);
+  assert.match(source, /applyOrderTargetRefund/);
+  assert.doesNotMatch(source, /current\.saleRate/);
+});

@@ -11,6 +11,86 @@ export function asDecimalString(value: string): DecimalString {
   return value as DecimalString;
 }
 
+const MONEY_SCALE = 100_000_000n;
+
+/** Parse and format NUMERIC(20,8) values without ever passing through a JS number. */
+export function moneyToUnits(value: unknown): bigint {
+  const match = /^(\d{1,12})(?:\.(\d{1,8}))?$/.exec(String(value ?? "0"));
+  if (!match) throw new Error("MONEY_INVALID");
+  return (
+    BigInt(match[1]!) * MONEY_SCALE + BigInt((match[2] ?? "").padEnd(8, "0"))
+  );
+}
+
+export function moneyFromUnits(value: bigint): string {
+  if (value < 0n) throw new Error("MONEY_INVALID");
+  return `${value / MONEY_SCALE}.${String(value % MONEY_SCALE).padStart(8, "0")}`;
+}
+
+/** Pro-rata target refund based on what the customer actually paid. */
+export function partialRefundTarget(
+  charge: unknown,
+  remains: number,
+  quantity: number,
+): string {
+  if (
+    !Number.isInteger(quantity) ||
+    quantity <= 0 ||
+    !Number.isInteger(remains) ||
+    remains < 0 ||
+    remains > quantity
+  )
+    throw new Error("REMAINS_INVALID");
+  return moneyFromUnits(
+    (moneyToUnits(charge) * BigInt(remains)) / BigInt(quantity),
+  );
+}
+
+export type RefundResult = { target: string; added: string };
+
+/**
+ * Credit an order refund up to a target total. Call inside the same transaction as
+ * order/history/audit writes. The advisory lock serializes worker and admin paths;
+ * the unique wallet idempotency key remains a second line of defence.
+ */
+export async function applyOrderTargetRefund(
+  tx: any,
+  order: any,
+  targetValue: unknown,
+  description: string,
+): Promise<RefundResult> {
+  const target = moneyToUnits(targetValue),
+    charge = moneyToUnits(order.charge),
+    existing = moneyToUnits(order.refundedAmount);
+  if (target > charge) throw new Error("REFUND_EXCEEDS_CHARGE");
+  if (target < existing) throw new Error("REFUND_BELOW_EXISTING");
+  const delta = target - existing;
+  if (delta === 0n)
+    return { target: moneyFromUnits(target), added: moneyFromUnits(0n) };
+  const amount = moneyFromUnits(delta),
+    targetText = moneyFromUnits(target);
+  const rows = await tx.$queryRawUnsafe(
+    `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
+    amount,
+    order.userId,
+  );
+  if (!rows?.[0]) throw new Error("WALLET_NOT_FOUND");
+  await tx.walletTransaction.create({
+    data: {
+      walletId: rows[0].id,
+      userId: order.userId,
+      type: "REFUND",
+      amount,
+      balanceBefore: rows[0].before,
+      balanceAfter: rows[0].after,
+      referenceId: order.publicId,
+      idempotencyKey: `refund:order:${order.publicId}:to:${targetText}`,
+      description,
+    },
+  });
+  return { target: targetText, added: amount };
+}
+
 export function zonedDayBounds(date: string, timezone: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("REPORT_DATE_INVALID");
   const formatter = new Intl.DateTimeFormat("en-CA", {

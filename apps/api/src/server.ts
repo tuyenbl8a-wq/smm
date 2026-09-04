@@ -25,8 +25,7 @@ function json(
   response: ServerResponse,
   status: number,
   payload:
-    | HealthCheck
-    | { success: false; error: { code: string; message: string } },
+    HealthCheck | { success: false; error: { code: string; message: string } },
 ): void {
   sendJson(response, status, payload);
 }
@@ -53,7 +52,10 @@ export function createApiServer(
     }
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
-      response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
+      response.setHeader(
+        "access-control-allow-methods",
+        "GET,POST,PATCH,OPTIONS",
+      );
       response.setHeader(
         "access-control-allow-headers",
         "content-type,x-csrf-token,idempotency-key",
