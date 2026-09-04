@@ -1705,6 +1705,19 @@ export class AuthHandler {
       }
       return this.error(response, 404, "NOT_FOUND", "Route not found");
     } catch (error) {
+      if ((error as { code?: string })?.code === "P2002") {
+        const targets = (error as { meta?: { target?: unknown } }).meta?.target;
+        const fields = Array.isArray(targets)
+          ? targets.map(String)
+          : [String(targets ?? "")];
+        const username = fields.some((field) => field.includes("username"));
+        return this.error(
+          response,
+          409,
+          username ? "USERNAME_ALREADY_USED" : "EMAIL_ALREADY_USED",
+          username ? "Tên đăng nhập đã tồn tại" : "Email đã được sử dụng",
+        );
+      }
       if (error instanceof CatalogError)
         return this.error(response, 422, error.code, error.message);
       if (error instanceof ProviderConfigError)

@@ -20,6 +20,37 @@ const uuidFilter = (value: unknown, code: string) => {
     throw new AdminOperationError(code, "Invalid identifier filter");
   return text;
 };
+const CANONICAL_ADMIN_PERMISSIONS = [
+  "dashboard.view",
+  "orders.view",
+  "orders.manage",
+  "orders.sync",
+  "orders.refund",
+  "services.view",
+  "services.manage",
+  "services.import",
+  "providers.view",
+  "providers.manage",
+  "users.view",
+  "users.manage",
+  "users.balance.manage",
+  "payments.view",
+  "payments.manage",
+  "payments.approve",
+  "coupons.view",
+  "coupons.manage",
+  "support.view",
+  "support.manage",
+  "reports.view",
+  "settings.view",
+  "settings.manage",
+  "staff.view",
+  "staff.manage",
+  "audit.view",
+] as const;
+const CANONICAL_ADMIN_PERMISSION_SET = new Set<string>(
+  CANONICAL_ADMIN_PERMISSIONS,
+);
 const MONEY_SCALE = 100_000_000n;
 const moneyUnits = (value: unknown): bigint => {
   const match = /^(\d{1,12})(?:\.(\d{1,8}))?$/.exec(String(value ?? "0"));
@@ -871,7 +902,10 @@ export class AdminOperationsService {
         this.db.rolePermission.findMany({
           where: { roleId: { in: roles.map((role: any) => role.id) } },
         }),
-        this.db.permission.findMany({ orderBy: { code: "asc" } }),
+        this.db.permission.findMany({
+          where: { code: { in: [...CANONICAL_ADMIN_PERMISSIONS] } },
+          orderBy: { code: "asc" },
+        }),
       ],
     );
     const roleMap = new Map(roles.map((role: any) => [role.id, role.code])),
