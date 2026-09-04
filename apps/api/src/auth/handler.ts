@@ -205,9 +205,8 @@ export class AuthHandler {
           ),
         );
       }
-      const orderDetail = /^\/api\/v1\/customer\/orders\/([0-9]{6,}|[0-9a-f-]{36})$/.exec(
-        path,
-      );
+      const orderDetail =
+        /^\/api\/v1\/customer\/orders\/([0-9]{6,}|[0-9a-f-]{36})$/.exec(path);
       if (request.method === "GET" && orderDetail)
         return this.ok(
           response,
@@ -306,9 +305,8 @@ export class AuthHandler {
           await this.admin!.orders(Object.fromEntries(url.searchParams)),
         );
       }
-      const adminOrder = /^\/api\/v1\/admin\/orders\/([0-9]{6,}|[0-9a-f-]{36})$/.exec(
-        path,
-      );
+      const adminOrder =
+        /^\/api\/v1\/admin\/orders\/([0-9]{6,}|[0-9a-f-]{36})$/.exec(path);
       if (request.method === "GET" && adminOrder) {
         if (!canAccessAdmin(auth.access, "orders.view"))
           return this.error(
@@ -817,7 +815,7 @@ export class AuthHandler {
         }
         return this.ok(response, await this.wallet.summary(adminWallet[1]!));
       }
-      if (request.method === "POST") {
+      if (["POST", "PATCH", "PUT", "DELETE"].includes(request.method ?? "")) {
         const csrf = this.cookie(request, "smm_csrf");
         const header = this.header(request, "x-csrf-token");
         if (
@@ -844,6 +842,48 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.orders.create(auth.user.id, await this.body(request), key),
+        );
+      }
+      const adminOrderMutation =
+        /^\/api\/v1\/admin\/orders\/([0-9]{6,}|[0-9a-f-]{36})(?:\/(sync|refund))?$/.exec(
+          path,
+        );
+      if (
+        adminOrderMutation &&
+        ((request.method === "POST" && adminOrderMutation[2]) ||
+          (request.method === "PATCH" && !adminOrderMutation[2]))
+      ) {
+        if (!canAccessAdmin(auth.access, "orders.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (adminOrderMutation[2] === "sync")
+          return this.ok(
+            response,
+            await this.admin!.syncOrderFromProvider(
+              auth.user.id,
+              adminOrderMutation[1]!,
+            ),
+          );
+        if (adminOrderMutation[2] === "refund")
+          return this.ok(
+            response,
+            await this.admin!.refundOrder(
+              auth.user.id,
+              adminOrderMutation[1]!,
+              await this.body(request),
+            ),
+          );
+        return this.ok(
+          response,
+          await this.admin!.updateOrder(
+            auth.user.id,
+            adminOrderMutation[1]!,
+            await this.body(request),
+          ),
         );
       }
       const userUpdate = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(
@@ -1296,7 +1336,7 @@ export class AuthHandler {
           await this.support!.markRead(auth.user.id, notificationRead[1]!),
         );
       const lifecycle =
-        /^\/api\/v1\/customer\/orders\/([0-9a-f-]{36})\/(refill|cancel)$/.exec(
+        /^\/api\/v1\/customer\/orders\/([0-9]{6,}|[0-9a-f-]{36})\/(refill|cancel)$/.exec(
           path,
         );
       if (request.method === "POST" && lifecycle) {

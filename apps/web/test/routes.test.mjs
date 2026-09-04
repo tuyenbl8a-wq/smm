@@ -159,3 +159,18 @@ test("wallet adjustment lives in user detail and uses idempotent ledger API", ()
   assert.match(page, /internalNote:data\.internalNote/);
   assert.match(page, /wallets\/\$\{id\}\/mutations/);
 });
+
+test("short order routes keep customer actions and admin operations distinct", () => {
+  assert.match(main, /adminUserRecord = \/\^\\\/admin\\\/users/);
+  assert.match(main, /adminOrderRecord = \/\^\\\/admin\\\/orders/);
+  assert.match(page, /customer\/orders\/'\+x\.publicId\+'\/'\+a/);
+  for (const action of [
+    "Cập nhật từ NCC",
+    "Chỉnh sửa đơn",
+    "ghi đè thủ công",
+    "Hoàn tiền",
+  ])
+    assert.match(page, new RegExp(action));
+  assert.match(page, /admin\/orders\/\$\{id\}\/sync/);
+  assert.match(page, /method:'PATCH'/);
+});

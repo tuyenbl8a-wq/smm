@@ -43,7 +43,10 @@ export class AdminOperationError extends Error {
 
 export class AdminOperationsService {
   private snapshots: DailySnapshotService;
-  constructor(private db: any, private encryptionKey = "") {
+  constructor(
+    private db: any,
+    private encryptionKey = "",
+  ) {
     this.snapshots = new DailySnapshotService(db);
   }
 
@@ -935,7 +938,10 @@ export class AdminOperationsService {
       user = uuidFilter(query.user, "USER_FILTER_INVALID"),
       service = uuidFilter(query.service, "SERVICE_FILTER_INVALID"),
       search = optional(query.search),
-      searchOrderId = search && /^[0-9]+$/.test(search) && BigInt(search) > 100000n ? BigInt(search) - 100000n : null,
+      searchOrderId =
+        search && /^[0-9]+$/.test(search) && BigInt(search) > 100000n
+          ? BigInt(search) - 100000n
+          : null,
       where: any = {
         ...(status ? { status } : {}),
         ...(provider ? { providerId: provider } : {}),
@@ -1026,8 +1032,15 @@ export class AdminOperationsService {
   }
 
   async order(reference: string) {
-    const numericId = /^[0-9]+$/.test(reference) ? BigInt(reference) - 100000n : null;
-    const order = await this.db.order.findFirst({ where: numericId !== null && numericId > 0n ? { id: numericId } : { publicId: reference } });
+    const numericId = /^[0-9]+$/.test(reference)
+      ? BigInt(reference) - 100000n
+      : null;
+    const order = await this.db.order.findFirst({
+      where:
+        numericId !== null && numericId > 0n
+          ? { id: numericId }
+          : { publicId: reference },
+    });
     if (!order)
       throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
     const [history, logs, refills, cancellations, user, service, provider] =
@@ -1071,33 +1084,398 @@ export class AdminOperationsService {
   }
 
   async syncOrderFromProvider(actorId: string, reference: string) {
-    const numericId = /^[0-9]+$/.test(reference) ? BigInt(reference) - 100000n : null;
-    const order = await this.db.order.findFirst({ where: numericId !== null && numericId > 0n ? { id: numericId } : { publicId: reference } });
-    if (!order) throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
-    if (!order.providerId || !order.providerOrderId) throw new AdminOperationError("PROVIDER_ORDER_MISSING", "Order is not linked to a provider order");
-    const provider = await this.db.provider.findFirst({ where: { id: order.providerId, deletedAt: null } });
-    if (!provider) throw new AdminOperationError("PROVIDER_NOT_FOUND", "Provider not found");
-    const adapter = new StandardSmmAdapter(provider.apiUrl, decryptSecret(provider.apiKeyEncrypted, this.encryptionKey), provider.timeoutMs);
+    const numericId = /^[0-9]+$/.test(reference)
+      ? BigInt(reference) - 100000n
+      : null;
+    const order = await this.db.order.findFirst({
+      where:
+        numericId !== null && numericId > 0n
+          ? { id: numericId }
+          : { publicId: reference },
+    });
+    if (!order)
+      throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+    if (!order.providerId || !order.providerOrderId)
+      throw new AdminOperationError(
+        "PROVIDER_ORDER_MISSING",
+        "Order is not linked to a provider order",
+      );
+    const provider = await this.db.provider.findFirst({
+      where: { id: order.providerId, deletedAt: null },
+    });
+    if (!provider)
+      throw new AdminOperationError("PROVIDER_NOT_FOUND", "Provider not found");
+    const adapter = new StandardSmmAdapter(
+      provider.apiUrl,
+      decryptSecret(provider.apiKeyEncrypted, this.encryptionKey),
+      provider.timeoutMs,
+    );
     const x = await adapter.getOrderStatus(String(order.providerOrderId));
-    const status = String(x?.status ?? "").trim().toUpperCase().replaceAll(" ", "_");
-    const remains = x?.remains == null ? Number(order.remains ?? 0) : Number(x.remains);
+    const status = String(x?.status ?? "")
+      .trim()
+      .toUpperCase()
+      .replaceAll(" ", "_");
+    const remains =
+      x?.remains == null ? Number(order.remains ?? 0) : Number(x.remains);
     const startCount = x?.start_count == null ? null : Number(x.start_count);
-    const allowed = ["PENDING", "PROCESSING", "IN_PROGRESS", "COMPLETED", "PARTIAL", "CANCELED", "FAILED"];
-    if (!allowed.includes(status) || !Number.isInteger(remains) || remains < 0 || remains > Number(order.quantity) || (startCount !== null && (!Number.isInteger(startCount) || startCount < 0)))
-      throw new AdminOperationError("PROVIDER_RESPONSE_INVALID", "Provider order status is invalid");
-    return this.applyProviderOrderSync(actorId, order.id, status, remains, startCount);
+    const allowed = [
+      "PENDING",
+      "PROCESSING",
+      "IN_PROGRESS",
+      "COMPLETED",
+      "PARTIAL",
+      "CANCELED",
+      "FAILED",
+    ];
+    if (
+      !allowed.includes(status) ||
+      !Number.isInteger(remains) ||
+      remains < 0 ||
+      remains > Number(order.quantity) ||
+      (startCount !== null && (!Number.isInteger(startCount) || startCount < 0))
+    )
+      throw new AdminOperationError(
+        "PROVIDER_RESPONSE_INVALID",
+        "Provider order status is invalid",
+      );
+    return this.applyProviderOrderSync(
+      actorId,
+      order.id,
+      status,
+      remains,
+      startCount,
+    );
   }
 
-  private async applyProviderOrderSync(actorId: string, orderId: bigint, status: string, remains: number, startCount: number | null) {
+  private async applyProviderOrderSync(
+    actorId: string,
+    orderId: bigint,
+    status: string,
+    remains: number,
+    startCount: number | null,
+  ) {
     return this.db.$transaction(async (tx: any) => {
+      if (tx.$executeRawUnsafe)
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock($1::bigint)`,
+          orderId,
+        );
       const current = await tx.order.findUnique({ where: { id: orderId } });
-      if (!current) throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
-      const refundTarget = status === "PARTIAL" ? orderAmount(current.saleRate, remains) : null;
-      const updated = await tx.order.update({ where: { id: orderId }, data: { status, remains, startCount } });
-      await tx.orderHistory.create({ data: { orderId, fromStatus: current.status, toStatus: status, actorId, details: { source: "ADMIN_PROVIDER_SYNC", remains, startCount } } });
-      await tx.auditLog.create({ data: { actorId, action: "ORDER_PROVIDER_SYNC", resource: "Order", resourceId: current.publicId, before: { status: current.status, remains: current.remains, startCount: current.startCount }, after: { status, remains, startCount } } });
-      return { orderNumber: String(100000n + BigInt(updated.id)), publicId: updated.publicId, status: updated.status, remains: updated.remains, startCount: updated.startCount, refundedAmount: String(updated.refundedAmount), providerOrderId: updated.providerOrderId };
+      if (!current)
+        throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+      const calculated =
+        status === "PARTIAL"
+          ? partialRefundTarget(current.charge, remains, current.quantity)
+          : null;
+      const refund =
+        calculated !== null
+          ? await applyOrderTargetRefund(
+              tx,
+              current,
+              moneyToUnits(calculated) < moneyToUnits(current.refundedAmount)
+                ? current.refundedAmount
+                : calculated,
+              "Hoàn tiền đơn một phần từ NCC",
+            )
+          : {
+              target: String(current.refundedAmount),
+              added: moneyFromUnits(0n),
+            };
+      const updated = await tx.order.update({
+        where: { id: orderId },
+        data: { status, remains, startCount, refundedAmount: refund.target },
+      });
+      await tx.orderHistory.create({
+        data: {
+          orderId,
+          fromStatus: current.status,
+          toStatus: status,
+          actorId,
+          details: {
+            source: "ADMIN_PROVIDER_SYNC",
+            remains,
+            startCount,
+            refundAdded: refund.added,
+          },
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "ORDER_PROVIDER_SYNC",
+          resource: "Order",
+          resourceId: current.publicId,
+          before: {
+            status: current.status,
+            remains: current.remains,
+            startCount: current.startCount,
+            refundedAmount: String(current.refundedAmount),
+          },
+          after: {
+            status,
+            remains,
+            startCount,
+            refundedAmount: refund.target,
+            refundAdded: refund.added,
+          },
+        },
+      });
+      return {
+        orderNumber: String(100000n + BigInt(updated.id)),
+        publicId: updated.publicId,
+        status: updated.status,
+        remains: updated.remains,
+        startCount: updated.startCount,
+        refundedAmount: String(updated.refundedAmount),
+        refundAdded: refund.added,
+        providerOrderId: updated.providerOrderId,
+      };
     });
+  }
+
+  async refundOrder(actorId: string, reference: string, input: any) {
+    const reason = String(input?.reason ?? "").trim();
+    if (reason.length < 3 || reason.length > 500)
+      throw new AdminOperationError(
+        "REASON_REQUIRED",
+        "Refund reason is required",
+      );
+    const target = String(input?.targetRefundAmount ?? "");
+    try {
+      moneyToUnits(target);
+    } catch {
+      throw new AdminOperationError(
+        "REFUND_AMOUNT_INVALID",
+        "Invalid target refund amount",
+      );
+    }
+    const found = await this.findOrderReference(reference);
+    return this.db.$transaction(async (tx: any) => {
+      if (tx.$executeRawUnsafe)
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock($1::bigint)`,
+          found.id,
+        );
+      const order = await tx.order.findUnique({ where: { id: found.id } });
+      if (!order)
+        throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+      let refund;
+      try {
+        refund = await applyOrderTargetRefund(
+          tx,
+          order,
+          target,
+          `Admin refund: ${reason}`,
+        );
+      } catch (error: any) {
+        if (error?.message === "REFUND_EXCEEDS_CHARGE")
+          throw new AdminOperationError(
+            "REFUND_EXCEEDS_CHARGE",
+            "Refund cannot exceed charge",
+          );
+        if (error?.message === "REFUND_BELOW_EXISTING")
+          throw new AdminOperationError(
+            "REFUND_BELOW_EXISTING",
+            "Refund cannot be less than amount already refunded",
+          );
+        throw error;
+      }
+      const full = moneyToUnits(refund.target) === moneyToUnits(order.charge),
+        status = full ? "REFUNDED" : order.status;
+      const updated = await tx.order.update({
+        where: { id: order.id },
+        data: { refundedAmount: refund.target, ...(full ? { status } : {}) },
+      });
+      await tx.orderHistory.create({
+        data: {
+          orderId: order.id,
+          fromStatus: order.status,
+          toStatus: status,
+          actorId,
+          details: {
+            source: "ADMIN_REFUND",
+            reason,
+            targetRefundAmount: refund.target,
+            refundAdded: refund.added,
+          },
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "ORDER_REFUND",
+          resource: "Order",
+          resourceId: order.publicId,
+          before: {
+            status: order.status,
+            refundedAmount: String(order.refundedAmount),
+          },
+          after: {
+            status,
+            refundedAmount: refund.target,
+            refundAdded: refund.added,
+            reason,
+          },
+        },
+      });
+      return {
+        orderNumber: String(100000n + BigInt(order.id)),
+        publicId: order.publicId,
+        status: updated.status,
+        refundedAmount: String(updated.refundedAmount),
+        refundAdded: refund.added,
+      };
+    });
+  }
+
+  async updateOrder(actorId: string, reference: string, input: any) {
+    const reason = String(input?.reason ?? "").trim();
+    if (reason.length < 3 || reason.length > 500)
+      throw new AdminOperationError(
+        "REASON_REQUIRED",
+        "Manual operation reason is required",
+      );
+    const order = await this.findOrderReference(reference),
+      allowed = [
+        "PENDING",
+        "PROCESSING",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "PARTIAL",
+        "CANCELED",
+        "REFUNDED",
+        "FAILED",
+      ];
+    if (input.status !== undefined && !allowed.includes(input.status))
+      throw new AdminOperationError(
+        "ORDER_STATUS_INVALID",
+        "Invalid order status",
+      );
+    for (const field of ["remains", "startCount"])
+      if (
+        input[field] !== undefined &&
+        input[field] !== null &&
+        !Number.isInteger(input[field])
+      )
+        throw new AdminOperationError(
+          "ORDER_COUNTS_INVALID",
+          "Order counts must be integers",
+        );
+    if (
+      input.remains !== undefined &&
+      input.remains !== null &&
+      (input.remains < 0 || input.remains > order.quantity)
+    )
+      throw new AdminOperationError("REMAINS_INVALID", "Invalid remains");
+    if (
+      input.startCount !== undefined &&
+      input.startCount !== null &&
+      input.startCount < 0
+    )
+      throw new AdminOperationError(
+        "START_COUNT_INVALID",
+        "Invalid start count",
+      );
+    if (
+      input.manualOverride !== undefined &&
+      typeof input.manualOverride !== "boolean"
+    )
+      throw new AdminOperationError(
+        "MANUAL_OVERRIDE_INVALID",
+        "Invalid manual override",
+      );
+    if (input.providerId) {
+      const provider = await this.db.provider.findFirst({
+        where: { id: input.providerId, deletedAt: null },
+      });
+      if (!provider)
+        throw new AdminOperationError(
+          "PROVIDER_NOT_FOUND",
+          "Provider not found",
+        );
+    }
+    const before = {
+      providerId: order.providerId,
+      providerOrderId: order.providerOrderId,
+      status: order.status,
+      startCount: order.startCount,
+      remains: order.remains,
+      manualOverride: order.manualOverride,
+    };
+    const data: any = {};
+    for (const field of [
+      "providerId",
+      "providerOrderId",
+      "status",
+      "startCount",
+      "remains",
+      "manualOverride",
+    ])
+      if (input[field] !== undefined)
+        data[field] = input[field] === "" ? null : input[field];
+    if (input.manualOverride !== undefined)
+      data.manualOverrideAt = input.manualOverride ? new Date() : null;
+    try {
+      return await this.db.$transaction(async (tx: any) => {
+        const updated = await tx.order.update({
+          where: { id: order.id },
+          data,
+        });
+        if (input.status !== undefined && input.status !== order.status)
+          await tx.orderHistory.create({
+            data: {
+              orderId: order.id,
+              fromStatus: order.status,
+              toStatus: input.status,
+              actorId,
+              details: { source: "ADMIN_MANUAL", reason, before, after: data },
+            },
+          });
+        await tx.auditLog.create({
+          data: {
+            actorId,
+            action: "ORDER_MANUAL_UPDATE",
+            resource: "Order",
+            resourceId: order.publicId,
+            before,
+            after: { ...data, reason },
+          },
+        });
+        return {
+          orderNumber: String(100000n + BigInt(updated.id)),
+          publicId: updated.publicId,
+          status: updated.status,
+          startCount: updated.startCount,
+          remains: updated.remains,
+          providerId: updated.providerId,
+          providerOrderId: updated.providerOrderId,
+          manualOverride: updated.manualOverride,
+          manualOverrideAt: updated.manualOverrideAt,
+        };
+      });
+    } catch (error: any) {
+      if (error?.code === "P2002")
+        throw new AdminOperationError(
+          "PROVIDER_ORDER_CONFLICT",
+          "Provider order ID is already in use",
+        );
+      throw error;
+    }
+  }
+
+  private async findOrderReference(reference: string) {
+    const numericId = /^[0-9]+$/.test(reference)
+      ? BigInt(reference) - 100000n
+      : null;
+    const order = await this.db.order.findFirst({
+      where:
+        numericId !== null && numericId > 0n
+          ? { id: numericId }
+          : { publicId: reference },
+    });
+    if (!order)
+      throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+    return order;
   }
 
   async reports(from?: Date, to?: Date) {
@@ -1343,7 +1721,12 @@ export class AdminOperationsService {
     };
   }
 }
-import { DailySnapshotService } from "@smm/database";
+import {
+  applyOrderTargetRefund,
+  DailySnapshotService,
+  moneyFromUnits,
+  moneyToUnits,
+  partialRefundTarget,
+} from "@smm/database";
 import { StandardSmmAdapter } from "../provider/adapter.js";
 import { decryptSecret } from "../provider/crypto.js";
-import { orderAmount } from "../order/service.js";
