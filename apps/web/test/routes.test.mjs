@@ -240,3 +240,17 @@ test("admin shell uses accessible overlays without native browser dialogs", () =
   assert.match(page, /nav::-webkit-scrollbar/);
   assert.doesNotMatch(page, /\b(?:window\.)?(?:prompt|alert|confirm)\s*\(/);
 });
+
+test("service operations use real modal forms and authenticated toggle API", () => {
+  for (const contract of [
+    'id="platformModal"',
+    'id="categoryModal"',
+    "data-service-toggle",
+    "/api/v1/admin/catalog/platforms",
+    "/api/v1/admin/catalog/categories",
+    "/api/v1/admin/catalog/services/",
+    "confirmDialog",
+  ])
+    assert.match(page, new RegExp(contract.replaceAll("/", "\\/")));
+  assert.doesNotMatch(page, /window\.(?:prompt|alert|confirm)\s*\(/);
+});
