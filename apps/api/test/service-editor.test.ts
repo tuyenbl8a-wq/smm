@@ -5,14 +5,14 @@ import { CatalogService } from "../src/catalog/service.js";
 const groups = [
   {
     id: "group-retail",
-    code: "KHACH_LE",
+    code: "CUSTOMER",
     name: "Khách hàng",
     defaultMinProfit: "0",
   },
-  { id: "group-agent", code: "CTV", name: "Đại lý", defaultMinProfit: "0" },
+  { id: "group-agent", code: "AGENT", name: "Đại lý", defaultMinProfit: "0" },
   {
     id: "group-distributor",
-    code: "DAI_LY",
+    code: "DISTRIBUTOR",
     name: "NPP",
     defaultMinProfit: "0",
   },
@@ -263,9 +263,9 @@ test("tier percentage and fixed price save to existing PriceRule engine", async 
   await new CatalogService(db).updateServiceEditor("admin-1", "service-1", {
     source: "MANUAL",
     pricing: {
-      KHACH_LE: { mode: "PERCENT", value: "30" },
-      CTV: { mode: "FIXED", value: "0.98000000" },
-      DAI_LY: { mode: "PERCENT", value: "20" },
+      CUSTOMER: { mode: "PERCENT", value: "30" },
+      AGENT: { mode: "FIXED", value: "0.98000000" },
+      DISTRIBUTOR: { mode: "PERCENT", value: "20" },
     },
   });
   const byGroup = new Map(state().rules.map((row) => [row.priceGroupId, row]));
@@ -280,8 +280,161 @@ test("fixed tier price below safety floor is rejected atomically", async () => {
     () =>
       new CatalogService(db).updateServiceEditor("admin-1", "service-1", {
         source: "MANUAL",
-        pricing: { KHACH_LE: { mode: "FIXED", value: "0.70000000" } },
+        pricing: { CUSTOMER: { mode: "FIXED", value: "0.70000000" } },
       }),
     /thấp hơn mức an toàn/,
   );
+});
+
+function creationDatabase() {
+  const services: any[] = [],
+    mappings: any[] = [],
+    rules: any[] = [],
+    audits: any[] = [];
+  const providerService = {
+    id: "ps-create",
+    providerId: "provider-1",
+    rate: "0.50000000",
+    active: true,
+    stale: false,
+    type: "DEFAULT",
+  };
+  const tx: any = {
+    serviceCategory: {
+      findFirst: async ({ where }: any) =>
+        where.id === "category-1" ? { id: "category-1", active: true } : null,
+    },
+    providerService: {
+      findFirst: async ({ where }: any) =>
+        where.id === providerService.id ? providerService : null,
+    },
+    service: {
+      create: async ({ data }: any) => {
+        const row = {
+          id: `service-${services.length + 1}`,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          deletedAt: null,
+          ...data,
+        };
+        services.push(row);
+        return row;
+      },
+      findFirst: async ({ where }: any) =>
+        services.find((row) => row.id === where.id) ?? null,
+    },
+    serviceMapping: {
+      create: async ({ data }: any) => {
+        const row = {
+          id: `mapping-${mappings.length + 1}`,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...data,
+        };
+        mappings.push(row);
+        return row;
+      },
+      findMany: async ({ where }: any) =>
+        mappings.filter((row) => row.serviceId === where.serviceId),
+      createMany: async ({ data }: any) => {
+        mappings.push(
+          ...data.map((row: any, index: number) => ({
+            id: `mapping-copy-${index}`,
+            ...row,
+          })),
+        );
+        return { count: data.length };
+      },
+    },
+    priceGroup: { findMany: async () => groups },
+    priceRule: {
+      create: async ({ data }: any) => {
+        rules.push(data);
+        return data;
+      },
+      findMany: async ({ where }: any) =>
+        rules.filter((row) => row.serviceId === where.serviceId),
+      createMany: async ({ data }: any) => {
+        rules.push(...data);
+        return { count: data.length };
+      },
+    },
+    auditLog: { create: async ({ data }: any) => (audits.push(data), data) },
+  };
+  return {
+    db: { ...tx, $transaction: async (run: any) => run(tx) },
+    state: () => ({ services, mappings, rules, audits }),
+  };
+}
+
+test("creates manual and provider services with exactly three tier prices", async () => {
+  const { db, state } = creationDatabase();
+  const catalog = new CatalogService(db);
+  const manual = await catalog.createService("admin-1", {
+    source: "MANUAL",
+    categoryId: "category-1",
+    name: "Dịch vụ thủ công",
+    type: "DEFAULT",
+    rate: "1.00000000",
+    providerCost: "0.40000000",
+    min: 10,
+    max: 1000,
+    reason: "Tạo mới",
+    pricing: {
+      CUSTOMER: { mode: "PERCENT", value: "30" },
+      AGENT: { mode: "PERCENT", value: "25" },
+      DISTRIBUTOR: { mode: "FIXED", value: "0.60000000" },
+    },
+  });
+  assert.equal(manual.service.source, "MANUAL");
+  assert.equal(state().rules.length, 3);
+  const provider = await catalog.createService("admin-1", {
+    source: "API",
+    providerServiceId: "ps-create",
+    categoryId: "category-1",
+    name: "Dịch vụ NCC",
+    type: "DEFAULT",
+    rate: "0.65000000",
+    min: 10,
+    max: 1000,
+    reason: "Liên kết NCC",
+  });
+  assert.equal(provider.service.providerCost, "0.50000000");
+  assert.equal(provider.mapping.providerServiceId, "ps-create");
+  assert.equal(state().mappings.length, 1);
+});
+
+test("clones service disabled with pricing and mapping copied safely", async () => {
+  const { db, state } = creationDatabase();
+  const catalog = new CatalogService(db);
+  const original = await catalog.createService("admin-1", {
+    source: "API",
+    providerServiceId: "ps-create",
+    categoryId: "category-1",
+    name: "Dịch vụ gốc",
+    type: "DEFAULT",
+    rate: "0.65000000",
+    min: 10,
+    max: 1000,
+    reason: "Tạo gốc",
+    pricing: {
+      CUSTOMER: { mode: "PERCENT", value: "30" },
+      AGENT: { mode: "PERCENT", value: "25" },
+      DISTRIBUTOR: { mode: "PERCENT", value: "20" },
+    },
+  });
+  const clone = await catalog.cloneService("admin-1", original.service.id, {
+    reason: "Tạo biến thể",
+  });
+  assert.equal(clone.active, false);
+  assert.match(clone.name, /bản sao/);
+  assert.equal(
+    state().mappings.filter((row) => row.serviceId === clone.id).length,
+    1,
+  );
+  assert.equal(
+    state().rules.filter((row) => row.serviceId === clone.id).length,
+    3,
+  );
+  assert.equal(state().audits.at(-1).action, "SERVICE_CLONE");
 });

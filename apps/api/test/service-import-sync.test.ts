@@ -68,19 +68,19 @@ test("import preview uses existing professional pricing for three default tiers"
       priceGroup: {
         findMany: async () => [
           {
-            code: "KHACH_LE",
+            code: "CUSTOMER",
             defaultMarkupPercent: "20",
             defaultFixedProfit: "0",
             defaultMinProfit: "0",
           },
           {
-            code: "CTV",
+            code: "AGENT",
             defaultMarkupPercent: "10",
             defaultFixedProfit: "0",
             defaultMinProfit: "0",
           },
           {
-            code: "DAI_LY",
+            code: "DISTRIBUTOR",
             defaultMarkupPercent: "5",
             defaultFixedProfit: "0",
             defaultMinProfit: "0",
@@ -102,9 +102,9 @@ test("import preview uses existing professional pricing for three default tiers"
   assert.equal(result.items[0]!.localName, "Tên bán tại panel");
   assert.equal(result.items[0]!.min, 200);
   assert.equal(result.items[0]!.max, 20_000);
-  assert.equal(result.items[0]!.prices.KHACH_LE, "120.00000000");
-  assert.equal(result.items[0]!.prices.CTV, "110.00000000");
-  assert.equal(result.items[0]!.prices.DAI_LY, "105.00000000");
+  assert.equal(result.items[0]!.prices.CUSTOMER, "120.00000000");
+  assert.equal(result.items[0]!.prices.AGENT, "110.00000000");
+  assert.equal(result.items[0]!.prices.DISTRIBUTOR, "105.00000000");
 });
 
 test("multi-service import is transactional, mapped, priced and audited", async () => {

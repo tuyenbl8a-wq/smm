@@ -20,6 +20,37 @@ const uuidFilter = (value: unknown, code: string) => {
     throw new AdminOperationError(code, "Invalid identifier filter");
   return text;
 };
+const CANONICAL_ADMIN_PERMISSIONS = [
+  "dashboard.view",
+  "orders.view",
+  "orders.manage",
+  "orders.sync",
+  "orders.refund",
+  "services.view",
+  "services.manage",
+  "services.import",
+  "providers.view",
+  "providers.manage",
+  "users.view",
+  "users.manage",
+  "users.balance.manage",
+  "payments.view",
+  "payments.manage",
+  "payments.approve",
+  "coupons.view",
+  "coupons.manage",
+  "support.view",
+  "support.manage",
+  "reports.view",
+  "settings.view",
+  "settings.manage",
+  "staff.view",
+  "staff.manage",
+  "audit.view",
+] as const;
+const CANONICAL_ADMIN_PERMISSION_SET = new Set<string>(
+  CANONICAL_ADMIN_PERMISSIONS,
+);
 const MONEY_SCALE = 100_000_000n;
 const moneyUnits = (value: unknown): bigint => {
   const match = /^(\d{1,12})(?:\.(\d{1,8}))?$/.exec(String(value ?? "0"));
@@ -43,7 +74,10 @@ export class AdminOperationError extends Error {
 
 export class AdminOperationsService {
   private snapshots: DailySnapshotService;
-  constructor(private db: any, private encryptionKey = "") {
+  constructor(
+    private db: any,
+    private encryptionKey = "",
+  ) {
     this.snapshots = new DailySnapshotService(db);
   }
 
@@ -106,6 +140,8 @@ export class AdminOperationsService {
           id: true,
           email: true,
           username: true,
+          fullName: true,
+          phone: true,
           status: true,
           emailVerifiedAt: true,
           priceGroupId: true,
@@ -202,6 +238,8 @@ export class AdminOperationsService {
         id: true,
         email: true,
         username: true,
+        fullName: true,
+        phone: true,
         status: true,
         emailVerifiedAt: true,
         createdAt: true,
@@ -228,6 +266,11 @@ export class AdminOperationsService {
       successfulDeposits,
       spending,
       completedOrders,
+      loginHistory,
+      recentOrders,
+      relatedAudits,
+      affiliate,
+      walletStats,
     ] = await Promise.all([
       this.db.order.count({ where: { userId: id } }),
       this.db.deposit.count({ where: { userId: id } }),
@@ -238,7 +281,13 @@ export class AdminOperationsService {
       user.priceGroupId
         ? this.db.priceGroup.findUnique({ where: { id: user.priceGroupId } })
         : null,
-      this.db.priceGroup.findMany({ orderBy: { tierOrder: "asc" } }),
+      this.db.priceGroup.findMany({
+        where: {
+          active: true,
+          code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] },
+        },
+        orderBy: { tierOrder: "asc" },
+      }),
       this.db.priceGroupHistory.findMany({
         where: { userId: id },
         orderBy: { createdAt: "desc" },
@@ -253,6 +302,45 @@ export class AdminOperationsService {
         _sum: { charge: true, refundedAmount: true },
       }),
       this.db.order.count({ where: { userId: id, status: "COMPLETED" } }),
+      this.db.loginHistory?.findMany
+        ? this.db.loginHistory.findMany({
+            where: { userId: id },
+            orderBy: { createdAt: "desc" },
+            take: 30,
+          })
+        : [],
+      this.db.order?.findMany
+        ? this.db.order.findMany({
+            where: { userId: id },
+            orderBy: { createdAt: "desc" },
+            take: 30,
+            select: {
+              id: true,
+              publicId: true,
+              status: true,
+              charge: true,
+              refundedAmount: true,
+              createdAt: true,
+            },
+          })
+        : [],
+      this.db.auditLog?.findMany
+        ? this.db.auditLog.findMany({
+            where: { OR: [{ resourceId: id }, { actorId: id }] },
+            orderBy: { createdAt: "desc" },
+            take: 30,
+          })
+        : [],
+      this.db.affiliate?.findUnique
+        ? this.db.affiliate.findUnique({ where: { userId: id } })
+        : null,
+      this.db.walletTransaction?.groupBy
+        ? this.db.walletTransaction.groupBy({
+            by: ["type"],
+            where: { userId: id },
+            _sum: { amount: true },
+          })
+        : [],
     ]);
     return {
       ...user,
@@ -271,7 +359,25 @@ export class AdminOperationsService {
             moneyUnits(spending._sum.refundedAmount ?? "0"),
         ),
         completedOrders,
+        totalRefunded: String(spending._sum.refundedAmount ?? "0"),
+        totalBonus:
+          String(
+            walletStats
+              .filter((row: any) => ["BONUS", "AFFILIATE"].includes(row.type))
+              .reduce(
+                (sum: bigint, row: any) =>
+                  sum + moneyUnits(row._sum.amount ?? "0"),
+                0n,
+              ) / 100000000n,
+          ) + ".00000000",
       },
+      loginHistory,
+      recentOrders: recentOrders.map((order: any) => ({
+        ...order,
+        orderNumber: String(100000n + BigInt(order.id)),
+      })),
+      relatedAudits,
+      affiliate,
     };
   }
 
@@ -566,13 +672,34 @@ export class AdminOperationsService {
   async updateUser(actorId: string, id: string, input: any) {
     if (actorId === id && input.status === "BANNED")
       throw new AdminOperationError("SELF_BAN_DENIED", "Cannot ban yourself");
-    const before = await this.user(id),
+    const current = await this.user(id),
+      before = {
+        id: current.id,
+        email: current.email,
+        username: current.username,
+        fullName: current.fullName,
+        phone: current.phone,
+        status: current.status,
+        emailVerifiedAt: current.emailVerifiedAt,
+        priceGroupId: current.priceGroupId,
+      },
       email =
         input.email == null
           ? undefined
           : String(input.email).trim().toLowerCase(),
       username =
-        input.username == null ? undefined : String(input.username).trim();
+        input.username == null ? undefined : String(input.username).trim(),
+      fullName =
+        input.fullName == null
+          ? undefined
+          : String(input.fullName).trim().slice(0, 160),
+      phone =
+        input.phone == null
+          ? undefined
+          : String(input.phone).trim().slice(0, 32),
+      reason = optional(input.reason);
+    if (!reason)
+      throw new AdminOperationError("REASON_REQUIRED", "Reason is required");
     if (email !== undefined && !/^\S+@\S+\.\S+$/.test(email))
       throw new AdminOperationError("EMAIL_INVALID", "Invalid email");
     if (username !== undefined && !/^[a-zA-Z0-9_.-]{3,64}$/.test(username))
@@ -583,11 +710,16 @@ export class AdminOperationsService {
         data: {
           ...(email !== undefined ? { email } : {}),
           ...(username !== undefined ? { username } : {}),
+          ...(fullName !== undefined ? { fullName: fullName || null } : {}),
+          ...(phone !== undefined ? { phone: phone || null } : {}),
           ...(input.emailVerified === true
             ? { emailVerifiedAt: new Date() }
             : {}),
           ...(input.emailVerified === false ? { emailVerifiedAt: null } : {}),
           ...(input.status ? { status: String(input.status) } : {}),
+          ...(input.passwordHash
+            ? { passwordHash: String(input.passwordHash) }
+            : {}),
         },
         select: {
           id: true,
@@ -598,7 +730,7 @@ export class AdminOperationsService {
           priceGroupId: true,
         },
       });
-      if (input.status === "BANNED")
+      if (input.status === "BANNED" || input.passwordHash)
         await tx.session.updateMany({
           where: { userId: id, revokedAt: null },
           data: { revokedAt: new Date() },
@@ -610,7 +742,7 @@ export class AdminOperationsService {
           resource: "User",
           resourceId: id,
           before,
-          after,
+          after: { ...after, reason },
         },
       });
       return after;
@@ -755,14 +887,31 @@ export class AdminOperationsService {
       },
       orderBy: { createdAt: "desc" },
     });
-    const lastLogins = await this.db.loginHistory.findMany({
-      where: {
-        userId: { in: users.map((user: any) => user.id) },
-        success: true,
-      },
-      orderBy: { createdAt: "desc" },
-    });
-    const roleMap = new Map(roles.map((role: any) => [role.id, role.code]));
+    const [lastLogins, userGrants, roleGrants, permissions] = await Promise.all(
+      [
+        this.db.loginHistory.findMany({
+          where: {
+            userId: { in: users.map((user: any) => user.id) },
+            success: true,
+          },
+          orderBy: { createdAt: "desc" },
+        }),
+        this.db.userPermission.findMany({
+          where: { userId: { in: users.map((user: any) => user.id) } },
+        }),
+        this.db.rolePermission.findMany({
+          where: { roleId: { in: roles.map((role: any) => role.id) } },
+        }),
+        this.db.permission.findMany({
+          where: { code: { in: [...CANONICAL_ADMIN_PERMISSIONS] } },
+          orderBy: { code: "asc" },
+        }),
+      ],
+    );
+    const roleMap = new Map(roles.map((role: any) => [role.id, role.code])),
+      permissionMap = new Map(
+        permissions.map((permission: any) => [permission.id, permission.code]),
+      );
     return {
       items: users.map((user: any) => ({
         ...user,
@@ -772,25 +921,85 @@ export class AdminOperationsService {
         lastLoginAt:
           lastLogins.find((row: any) => row.userId === user.id)?.createdAt ??
           null,
+        directPermissions: userGrants
+          .filter((grant: any) => grant.userId === user.id)
+          .map((grant: any) => permissionMap.get(grant.permissionId))
+          .filter(Boolean),
+        rolePermissions: roleGrants
+          .filter((grant: any) =>
+            links.some(
+              (link: any) =>
+                link.userId === user.id && link.roleId === grant.roleId,
+            ),
+          )
+          .map((grant: any) => permissionMap.get(grant.permissionId))
+          .filter(Boolean),
+        permissions: [
+          ...new Set(
+            [
+              ...userGrants
+                .filter((grant: any) => grant.userId === user.id)
+                .map((grant: any) => permissionMap.get(grant.permissionId)),
+              ...roleGrants
+                .filter((grant: any) =>
+                  links.some(
+                    (link: any) =>
+                      link.userId === user.id && link.roleId === grant.roleId,
+                  ),
+                )
+                .map((grant: any) => permissionMap.get(grant.permissionId)),
+            ].filter(Boolean),
+          ),
+        ],
       })),
-      permissions: await this.db.permission.findMany({
-        orderBy: { code: "asc" },
-      }),
+      permissions,
     };
   }
 
-  async createStaff(actorId: string, input: any) {
-    const roleCode = input.role === "ADMIN" ? "ADMIN" : "STAFF";
+  async createStaff(
+    actorId: string,
+    input: any,
+    actorPermissions: string[] = [],
+    superAdmin = false,
+  ) {
+    const roleCode = input.role === "ADMIN" ? "ADMIN" : "STAFF",
+      reason = optional(input.reason),
+      requested = Array.isArray(input.permissions)
+        ? [...new Set<string>(input.permissions.map(String))]
+        : [];
+    if (!reason)
+      throw new AdminOperationError("REASON_REQUIRED", "Reason is required");
+    if (roleCode === "ADMIN" && !superAdmin)
+      throw new AdminOperationError(
+        "ADMIN_ROLE_PROTECTED",
+        "Only Super Admin can assign Admin role",
+      );
+    if (
+      !superAdmin &&
+      requested.some((code) => !actorPermissions.includes(code))
+    )
+      throw new AdminOperationError(
+        "PERMISSION_GRANT_DENIED",
+        "Cannot grant a permission you do not own",
+      );
     return this.db.$transaction(async (tx: any) => {
       const role = await tx.role.findUniqueOrThrow({
           where: { code: roleCode },
         }),
         normal =
-          (await tx.priceGroup.findUnique({ where: { code: "KHACH_LE" } })) ??
+          (await tx.priceGroup.findUnique({ where: { code: "CUSTOMER" } })) ??
           (await tx.priceGroup.findFirst({
             where: { active: true },
             orderBy: { tierOrder: "asc" },
-          }));
+          })),
+        permissions = requested.length
+          ? await tx.permission.findMany({ where: { code: { in: requested } } })
+          : [];
+      if (permissions.length !== requested.length)
+        throw new AdminOperationError(
+          "PERMISSION_INVALID",
+          "Unknown permission",
+        );
       const user = await tx.user.create({
         data: {
           email: String(input.email).trim().toLowerCase(),
@@ -803,6 +1012,14 @@ export class AdminOperationsService {
         },
       });
       await tx.userRole.create({ data: { userId: user.id, roleId: role.id } });
+      if (permissions.length)
+        await tx.userPermission.createMany({
+          data: permissions.map((permission: any) => ({
+            userId: user.id,
+            permissionId: permission.id,
+            grantedBy: actorId,
+          })),
+        });
       await tx.wallet.create({ data: { userId: user.id, currency: "USD" } });
       await tx.auditLog.create({
         data: {
@@ -810,7 +1027,13 @@ export class AdminOperationsService {
           action: "STAFF_CREATE",
           resource: "User",
           resourceId: user.id,
-          after: { email: user.email, username: user.username, role: roleCode },
+          after: {
+            email: user.email,
+            username: user.username,
+            role: roleCode,
+            permissions: requested,
+            reason,
+          },
         },
       });
       return {
@@ -829,25 +1052,34 @@ export class AdminOperationsService {
     input: any,
     superAdmin = false,
   ) {
-    if (actorId === targetId && input.role)
+    if (actorId === targetId)
       throw new AdminOperationError(
         "SELF_ESCALATION_DENIED",
-        "Cannot change your own staff role",
+        "Cannot change your own staff access",
       );
     const links = await this.db.userRole.findMany({
         where: { userId: targetId },
       }),
       targetRoles = await this.db.role.findMany({
         where: { id: { in: links.map((link: any) => link.roleId) } },
-      });
+      }),
+      requested = Array.isArray(input.permissions)
+        ? [...new Set<string>(input.permissions.map(String))]
+        : [],
+      reason = optional(input.reason),
+      roleCode = input.role === "ADMIN" ? "ADMIN" : "STAFF";
+    if (!reason)
+      throw new AdminOperationError("REASON_REQUIRED", "Reason is required");
     if (targetRoles.some((role: any) => role.code === "SUPER_ADMIN"))
       throw new AdminOperationError(
         "SUPER_ADMIN_PROTECTED",
         "Super Admin cannot be changed here",
       );
-    const requested: string[] = Array.isArray(input.permissions)
-      ? Array.from(new Set<string>(input.permissions.map(String)))
-      : [];
+    if (roleCode === "ADMIN" && !superAdmin)
+      throw new AdminOperationError(
+        "ADMIN_ROLE_PROTECTED",
+        "Only Super Admin can assign Admin role",
+      );
     if (
       !superAdmin &&
       requested.some((code) => !actorPermissions.includes(code))
@@ -856,9 +1088,10 @@ export class AdminOperationsService {
         "PERMISSION_GRANT_DENIED",
         "Cannot grant a permission you do not own",
       );
-    const roleCode = input.role === "ADMIN" ? "ADMIN" : "STAFF";
     return this.db.$transaction(async (tx: any) => {
-      const before = { roles: targetRoles.map((role: any) => role.code) },
+      const existing = await tx.userPermission.findMany({
+          where: { userId: targetId },
+        }),
         role = await tx.role.findUniqueOrThrow({ where: { code: roleCode } }),
         permissions = await tx.permission.findMany({
           where: { code: { in: requested } },
@@ -880,28 +1113,30 @@ export class AdminOperationsService {
           })),
           skipDuplicates: true,
         });
-      if (input.status === "BANNED" || input.status === "ACTIVE") {
+      if (["BANNED", "ACTIVE"].includes(input.status))
         await tx.user.update({
           where: { id: targetId },
           data: { status: input.status },
         });
-        if (input.status === "BANNED")
-          await tx.session.updateMany({
-            where: { userId: targetId, revokedAt: null },
-            data: { revokedAt: new Date() },
-          });
-      }
+      await tx.session.updateMany({
+        where: { userId: targetId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
       await tx.auditLog.create({
         data: {
           actorId,
           action: "STAFF_PERMISSIONS_UPDATE",
           resource: "User",
           resourceId: targetId,
-          before,
+          before: {
+            roles: targetRoles.map((role: any) => role.code),
+            permissionIds: existing.map((grant: any) => grant.permissionId),
+          },
           after: {
             role: roleCode,
             permissions: requested,
             status: input.status,
+            reason,
           },
         },
       });
@@ -911,6 +1146,14 @@ export class AdminOperationsService {
         permissions: requested,
         status: input.status,
       };
+    });
+  }
+
+  async orderProviders() {
+    return this.db.provider.findMany({
+      where: { deletedAt: null },
+      select: { id: true, name: true, status: true },
+      orderBy: { name: "asc" },
     });
   }
 
@@ -935,12 +1178,48 @@ export class AdminOperationsService {
       user = uuidFilter(query.user, "USER_FILTER_INVALID"),
       service = uuidFilter(query.service, "SERVICE_FILTER_INVALID"),
       search = optional(query.search),
-      searchOrderId = search && /^[0-9]+$/.test(search) && BigInt(search) > 100000n ? BigInt(search) - 100000n : null,
+      searchOrderId =
+        search && /^[0-9]+$/.test(search) && BigInt(search) > 100000n
+          ? BigInt(search) - 100000n
+          : null,
+      providerOrderSearch = optional(query.providerOrderId),
+      linkSearch = optional(query.link),
+      customerSearch = optional(query.customer),
+      serviceSearch = optional(query.serviceName),
+      customerRows = customerSearch
+        ? await this.db.user.findMany({
+            where: {
+              OR: [
+                { username: { contains: customerSearch, mode: "insensitive" } },
+                { email: { contains: customerSearch, mode: "insensitive" } },
+              ],
+            },
+            select: { id: true },
+          })
+        : [],
+      serviceRows = serviceSearch
+        ? await this.db.service.findMany({
+            where: { name: { contains: serviceSearch, mode: "insensitive" } },
+            select: { id: true },
+          })
+        : [],
       where: any = {
         ...(status ? { status } : {}),
         ...(provider ? { providerId: provider } : {}),
         ...(user ? { userId: user } : {}),
         ...(service ? { serviceId: service } : {}),
+        ...(providerOrderSearch
+          ? { providerOrderId: { contains: providerOrderSearch } }
+          : {}),
+        ...(linkSearch
+          ? { link: { contains: linkSearch, mode: "insensitive" } }
+          : {}),
+        ...(customerSearch
+          ? { userId: { in: customerRows.map((row: any) => row.id) } }
+          : {}),
+        ...(serviceSearch
+          ? { serviceId: { in: serviceRows.map((row: any) => row.id) } }
+          : {}),
         ...(optional(query.from) || optional(query.to)
           ? {
               createdAt: {
@@ -964,7 +1243,7 @@ export class AdminOperationsService {
             }
           : {}),
       };
-    const [total, items] = await Promise.all([
+    const [total, items, statusRows] = await Promise.all([
       this.db.order.count({ where }),
       this.db.order.findMany({
         where,
@@ -972,6 +1251,12 @@ export class AdminOperationsService {
         skip: (page - 1) * limit,
         take: limit,
       }),
+      this.db.order.groupBy
+        ? this.db.order.groupBy({
+            by: ["status", "providerId"],
+            _count: { _all: true },
+          })
+        : [],
     ]);
     const [users, services, providers] = await Promise.all([
       items.length && this.db.user?.findMany
@@ -1022,12 +1307,29 @@ export class AdminOperationsService {
       limit,
       total,
       pages: Math.ceil(total / limit),
+      statusCounts: statusRows.reduce(
+        (counts: any, row: any) => ({
+          ...counts,
+          [row.status]: (counts[row.status] ?? 0) + row._count._all,
+        }),
+        {},
+      ),
+      manualCount: statusRows
+        .filter((row: any) => row.providerId == null)
+        .reduce((total: number, row: any) => total + row._count._all, 0),
     };
   }
 
   async order(reference: string) {
-    const numericId = /^[0-9]+$/.test(reference) ? BigInt(reference) - 100000n : null;
-    const order = await this.db.order.findFirst({ where: numericId !== null && numericId > 0n ? { id: numericId } : { publicId: reference } });
+    const numericId = /^[0-9]+$/.test(reference)
+      ? BigInt(reference) - 100000n
+      : null;
+    const order = await this.db.order.findFirst({
+      where:
+        numericId !== null && numericId > 0n
+          ? { id: numericId }
+          : { publicId: reference },
+    });
     if (!order)
       throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
     const [history, logs, refills, cancellations, user, service, provider] =
@@ -1071,33 +1373,398 @@ export class AdminOperationsService {
   }
 
   async syncOrderFromProvider(actorId: string, reference: string) {
-    const numericId = /^[0-9]+$/.test(reference) ? BigInt(reference) - 100000n : null;
-    const order = await this.db.order.findFirst({ where: numericId !== null && numericId > 0n ? { id: numericId } : { publicId: reference } });
-    if (!order) throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
-    if (!order.providerId || !order.providerOrderId) throw new AdminOperationError("PROVIDER_ORDER_MISSING", "Order is not linked to a provider order");
-    const provider = await this.db.provider.findFirst({ where: { id: order.providerId, deletedAt: null } });
-    if (!provider) throw new AdminOperationError("PROVIDER_NOT_FOUND", "Provider not found");
-    const adapter = new StandardSmmAdapter(provider.apiUrl, decryptSecret(provider.apiKeyEncrypted, this.encryptionKey), provider.timeoutMs);
+    const numericId = /^[0-9]+$/.test(reference)
+      ? BigInt(reference) - 100000n
+      : null;
+    const order = await this.db.order.findFirst({
+      where:
+        numericId !== null && numericId > 0n
+          ? { id: numericId }
+          : { publicId: reference },
+    });
+    if (!order)
+      throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+    if (!order.providerId || !order.providerOrderId)
+      throw new AdminOperationError(
+        "PROVIDER_ORDER_MISSING",
+        "Order is not linked to a provider order",
+      );
+    const provider = await this.db.provider.findFirst({
+      where: { id: order.providerId, deletedAt: null },
+    });
+    if (!provider)
+      throw new AdminOperationError("PROVIDER_NOT_FOUND", "Provider not found");
+    const adapter = new StandardSmmAdapter(
+      provider.apiUrl,
+      decryptSecret(provider.apiKeyEncrypted, this.encryptionKey),
+      provider.timeoutMs,
+    );
     const x = await adapter.getOrderStatus(String(order.providerOrderId));
-    const status = String(x?.status ?? "").trim().toUpperCase().replaceAll(" ", "_");
-    const remains = x?.remains == null ? Number(order.remains ?? 0) : Number(x.remains);
+    const status = String(x?.status ?? "")
+      .trim()
+      .toUpperCase()
+      .replaceAll(" ", "_");
+    const remains =
+      x?.remains == null ? Number(order.remains ?? 0) : Number(x.remains);
     const startCount = x?.start_count == null ? null : Number(x.start_count);
-    const allowed = ["PENDING", "PROCESSING", "IN_PROGRESS", "COMPLETED", "PARTIAL", "CANCELED", "FAILED"];
-    if (!allowed.includes(status) || !Number.isInteger(remains) || remains < 0 || remains > Number(order.quantity) || (startCount !== null && (!Number.isInteger(startCount) || startCount < 0)))
-      throw new AdminOperationError("PROVIDER_RESPONSE_INVALID", "Provider order status is invalid");
-    return this.applyProviderOrderSync(actorId, order.id, status, remains, startCount);
+    const allowed = [
+      "PENDING",
+      "PROCESSING",
+      "IN_PROGRESS",
+      "COMPLETED",
+      "PARTIAL",
+      "CANCELED",
+      "FAILED",
+    ];
+    if (
+      !allowed.includes(status) ||
+      !Number.isInteger(remains) ||
+      remains < 0 ||
+      remains > Number(order.quantity) ||
+      (startCount !== null && (!Number.isInteger(startCount) || startCount < 0))
+    )
+      throw new AdminOperationError(
+        "PROVIDER_RESPONSE_INVALID",
+        "Provider order status is invalid",
+      );
+    return this.applyProviderOrderSync(
+      actorId,
+      order.id,
+      status,
+      remains,
+      startCount,
+    );
   }
 
-  private async applyProviderOrderSync(actorId: string, orderId: bigint, status: string, remains: number, startCount: number | null) {
+  private async applyProviderOrderSync(
+    actorId: string,
+    orderId: bigint,
+    status: string,
+    remains: number,
+    startCount: number | null,
+  ) {
     return this.db.$transaction(async (tx: any) => {
+      if (tx.$executeRawUnsafe)
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock($1::bigint)`,
+          orderId,
+        );
       const current = await tx.order.findUnique({ where: { id: orderId } });
-      if (!current) throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
-      const refundTarget = status === "PARTIAL" ? orderAmount(current.saleRate, remains) : null;
-      const updated = await tx.order.update({ where: { id: orderId }, data: { status, remains, startCount } });
-      await tx.orderHistory.create({ data: { orderId, fromStatus: current.status, toStatus: status, actorId, details: { source: "ADMIN_PROVIDER_SYNC", remains, startCount } } });
-      await tx.auditLog.create({ data: { actorId, action: "ORDER_PROVIDER_SYNC", resource: "Order", resourceId: current.publicId, before: { status: current.status, remains: current.remains, startCount: current.startCount }, after: { status, remains, startCount } } });
-      return { orderNumber: String(100000n + BigInt(updated.id)), publicId: updated.publicId, status: updated.status, remains: updated.remains, startCount: updated.startCount, refundedAmount: String(updated.refundedAmount), providerOrderId: updated.providerOrderId };
+      if (!current)
+        throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+      const calculated =
+        status === "PARTIAL"
+          ? partialRefundTarget(current.charge, remains, current.quantity)
+          : null;
+      const refund =
+        calculated !== null
+          ? await applyOrderTargetRefund(
+              tx,
+              current,
+              moneyToUnits(calculated) < moneyToUnits(current.refundedAmount)
+                ? current.refundedAmount
+                : calculated,
+              "Hoàn tiền đơn một phần từ NCC",
+            )
+          : {
+              target: String(current.refundedAmount),
+              added: moneyFromUnits(0n),
+            };
+      const updated = await tx.order.update({
+        where: { id: orderId },
+        data: { status, remains, startCount, refundedAmount: refund.target },
+      });
+      await tx.orderHistory.create({
+        data: {
+          orderId,
+          fromStatus: current.status,
+          toStatus: status,
+          actorId,
+          details: {
+            source: "ADMIN_PROVIDER_SYNC",
+            remains,
+            startCount,
+            refundAdded: refund.added,
+          },
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "ORDER_PROVIDER_SYNC",
+          resource: "Order",
+          resourceId: current.publicId,
+          before: {
+            status: current.status,
+            remains: current.remains,
+            startCount: current.startCount,
+            refundedAmount: String(current.refundedAmount),
+          },
+          after: {
+            status,
+            remains,
+            startCount,
+            refundedAmount: refund.target,
+            refundAdded: refund.added,
+          },
+        },
+      });
+      return {
+        orderNumber: String(100000n + BigInt(updated.id)),
+        publicId: updated.publicId,
+        status: updated.status,
+        remains: updated.remains,
+        startCount: updated.startCount,
+        refundedAmount: String(updated.refundedAmount),
+        refundAdded: refund.added,
+        providerOrderId: updated.providerOrderId,
+      };
     });
+  }
+
+  async refundOrder(actorId: string, reference: string, input: any) {
+    const reason = String(input?.reason ?? "").trim();
+    if (reason.length < 3 || reason.length > 500)
+      throw new AdminOperationError(
+        "REASON_REQUIRED",
+        "Refund reason is required",
+      );
+    const target = String(input?.targetRefundAmount ?? "");
+    try {
+      moneyToUnits(target);
+    } catch {
+      throw new AdminOperationError(
+        "REFUND_AMOUNT_INVALID",
+        "Invalid target refund amount",
+      );
+    }
+    const found = await this.findOrderReference(reference);
+    return this.db.$transaction(async (tx: any) => {
+      if (tx.$executeRawUnsafe)
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock($1::bigint)`,
+          found.id,
+        );
+      const order = await tx.order.findUnique({ where: { id: found.id } });
+      if (!order)
+        throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+      let refund;
+      try {
+        refund = await applyOrderTargetRefund(
+          tx,
+          order,
+          target,
+          `Admin refund: ${reason}`,
+        );
+      } catch (error: any) {
+        if (error?.message === "REFUND_EXCEEDS_CHARGE")
+          throw new AdminOperationError(
+            "REFUND_EXCEEDS_CHARGE",
+            "Refund cannot exceed charge",
+          );
+        if (error?.message === "REFUND_BELOW_EXISTING")
+          throw new AdminOperationError(
+            "REFUND_BELOW_EXISTING",
+            "Refund cannot be less than amount already refunded",
+          );
+        throw error;
+      }
+      const full = moneyToUnits(refund.target) === moneyToUnits(order.charge),
+        status = full ? "REFUNDED" : order.status;
+      const updated = await tx.order.update({
+        where: { id: order.id },
+        data: { refundedAmount: refund.target, ...(full ? { status } : {}) },
+      });
+      await tx.orderHistory.create({
+        data: {
+          orderId: order.id,
+          fromStatus: order.status,
+          toStatus: status,
+          actorId,
+          details: {
+            source: "ADMIN_REFUND",
+            reason,
+            targetRefundAmount: refund.target,
+            refundAdded: refund.added,
+          },
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "ORDER_REFUND",
+          resource: "Order",
+          resourceId: order.publicId,
+          before: {
+            status: order.status,
+            refundedAmount: String(order.refundedAmount),
+          },
+          after: {
+            status,
+            refundedAmount: refund.target,
+            refundAdded: refund.added,
+            reason,
+          },
+        },
+      });
+      return {
+        orderNumber: String(100000n + BigInt(order.id)),
+        publicId: order.publicId,
+        status: updated.status,
+        refundedAmount: String(updated.refundedAmount),
+        refundAdded: refund.added,
+      };
+    });
+  }
+
+  async updateOrder(actorId: string, reference: string, input: any) {
+    const reason = String(input?.reason ?? "").trim();
+    if (reason.length < 3 || reason.length > 500)
+      throw new AdminOperationError(
+        "REASON_REQUIRED",
+        "Manual operation reason is required",
+      );
+    const order = await this.findOrderReference(reference),
+      allowed = [
+        "PENDING",
+        "PROCESSING",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "PARTIAL",
+        "CANCELED",
+        "REFUNDED",
+        "FAILED",
+      ];
+    if (input.status !== undefined && !allowed.includes(input.status))
+      throw new AdminOperationError(
+        "ORDER_STATUS_INVALID",
+        "Invalid order status",
+      );
+    for (const field of ["remains", "startCount"])
+      if (
+        input[field] !== undefined &&
+        input[field] !== null &&
+        !Number.isInteger(input[field])
+      )
+        throw new AdminOperationError(
+          "ORDER_COUNTS_INVALID",
+          "Order counts must be integers",
+        );
+    if (
+      input.remains !== undefined &&
+      input.remains !== null &&
+      (input.remains < 0 || input.remains > order.quantity)
+    )
+      throw new AdminOperationError("REMAINS_INVALID", "Invalid remains");
+    if (
+      input.startCount !== undefined &&
+      input.startCount !== null &&
+      input.startCount < 0
+    )
+      throw new AdminOperationError(
+        "START_COUNT_INVALID",
+        "Invalid start count",
+      );
+    if (
+      input.manualOverride !== undefined &&
+      typeof input.manualOverride !== "boolean"
+    )
+      throw new AdminOperationError(
+        "MANUAL_OVERRIDE_INVALID",
+        "Invalid manual override",
+      );
+    if (input.providerId) {
+      const provider = await this.db.provider.findFirst({
+        where: { id: input.providerId, deletedAt: null },
+      });
+      if (!provider)
+        throw new AdminOperationError(
+          "PROVIDER_NOT_FOUND",
+          "Provider not found",
+        );
+    }
+    const before = {
+      providerId: order.providerId,
+      providerOrderId: order.providerOrderId,
+      status: order.status,
+      startCount: order.startCount,
+      remains: order.remains,
+      manualOverride: order.manualOverride,
+    };
+    const data: any = {};
+    for (const field of [
+      "providerId",
+      "providerOrderId",
+      "status",
+      "startCount",
+      "remains",
+      "manualOverride",
+    ])
+      if (input[field] !== undefined)
+        data[field] = input[field] === "" ? null : input[field];
+    if (input.manualOverride !== undefined)
+      data.manualOverrideAt = input.manualOverride ? new Date() : null;
+    try {
+      return await this.db.$transaction(async (tx: any) => {
+        const updated = await tx.order.update({
+          where: { id: order.id },
+          data,
+        });
+        if (input.status !== undefined && input.status !== order.status)
+          await tx.orderHistory.create({
+            data: {
+              orderId: order.id,
+              fromStatus: order.status,
+              toStatus: input.status,
+              actorId,
+              details: { source: "ADMIN_MANUAL", reason, before, after: data },
+            },
+          });
+        await tx.auditLog.create({
+          data: {
+            actorId,
+            action: "ORDER_MANUAL_UPDATE",
+            resource: "Order",
+            resourceId: order.publicId,
+            before,
+            after: { ...data, reason },
+          },
+        });
+        return {
+          orderNumber: String(100000n + BigInt(updated.id)),
+          publicId: updated.publicId,
+          status: updated.status,
+          startCount: updated.startCount,
+          remains: updated.remains,
+          providerId: updated.providerId,
+          providerOrderId: updated.providerOrderId,
+          manualOverride: updated.manualOverride,
+          manualOverrideAt: updated.manualOverrideAt,
+        };
+      });
+    } catch (error: any) {
+      if (error?.code === "P2002")
+        throw new AdminOperationError(
+          "PROVIDER_ORDER_CONFLICT",
+          "Provider order ID is already in use",
+        );
+      throw error;
+    }
+  }
+
+  private async findOrderReference(reference: string) {
+    const numericId = /^[0-9]+$/.test(reference)
+      ? BigInt(reference) - 100000n
+      : null;
+    const order = await this.db.order.findFirst({
+      where:
+        numericId !== null && numericId > 0n
+          ? { id: numericId }
+          : { publicId: reference },
+    });
+    if (!order)
+      throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+    return order;
   }
 
   async reports(from?: Date, to?: Date) {
@@ -1343,7 +2010,12 @@ export class AdminOperationsService {
     };
   }
 }
-import { DailySnapshotService } from "@smm/database";
+import {
+  applyOrderTargetRefund,
+  DailySnapshotService,
+  moneyFromUnits,
+  moneyToUnits,
+  partialRefundTarget,
+} from "@smm/database";
 import { StandardSmmAdapter } from "../provider/adapter.js";
 import { decryptSecret } from "../provider/crypto.js";
-import { orderAmount } from "../order/service.js";

@@ -25,6 +25,15 @@ const name = (value: unknown): string => {
     throw new CatalogError("NAME_INVALID", "Name must be 2–255 characters");
   return result;
 };
+const mutationReason = (value: unknown): string => {
+  const result = String(value ?? "").trim();
+  if (result.length < 3 || result.length > 500)
+    throw new CatalogError(
+      "REASON_REQUIRED",
+      "Vui lòng nhập lý do từ 3 đến 500 ký tự",
+    );
+  return result;
+};
 const integer = (value: unknown, field: string, min = 0): number => {
   const result = Number(value);
   if (!Number.isSafeInteger(result) || result < min)
@@ -344,7 +353,7 @@ export class CatalogService {
       }),
       includePricing
         ? this.db.priceGroup.findMany({
-            where: { code: { in: ["KHACH_LE", "CTV", "DAI_LY"] } },
+            where: { code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] } },
           })
         : [],
       includePricing
@@ -687,7 +696,10 @@ export class CatalogService {
       if (shouldReprice) delete data.providerCost;
       let service = await tx.service.update({ where: { id }, data });
       const groups = await tx.priceGroup.findMany({
-        where: { active: true, code: { in: ["KHACH_LE", "CTV", "DAI_LY"] } },
+        where: {
+          active: true,
+          code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] },
+        },
       });
       if (input.pricing && groups.length !== 3)
         throw new CatalogError(
@@ -934,35 +946,123 @@ export class CatalogService {
   }
   async createService(actorId: string, input: any) {
     const min = integer(input.min, "min", 1),
-      max = integer(input.max, "max", 1);
+      max = integer(input.max, "max", 1),
+      source = String(input.source ?? "MANUAL"),
+      reason = mutationReason(input.reason);
     if (max < min)
       throw new CatalogError(
         "RANGE_INVALID",
-        "Maximum must be at least minimum",
+        "Số lượng tối đa phải lớn hơn hoặc bằng tối thiểu",
       );
-    const data = {
-      categoryId: String(input.categoryId),
-      name: name(input.name),
-      source: "MANUAL",
-      description: input.description
-        ? String(input.description).slice(0, 10000)
-        : null,
-      type: name(input.type ?? "DEFAULT").slice(0, 80),
-      pricingModel: "PER_THOUSAND",
-      rate: decimalInput(input.rate),
-      providerCost: decimalInput(input.providerCost, true),
-      min,
-      max,
-      averageTime: input.averageTime
-        ? String(input.averageTime).slice(0, 100)
-        : null,
-      refill: Boolean(input.refill),
-      cancel: Boolean(input.cancel),
-      active: input.active !== false,
-      sortOrder: integer(input.sortOrder ?? 0, "sortOrder"),
-    };
+    if (!["MANUAL", "API"].includes(source))
+      throw new CatalogError(
+        "SERVICE_SOURCE_INVALID",
+        "Nguồn dịch vụ không hợp lệ",
+      );
     return this.db.$transaction(async (tx: any) => {
-      const item = await tx.service.create({ data });
+      const category = await tx.serviceCategory.findFirst({
+        where: { id: String(input.categoryId), active: true, deletedAt: null },
+      });
+      if (!category)
+        throw new CatalogError(
+          "CATEGORY_NOT_FOUND",
+          "Danh mục không tồn tại hoặc đã tắt",
+        );
+      let providerService: any = null;
+      if (source === "API") {
+        providerService = await tx.providerService.findFirst({
+          where: {
+            id: String(input.providerServiceId ?? ""),
+            active: true,
+            stale: false,
+          },
+        });
+        if (!providerService)
+          throw new CatalogError(
+            "PROVIDER_SERVICE_NOT_FOUND",
+            "Dịch vụ nhà cung cấp không tồn tại",
+          );
+      }
+      const providerCost =
+        source === "API"
+          ? String(providerService.rate)
+          : decimalInput(input.providerCost ?? 0, true);
+      const item = await tx.service.create({
+        data: {
+          categoryId: category.id,
+          name: name(input.name),
+          source,
+          description: input.description
+            ? String(input.description).trim().slice(0, 10000)
+            : null,
+          type: name(input.type ?? providerService?.type ?? "DEFAULT").slice(
+            0,
+            80,
+          ),
+          pricingModel: "PER_THOUSAND",
+          rate: decimalInput(input.rate),
+          providerCost,
+          min,
+          max,
+          averageTime: input.averageTime
+            ? String(input.averageTime).trim().slice(0, 100)
+            : null,
+          refill: input.refill === true,
+          cancel: input.cancel === true,
+          restrictFromApi: input.restrictFromApi === true,
+          customFields:
+            input.customFields && typeof input.customFields === "object"
+              ? input.customFields
+              : undefined,
+          active: input.active !== false,
+          sortOrder: integer(input.sortOrder ?? 0, "sortOrder"),
+        },
+      });
+      let mapping: any = null;
+      if (providerService) {
+        mapping = await tx.serviceMapping.create({
+          data: {
+            serviceId: item.id,
+            providerServiceId: providerService.id,
+            priority: 0,
+            active: true,
+            syncAll: input.syncAll !== false,
+            disabledPolicy: input.disabledPolicy ?? "REQUIRE_REVIEW",
+          },
+        });
+      }
+      const groups = await tx.priceGroup.findMany({
+        where: {
+          active: true,
+          code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] },
+        },
+      });
+      if (input.pricing && groups.length !== 3)
+        throw new CatalogError(
+          "DEFAULT_TIERS_MISSING",
+          "Thiếu cấu hình ba cấp khách hàng",
+        );
+      for (const group of groups) {
+        const tier = input.pricing?.[group.code];
+        if (!tier) continue;
+        const mode = String(tier.mode ?? "PERCENT");
+        if (!["PERCENT", "FIXED"].includes(mode))
+          throw new CatalogError(
+            "PRICING_MODE_INVALID",
+            "Kiểu giá không hợp lệ",
+          );
+        const value = decimalInput(tier.value, true);
+        await tx.priceRule.create({
+          data: {
+            priceGroupId: group.id,
+            serviceId: item.id,
+            fixedRate: mode === "FIXED" ? value : null,
+            markupPercent: mode === "PERCENT" ? value : null,
+            fixedProfit: null,
+            minProfit: group.defaultMinProfit,
+          },
+        });
+      }
       await this.audit(
         tx,
         actorId,
@@ -970,11 +1070,77 @@ export class CatalogService {
         "service",
         item.id,
         null,
-        item,
+        {
+          ...item,
+          mappingId: mapping?.id ?? null,
+          reason,
+        },
+      );
+      return { service: item, mapping };
+    });
+  }
+
+  async cloneService(actorId: string, id: string, input: any) {
+    const reason = mutationReason(input.reason);
+    return this.db.$transaction(async (tx: any) => {
+      const source = await tx.service.findFirst({
+        where: { id, deletedAt: null },
+      });
+      if (!source)
+        throw new CatalogError("SERVICE_NOT_FOUND", "Dịch vụ không tồn tại");
+      const {
+        id: _id,
+        createdAt: _created,
+        updatedAt: _updated,
+        ...copy
+      } = source;
+      const item = await tx.service.create({
+        data: {
+          ...copy,
+          name: name(input.name ?? `${source.name} (bản sao)`),
+          active: false,
+        },
+      });
+      const mappings = await tx.serviceMapping.findMany({
+        where: { serviceId: id },
+      });
+      if (mappings.length)
+        await tx.serviceMapping.createMany({
+          data: mappings.map(
+            ({ id: _mappingId, createdAt, updatedAt, ...mapping }: any) => ({
+              ...mapping,
+              serviceId: item.id,
+              active: false,
+            }),
+          ),
+        });
+      const rules = await tx.priceRule.findMany({ where: { serviceId: id } });
+      if (rules.length)
+        await tx.priceRule.createMany({
+          data: rules.map(
+            ({ id: _ruleId, createdAt, updatedAt, ...rule }: any) => ({
+              ...rule,
+              serviceId: item.id,
+            }),
+          ),
+        });
+      await this.audit(
+        tx,
+        actorId,
+        "SERVICE_CLONE",
+        "service",
+        item.id,
+        source,
+        {
+          ...item,
+          sourceServiceId: id,
+          reason,
+        },
       );
       return item;
     });
   }
+
   async updateService(actorId: string, id: string, input: any) {
     return this.db.$transaction(async (tx: any) => {
       const before = await tx.service.findUnique({ where: { id } });
