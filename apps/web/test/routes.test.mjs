@@ -232,3 +232,11 @@ test("final admin UX includes provider assignment, live status counts and secure
   assert.match(page, /rolePermissions/);
   assert.match(page, /directPermissions/);
 });
+
+test("admin shell uses accessible overlays without native browser dialogs", () => {
+  assert.match(page, /function confirmDialog/);
+  assert.match(page, /aria-modal/);
+  assert.match(page, /event\.key==='Escape'/);
+  assert.match(page, /nav::-webkit-scrollbar/);
+  assert.doesNotMatch(page, /\b(?:window\.)?(?:prompt|alert|confirm)\s*\(/);
+});
