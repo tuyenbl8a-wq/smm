@@ -35,9 +35,9 @@ function database(overrides: any = {}) {
     audits: any[] = [],
     rules: any[] = [];
   const groups = [
-    { id: "retail", code: "KHACH_LE", defaultMinProfit: "5" },
-    { id: "agency", code: "CTV", defaultMinProfit: "5" },
-    { id: "distributor", code: "DAI_LY", defaultMinProfit: "5" },
+    { id: "retail", code: "CUSTOMER", defaultMinProfit: "5" },
+    { id: "agency", code: "AGENT", defaultMinProfit: "5" },
+    { id: "distributor", code: "DISTRIBUTOR", defaultMinProfit: "5" },
   ];
   const tx: any = {
     service: {
@@ -167,13 +167,13 @@ test("pricing rejects a category or selected service outside the cascading scope
 test("simple three-tier pricing previews and applies in one transaction", async () => {
   const { db, rules, audits } = database(),
     pricing = new BulkPricingService(db),
-    input = { tiers: { KHACH_LE: "30", CTV: "20", DAI_LY: "10" } },
+    input = { tiers: { CUSTOMER: "30", AGENT: "20", DISTRIBUTOR: "10" } },
     preview = await pricing.previewSimple(input);
   assert.equal(preview.count, 2);
   assert.deepEqual(preview.items[0].prices, {
-    KHACH_LE: "130.00000000",
-    CTV: "120.00000000",
-    DAI_LY: "110.00000000",
+    CUSTOMER: "130.00000000",
+    AGENT: "120.00000000",
+    DISTRIBUTOR: "110.00000000",
   });
   const applied = await pricing.applySimple("admin", input);
   assert.deepEqual(applied, { applied: 2, tiers: 3 });

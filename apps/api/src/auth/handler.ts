@@ -291,6 +291,19 @@ export class AuthHandler {
           );
         return this.ok(response, await this.admin!.user(adminUser[1]!));
       }
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/admin/orders/providers"
+      ) {
+        if (!canAccessAdmin(auth.access, "orders.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        return this.ok(response, await this.admin!.orderProviders());
+      }
       if (request.method === "GET" && path === "/api/v1/admin/orders") {
         if (!canAccessAdmin(auth.access, "orders.view"))
           return this.error(
@@ -637,6 +650,25 @@ export class AuthHandler {
           ),
         );
       }
+      const serviceClone =
+        /^\/api\/v1\/admin\/services\/([0-9a-f-]{36})\/clone$/.exec(path);
+      if (request.method === "POST" && serviceClone) {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Bạn không có quyền quản lý dịch vụ",
+          );
+        return this.ok(
+          response,
+          await this.catalog!.cloneService(
+            auth.user.id,
+            serviceClone[1]!,
+            await this.body(request),
+          ),
+        );
+      }
       const sourcePreview =
         /^\/api\/v1\/admin\/services\/([0-9a-f-]{36})\/source-preview$/.exec(
           path,
@@ -853,7 +885,13 @@ export class AuthHandler {
         ((request.method === "POST" && adminOrderMutation[2]) ||
           (request.method === "PATCH" && !adminOrderMutation[2]))
       ) {
-        if (!canAccessAdmin(auth.access, "orders.manage"))
+        const orderPermission =
+          adminOrderMutation[2] === "sync"
+            ? "orders.sync"
+            : adminOrderMutation[2] === "refund"
+              ? "orders.refund"
+              : "orders.manage";
+        if (!canAccessAdmin(auth.access, orderPermission))
           return this.error(
             response,
             403,
@@ -980,13 +1018,22 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
+        const body = await this.body(request),
+          newPassword = String(body.newPassword ?? "");
+        if (newPassword && newPassword.length < 12)
+          throw new InputError(
+            "PASSWORD_WEAK",
+            "Password must contain at least 12 characters",
+          );
+        delete body.newPassword;
         return this.ok(
           response,
-          await this.admin!.updateUser(
-            auth.user.id,
-            userUpdate[1]!,
-            await this.body(request),
-          ),
+          await this.admin!.updateUser(auth.user.id, userUpdate[1]!, {
+            ...body,
+            ...(newPassword
+              ? { passwordHash: await hashPassword(newPassword) }
+              : {}),
+          }),
         );
       }
       if (request.method === "POST" && userRoles) {
@@ -1029,11 +1076,16 @@ export class AuthHandler {
           );
         const body = await this.body(request),
           resetToken = opaqueToken(),
-          staff = await this.admin!.createStaff(auth.user.id, {
-            ...body,
-            passwordHash: await hashPassword(opaqueToken(48)),
-            referralCode: opaqueToken(9).toUpperCase(),
-          });
+          staff = await this.admin!.createStaff(
+            auth.user.id,
+            {
+              ...body,
+              passwordHash: await hashPassword(opaqueToken(48)),
+              referralCode: opaqueToken(9).toUpperCase(),
+            },
+            auth.access.permissions,
+            auth.access.roles.includes("SUPER_ADMIN"),
+          );
         await this.store.createPasswordReset(
           staff.id,
           tokenHash(resetToken),
@@ -1672,6 +1724,39 @@ export class AuthHandler {
       }
       return this.error(response, 404, "NOT_FOUND", "Route not found");
     } catch (error) {
+      if ((error as { code?: string })?.code === "P2002") {
+        const targets = (error as { meta?: { target?: unknown } }).meta?.target;
+        const fields = Array.isArray(targets)
+          ? targets.map(String)
+          : [String(targets ?? "")];
+        const username = fields.some((field) => field.includes("username"));
+        const slug = fields.some((field) => field.includes("slug"));
+        const catalogName =
+          !username &&
+          fields.some(
+            (field) => field === "name" || field.endsWith("_name_key"),
+          );
+        const email = fields.some((field) => field.includes("email"));
+        const code = slug
+          ? "CATALOG_SLUG_ALREADY_USED"
+          : catalogName
+            ? "CATALOG_NAME_ALREADY_USED"
+            : username
+              ? "USERNAME_ALREADY_USED"
+              : email
+                ? "EMAIL_ALREADY_USED"
+                : "UNIQUE_CONFLICT";
+        const message = slug
+          ? "Slug đã được sử dụng"
+          : catalogName
+            ? "Tên này đã được sử dụng"
+            : username
+              ? "Tên đăng nhập đã tồn tại"
+              : email
+                ? "Email đã được sử dụng"
+                : "Dữ liệu đã tồn tại trong hệ thống";
+        return this.error(response, 409, code, message);
+      }
       if (error instanceof CatalogError)
         return this.error(response, 422, error.code, error.message);
       if (error instanceof ProviderConfigError)

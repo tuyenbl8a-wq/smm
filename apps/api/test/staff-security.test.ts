@@ -12,7 +12,13 @@ test("staff cannot modify Super Admin", async () => {
   });
   await assert.rejects(
     () =>
-      service.updateStaff("staff", ["staff.manage"], "super-user", {}, false),
+      service.updateStaff(
+        "staff",
+        ["staff.manage"],
+        "super-user",
+        { reason: "test" },
+        false,
+      ),
     (error: AdminOperationError) => error.code === "SUPER_ADMIN_PROTECTED",
   );
 });
@@ -28,7 +34,7 @@ test("admin cannot grant permissions outside their own scope", async () => {
         "admin",
         ["services.view"],
         "target",
-        { permissions: ["wallets.adjust"] },
+        { permissions: ["wallets.adjust"], reason: "test" },
         false,
       ),
     (error: AdminOperationError) => error.code === "PERMISSION_GRANT_DENIED",
@@ -50,6 +56,7 @@ test("staff permission update is per-user, audited and never mutates global role
       create: async () => ({}),
     },
     userPermission: {
+      findMany: async () => [],
       deleteMany: async () => ({}),
       createMany: async ({ data }: any) => userGrants.push(...data),
     },
@@ -71,7 +78,12 @@ test("staff permission update is per-user, audited and never mutates global role
     "admin",
     ["services.view"],
     "target",
-    { role: "STAFF", permissions: ["services.view"], status: "ACTIVE" },
+    {
+      role: "STAFF",
+      permissions: ["services.view"],
+      status: "ACTIVE",
+      reason: "Phân công mới",
+    },
     false,
   );
   assert.equal(userGrants[0].userId, "target");

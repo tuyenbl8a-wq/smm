@@ -105,6 +105,7 @@ test("generic profile mutation cannot change role or price group", async () => {
     username: "member",
     priceGroupId: "vip",
     role: "SUPER_ADMIN",
+    reason: "Cập nhật hồ sơ",
   });
   assert.equal(writes[0].username, "member");
   assert.equal(writes[0].priceGroupId, undefined);
@@ -433,4 +434,52 @@ test("explicit provider sync rejects an invalid provider response", async () => 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("admin password reset revokes sessions without leaking password hash into audit", async () => {
+  const writes: any[] = [],
+    audits: any[] = [],
+    revoked: any[] = [];
+  const service = new AdminOperationsService({
+    $transaction: async (run: any) =>
+      run({
+        user: {
+          update: async ({ data }: any) => {
+            writes.push(data);
+            return {
+              id: "user",
+              email: "member@example.com",
+              username: "member",
+              status: "ACTIVE",
+            };
+          },
+        },
+        session: {
+          updateMany: async (input: any) => {
+            revoked.push(input);
+            return { count: 2 };
+          },
+        },
+        auditLog: {
+          create: async ({ data }: any) => {
+            audits.push(data);
+            return data;
+          },
+        },
+      }),
+  });
+  (service as any).user = async () => ({
+    id: "user",
+    email: "member@example.com",
+    username: "member",
+    status: "ACTIVE",
+  });
+  await service.updateUser("admin", "user", {
+    passwordHash: "scrypt$secret-material",
+    reason: "Khách yêu cầu đặt lại",
+  });
+  assert.equal(writes[0].passwordHash, "scrypt$secret-material");
+  assert.equal(revoked.length, 1);
+  assert.equal(JSON.stringify(audits).includes("secret-material"), false);
+  assert.equal(JSON.stringify(audits).includes("passwordHash"), false);
 });
