@@ -178,7 +178,10 @@ export class ProviderService {
         ? this.db.platform.findUnique({ where: { id: category.platformId } })
         : null,
       this.db.priceGroup.findMany({
-        where: { active: true, code: { in: ["KHACH_LE", "CTV", "DAI_LY"] } },
+        where: {
+          active: true,
+          code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] },
+        },
         orderBy: { tierOrder: "asc" },
       }),
       this.db.providerService.findMany({
@@ -292,7 +295,8 @@ export class ProviderService {
         ...new Set(
           records.flatMap((record) => {
             const row = input?.priceOverrides?.[record.externalId];
-            if (!row || typeof row !== "object" || Array.isArray(row)) return [];
+            if (!row || typeof row !== "object" || Array.isArray(row))
+              return [];
             return Object.entries(row)
               .filter(([, value]) => value != null && value !== "")
               .map(([code]) => code);

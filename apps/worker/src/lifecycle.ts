@@ -1,4 +1,9 @@
 import { createDecipheriv, createHash } from "node:crypto";
+import {
+  applyOrderTargetRefund,
+  moneyToUnits,
+  partialRefundTarget,
+} from "@smm/database";
 const dec = (v: string, k: string) => {
   const [x, i, t, d] = v.split(".");
   if (x !== "v1") throw Error("SECRET");
@@ -28,6 +33,7 @@ export class LifecycleWorker {
         where: {
           status: { in: ["PENDING", "PROCESSING", "IN_PROGRESS"] },
           providerOrderId: { not: null },
+          manualOverride: false,
         },
         take: 50,
         orderBy: { updatedAt: "asc" },
@@ -55,7 +61,17 @@ export class LifecycleWorker {
             clearTimeout(timer);
           }
           count++;
-        } catch {}
+        } catch (error: any) {
+          console.error(
+            JSON.stringify({
+              level: "error",
+              service: "worker",
+              event: "provider_status_sync_failed",
+              orderId: String(o.id),
+              code: error?.name ?? "ERROR",
+            }),
+          );
+        }
       }
       await this.actions("refill");
       await this.actions("cancel");
@@ -67,7 +83,8 @@ export class LifecycleWorker {
 
   private async apply(order: any, x: any) {
     const status = String(x.status).toUpperCase().replaceAll(" ", "_");
-    const remains = Number(x.remains ?? 0);
+    const remains = Number(x.remains ?? 0),
+      startCount = x.start_count == null ? null : Number(x.start_count);
     if (
       ![
         "PENDING",
@@ -80,50 +97,44 @@ export class LifecycleWorker {
       ].includes(status) ||
       !Number.isInteger(remains) ||
       remains < 0 ||
-      remains > order.quantity
+      remains > order.quantity ||
+      (startCount !== null && (!Number.isInteger(startCount) || startCount < 0))
     )
       return;
     await this.db.$transaction(async (tx: any) => {
+      if (tx.$executeRawUnsafe)
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock($1::bigint)`,
+          order.id,
+        );
       const current = await tx.order.findUnique({ where: { id: order.id } });
       if (
         !current ||
+        current.manualOverride ||
         ["COMPLETED", "CANCELED", "REFUNDED"].includes(current.status)
       )
         return;
-      if (
-        status === "PARTIAL" &&
-        String(current.refundedAmount).replace(/\.0+$/, "") === "0"
-      ) {
-        const rate = BigInt(
-            String(current.saleRate).replace(".", "").padEnd(8, "0"),
-          ),
-          refundUnits = (rate * BigInt(remains)) / 1000n,
-          refund = `${refundUnits / 100000000n}.${String(refundUnits % 100000000n).padStart(8, "0")}`;
-        const rows = await tx.$queryRawUnsafe(
-          `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
-          refund,
-          current.userId,
+      if (status === "PARTIAL") {
+        const calculated = partialRefundTarget(
+          current.charge,
+          remains,
+          current.quantity,
         );
-        await tx.walletTransaction.create({
-          data: {
-            walletId: rows[0].id,
-            userId: current.userId,
-            type: "REFUND",
-            amount: refund,
-            balanceBefore: rows[0].before,
-            balanceAfter: rows[0].after,
-            referenceId: current.publicId,
-            idempotencyKey: `refund:order:${current.publicId}`,
-          },
-        });
+        const refund = await applyOrderTargetRefund(
+          tx,
+          current,
+          moneyToUnits(calculated) < moneyToUnits(current.refundedAmount)
+            ? current.refundedAmount
+            : calculated,
+          "Partial order refund",
+        );
         await tx.order.update({
           where: { id: current.id },
           data: {
             status,
             remains,
-            refundedAmount: refund,
-            startCount:
-              x.start_count == null ? undefined : Number(x.start_count),
+            refundedAmount: refund.target,
+            startCount: startCount ?? undefined,
           },
         });
       } else
@@ -132,8 +143,7 @@ export class LifecycleWorker {
           data: {
             status,
             remains,
-            startCount:
-              x.start_count == null ? undefined : Number(x.start_count),
+            startCount: startCount ?? undefined,
           },
         });
       await tx.orderHistory.create({
@@ -141,7 +151,21 @@ export class LifecycleWorker {
           orderId: current.id,
           fromStatus: current.status,
           toStatus: status,
-          details: { remains },
+          details: { source: "WORKER_PROVIDER_SYNC", remains, startCount },
+        },
+      });
+      await tx.auditLog?.create({
+        data: {
+          action: "ORDER_PROVIDER_SYNC",
+          resource: "Order",
+          resourceId: current.publicId,
+          before: {
+            status: current.status,
+            remains: current.remains,
+            startCount: current.startCount,
+            refundedAmount: String(current.refundedAmount),
+          },
+          after: { status, remains, startCount },
         },
       });
     });

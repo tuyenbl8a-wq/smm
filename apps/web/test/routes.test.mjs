@@ -119,9 +119,9 @@ test("rendered scripts bind DOM nodes explicitly and omit empty enum filters", (
   assert.match(page, /document\.getElementById/);
   assert.match(
     page,
-    /const search=byId\('search'\),orderUser=byId\('orderUser'\)/,
+    /const websiteOrder=byId\('websiteOrder'\),providerOrder=byId\('providerOrder'\)/,
   );
-  assert.match(page, /if\(selectedStatus\)q\.set\('status',selectedStatus\)/);
+  assert.match(page, /q\.set\('status',selectedStatus\)/);
   assert.doesNotMatch(page, /status='\+status\.value/);
   assert.match(page, /document\.getElementById\(\$\{JSON\.stringify\(id\)\}\)/);
 });
@@ -135,17 +135,16 @@ test("simplified admin UX keeps advanced capabilities permission-aware", () => {
     "Tổng quan",
     "Đơn hàng",
     "Dịch vụ",
-    "Bảng giá",
-    "Người dùng",
-    "Nạp tiền / Thanh toán",
+    "Khách hàng",
+    "Thanh toán",
     "Nhà cung cấp",
     "Hỗ trợ",
     "Cài đặt",
   ])
     assert.match(navigation, new RegExp(label.replace("/", "\\/")));
-  assert.doesNotMatch(navigation, /Mã giảm giá/);
+  assert.match(navigation, /Mã giảm giá/);
   assert.match(page, /data-admin-permission="pricing\.manage"/);
-  assert.match(page, /data-admin-permission="wallet\.manage"/);
+  assert.match(page, /data-admin-permission="users\.balance\.manage"/);
   assert.match(page, /applyAdminPermissions/);
 });
 
@@ -155,7 +154,81 @@ test("wallet adjustment lives in user detail and uses idempotent ledger API", ()
   assert.match(page, /Trừ tiền/);
   assert.match(page, /Lịch sử số dư/);
   assert.match(page, /admin-wallet:'\+crypto\.randomUUID/);
-  assert.match(page, /reason:data\.reason/);
-  assert.match(page, /internalNote:data\.internalNote/);
+  assert.match(page, /idempotency-key/);
+  assert.match(page, /reason/);
   assert.match(page, /wallets\/\$\{id\}\/mutations/);
+});
+
+test("short order routes keep customer actions and admin operations distinct", () => {
+  assert.match(main, /adminUserRecord = \/\^\\\/admin\\\/users/);
+  assert.match(main, /adminOrderRecord = \/\^\\\/admin\\\/orders/);
+  assert.match(page, /customer\/orders\/'\+x\.publicId\+'\/'\+a/);
+  for (const action of [
+    "Cập nhật từ NCC",
+    "Chỉnh sửa đơn",
+    "ghi đè thủ công",
+    "Hoàn tiền",
+  ])
+    assert.match(page, new RegExp(action));
+  assert.match(page, /admin\/orders\/'\+ref\+'\/sync/);
+  assert.match(page, /method:'PATCH'/);
+});
+
+test("redesigned admin orders exposes real filters, action dropdown and fixed-point refund modal", () => {
+  for (const label of [
+    "Thủ công",
+    "Lỗi",
+    "Mã đơn website",
+    "Mã đơn NCC",
+    "Đổi trạng thái",
+    "Cập nhật từ NCC",
+    "Chỉnh Start count",
+    "Chỉnh Remains",
+    "Hoàn tiền",
+    "Xem lịch sử",
+  ])
+    assert.match(page, new RegExp(label));
+  assert.match(page, /moneyUnits\(o\.charge\)\*BigInt/);
+  assert.match(page, /data-action="status"/);
+  assert.match(page, /orderModal/);
+  assert.doesNotMatch(page, /\b(?:window\.)?prompt\s*\(/);
+});
+
+test("customer detail has operational profile, statistic cards and all requested tabs", () => {
+  for (const label of [
+    "Tổng quan",
+    "Nạp tiền / Điều chỉnh số dư",
+    "Giá riêng",
+    "Lịch sử đăng nhập",
+    "Giao dịch",
+    "Đơn hàng",
+    "Referral",
+    "Audit log",
+    "Tổng bonus",
+    "Tổng hoàn tiền",
+  ])
+    assert.match(page, new RegExp(label.replaceAll("/", "\\/")));
+  for (const tier of ["CUSTOMER", "AGENT", "DISTRIBUTOR"])
+    assert.match(page, new RegExp(tier));
+  assert.match(page, /userModal/);
+  assert.match(page, /walletModal/);
+});
+
+test("staff RBAC UI groups effective permissions and requires reason", () => {
+  assert.match(page, /permissionGroups/);
+  assert.match(page, /data-all/);
+  assert.match(page, /Lý do/);
+  assert.match(page, /thu hồi session/i);
+});
+
+test("final admin UX includes provider assignment, live status counts and secure profile password flow", () => {
+  assert.match(page, /admin\/orders\/providers/);
+  assert.match(page, /name="providerId"/);
+  assert.match(page, /statusCounts/);
+  assert.match(page, /manualCount/);
+  assert.match(page, /status-completed/);
+  assert.match(page, /name="newPassword"/);
+  assert.match(page, /Phương thức điều chỉnh/);
+  assert.match(page, /rolePermissions/);
+  assert.match(page, /directPermissions/);
 });

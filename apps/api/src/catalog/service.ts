@@ -344,7 +344,7 @@ export class CatalogService {
       }),
       includePricing
         ? this.db.priceGroup.findMany({
-            where: { code: { in: ["KHACH_LE", "CTV", "DAI_LY"] } },
+            where: { code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] } },
           })
         : [],
       includePricing
@@ -687,7 +687,10 @@ export class CatalogService {
       if (shouldReprice) delete data.providerCost;
       let service = await tx.service.update({ where: { id }, data });
       const groups = await tx.priceGroup.findMany({
-        where: { active: true, code: { in: ["KHACH_LE", "CTV", "DAI_LY"] } },
+        where: {
+          active: true,
+          code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] },
+        },
       });
       if (input.pricing && groups.length !== 3)
         throw new CatalogError(

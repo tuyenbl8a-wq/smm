@@ -5,14 +5,14 @@ import { CatalogService } from "../src/catalog/service.js";
 const groups = [
   {
     id: "group-retail",
-    code: "KHACH_LE",
+    code: "CUSTOMER",
     name: "Khách hàng",
     defaultMinProfit: "0",
   },
-  { id: "group-agent", code: "CTV", name: "Đại lý", defaultMinProfit: "0" },
+  { id: "group-agent", code: "AGENT", name: "Đại lý", defaultMinProfit: "0" },
   {
     id: "group-distributor",
-    code: "DAI_LY",
+    code: "DISTRIBUTOR",
     name: "NPP",
     defaultMinProfit: "0",
   },
@@ -263,9 +263,9 @@ test("tier percentage and fixed price save to existing PriceRule engine", async 
   await new CatalogService(db).updateServiceEditor("admin-1", "service-1", {
     source: "MANUAL",
     pricing: {
-      KHACH_LE: { mode: "PERCENT", value: "30" },
-      CTV: { mode: "FIXED", value: "0.98000000" },
-      DAI_LY: { mode: "PERCENT", value: "20" },
+      CUSTOMER: { mode: "PERCENT", value: "30" },
+      AGENT: { mode: "FIXED", value: "0.98000000" },
+      DISTRIBUTOR: { mode: "PERCENT", value: "20" },
     },
   });
   const byGroup = new Map(state().rules.map((row) => [row.priceGroupId, row]));
@@ -280,7 +280,7 @@ test("fixed tier price below safety floor is rejected atomically", async () => {
     () =>
       new CatalogService(db).updateServiceEditor("admin-1", "service-1", {
         source: "MANUAL",
-        pricing: { KHACH_LE: { mode: "FIXED", value: "0.70000000" } },
+        pricing: { CUSTOMER: { mode: "FIXED", value: "0.70000000" } },
       }),
     /thấp hơn mức an toàn/,
   );

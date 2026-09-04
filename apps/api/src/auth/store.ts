@@ -148,7 +148,7 @@ export class PrismaAuthStore implements AuthStore {
     return this.db.$transaction(async (tx: any) => {
       const role = await tx.role.findUniqueOrThrow({ where: { code: "USER" } });
       const group =
-        (await tx.priceGroup.findUnique({ where: { code: "KHACH_LE" } })) ??
+        (await tx.priceGroup.findUnique({ where: { code: "CUSTOMER" } })) ??
         (await tx.priceGroup.findUniqueOrThrow({ where: { code: "NORMAL" } }));
       const { referredByCode, ...userInput } = input;
       const referrer = referredByCode

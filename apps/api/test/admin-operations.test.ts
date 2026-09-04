@@ -105,6 +105,7 @@ test("generic profile mutation cannot change role or price group", async () => {
     username: "member",
     priceGroupId: "vip",
     role: "SUPER_ADMIN",
+    reason: "Cập nhật hồ sơ",
   });
   assert.equal(writes[0].username, "member");
   assert.equal(writes[0].priceGroupId, undefined);
@@ -211,4 +212,274 @@ test("maintenance settings are normalized for runtime enforcement", async () => 
     enabled: true,
     message: "Vui lòng quay lại sau.",
   });
+});
+
+test("admin target refund credits only incremental delta and audits atomically", async () => {
+  const writes: any[] = [],
+    transactions: any[] = [],
+    histories: any[] = [],
+    audits: any[] = [];
+  const current: any = {
+    id: 2n,
+    publicId: "00000000-0000-0000-0000-000000000002",
+    userId: "user",
+    charge: "100.00000000",
+    refundedAmount: "30.00000000",
+    status: "COMPLETED",
+  };
+  const tx: any = {
+    order: {
+      findUnique: async () => current,
+      update: async ({ data }: any) => (
+        writes.push(data),
+        { ...current, ...data }
+      ),
+    },
+    $queryRawUnsafe: async () => [{ id: "wallet", before: "10", after: "30" }],
+    walletTransaction: {
+      create: async ({ data }: any) => transactions.push(data),
+    },
+    orderHistory: { create: async ({ data }: any) => histories.push(data) },
+    auditLog: { create: async ({ data }: any) => audits.push(data) },
+  };
+  const db: any = {
+    order: { findFirst: async () => current },
+    $transaction: async (run: any) => run(tx),
+  };
+  const result = await new AdminOperationsService(db).refundOrder(
+    "admin",
+    "100002",
+    { targetRefundAmount: "50", reason: "Đền bù dịch vụ" },
+  );
+  assert.equal(result.refundAdded, "20.00000000");
+  assert.equal(transactions[0].amount, "20.00000000");
+  assert.match(transactions[0].idempotencyKey, /to:50\.00000000$/);
+  assert.equal(writes[0].refundedAmount, "50.00000000");
+  assert.equal(histories[0].actorId, "admin");
+  assert.equal(audits[0].action, "ORDER_REFUND");
+});
+
+test("admin refund rejects decreasing or excessive targets", async () => {
+  const current: any = {
+    id: 2n,
+    publicId: "id",
+    userId: "user",
+    charge: "100",
+    refundedAmount: "30",
+    status: "COMPLETED",
+  };
+  const tx: any = { order: { findUnique: async () => current } };
+  const service = new AdminOperationsService({
+    order: { findFirst: async () => current },
+    $transaction: async (run: any) => run(tx),
+  });
+  await assert.rejects(
+    () =>
+      service.refundOrder("admin", "100002", {
+        targetRefundAmount: "20",
+        reason: "valid reason",
+      }),
+    (e: AdminOperationError) => e.code === "REFUND_BELOW_EXISTING",
+  );
+  await assert.rejects(
+    () =>
+      service.refundOrder("admin", "100002", {
+        targetRefundAmount: "101",
+        reason: "valid reason",
+      }),
+    (e: AdminOperationError) => e.code === "REFUND_EXCEEDS_CHARGE",
+  );
+});
+
+test("manual order update validates counts and records before/after with actor", async () => {
+  const order: any = {
+    id: 2n,
+    publicId: "id",
+    quantity: 100,
+    providerId: null,
+    providerOrderId: null,
+    status: "COMPLETED",
+    startCount: 0,
+    remains: 0,
+    manualOverride: false,
+  };
+  const audits: any[] = [];
+  const tx: any = {
+    order: { update: async ({ data }: any) => ({ ...order, ...data }) },
+    orderHistory: { create: async () => ({}) },
+    auditLog: { create: async ({ data }: any) => audits.push(data) },
+  };
+  const service = new AdminOperationsService({
+    order: { findFirst: async () => order },
+    $transaction: async (run: any) => run(tx),
+  });
+  const result = await service.updateOrder("admin", "100002", {
+    manualOverride: true,
+    remains: 10,
+    reason: "Kiểm tra thủ công",
+  });
+  assert.equal(result.manualOverride, true);
+  assert.equal(audits[0].actorId, "admin");
+  assert.equal(audits[0].before.manualOverride, false);
+  await assert.rejects(
+    () =>
+      service.updateOrder("admin", "100002", {
+        remains: 101,
+        reason: "invalid count",
+      }),
+    /Invalid remains/,
+  );
+});
+
+test("explicit provider sync accepts short and UUID references, including manual override", async () => {
+  const key = "0123456789abcdef0123456789abcdef";
+  const { encryptSecret } = await import("../src/provider/crypto.js");
+  const base: any = {
+    id: 2n,
+    publicId: "00000000-0000-0000-0000-000000000002",
+    userId: "user",
+    providerId: "provider",
+    providerOrderId: "2520992",
+    quantity: 100,
+    charge: "80",
+    refundedAmount: "0",
+    status: "COMPLETED",
+    remains: 0,
+    startCount: 10,
+    manualOverride: true,
+  };
+  const histories: any[] = [],
+    audits: any[] = [],
+    references: any[] = [];
+  const tx: any = {
+    order: {
+      findUnique: async () => base,
+      update: async ({ data }: any) => ({ ...base, ...data }),
+    },
+    $executeRawUnsafe: async () => 1,
+    $queryRawUnsafe: async () => [{ id: "wallet", before: "0", after: "20" }],
+    walletTransaction: { create: async () => ({}) },
+    orderHistory: { create: async ({ data }: any) => histories.push(data) },
+    auditLog: { create: async ({ data }: any) => audits.push(data) },
+  };
+  const db: any = {
+    order: {
+      findFirst: async ({ where }: any) => (references.push(where), base),
+    },
+    provider: {
+      findFirst: async () => ({
+        id: "provider",
+        apiUrl: "https://provider.test/api",
+        apiKeyEncrypted: encryptSecret("secret", key),
+        timeoutMs: 1000,
+      }),
+    },
+    $transaction: async (run: any) => run(tx),
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({ status: "Partial", remains: "25", start_count: "15" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  try {
+    const service = new AdminOperationsService(db, key);
+    const short = await service.syncOrderFromProvider("admin", "100002");
+    await service.syncOrderFromProvider("admin", base.publicId);
+    assert.deepEqual(references[0], { id: 2n });
+    assert.deepEqual(references[1], { publicId: base.publicId });
+    assert.equal(short.refundAdded, "20.00000000");
+    assert.equal((short as any).apiKeyEncrypted, undefined);
+    assert.equal(histories[0].actorId, "admin");
+    assert.equal(audits[0].action, "ORDER_PROVIDER_SYNC");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("explicit provider sync rejects an invalid provider response", async () => {
+  const key = "0123456789abcdef",
+    { encryptSecret } = await import("../src/provider/crypto.js");
+  const order: any = {
+    id: 2n,
+    publicId: "id",
+    providerId: "p",
+    providerOrderId: "x",
+    quantity: 10,
+    remains: 0,
+  };
+  const service = new AdminOperationsService(
+    {
+      order: { findFirst: async () => order },
+      provider: {
+        findFirst: async () => ({
+          apiUrl: "https://provider.test",
+          apiKeyEncrypted: encryptSecret("secret", key),
+          timeoutMs: 1000,
+        }),
+      },
+    },
+    key,
+  );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ status: "made-up", remains: 0 }), {
+      status: 200,
+    });
+  try {
+    await assert.rejects(
+      () => service.syncOrderFromProvider("admin", "100002"),
+      (e: AdminOperationError) => e.code === "PROVIDER_RESPONSE_INVALID",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("admin password reset revokes sessions without leaking password hash into audit", async () => {
+  const writes: any[] = [],
+    audits: any[] = [],
+    revoked: any[] = [];
+  const service = new AdminOperationsService({
+    $transaction: async (run: any) =>
+      run({
+        user: {
+          update: async ({ data }: any) => {
+            writes.push(data);
+            return {
+              id: "user",
+              email: "member@example.com",
+              username: "member",
+              status: "ACTIVE",
+            };
+          },
+        },
+        session: {
+          updateMany: async (input: any) => {
+            revoked.push(input);
+            return { count: 2 };
+          },
+        },
+        auditLog: {
+          create: async ({ data }: any) => {
+            audits.push(data);
+            return data;
+          },
+        },
+      }),
+  });
+  (service as any).user = async () => ({
+    id: "user",
+    email: "member@example.com",
+    username: "member",
+    status: "ACTIVE",
+  });
+  await service.updateUser("admin", "user", {
+    passwordHash: "scrypt$secret-material",
+    reason: "Khách yêu cầu đặt lại",
+  });
+  assert.equal(writes[0].passwordHash, "scrypt$secret-material");
+  assert.equal(revoked.length, 1);
+  assert.equal(JSON.stringify(audits).includes("secret-material"), false);
+  assert.equal(JSON.stringify(audits).includes("passwordHash"), false);
 });

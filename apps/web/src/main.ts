@@ -64,7 +64,10 @@ const server = createServer((request, response) => {
   const orderMatch = /^\/orders\/([0-9]{6,}|[0-9a-f-]{36})$/.exec(path),
     depositMatch = /^\/deposit\/([0-9a-f-]{36})$/.exec(path),
     ticketMatch = /^\/support\/(\d+)$/.exec(path),
-    adminRecord = /^\/admin\/(users|orders)\/([0-9]{6,}|[0-9a-f-]{36})$/.exec(path),
+    adminUserRecord = /^\/admin\/users\/([0-9a-f-]{36})$/.exec(path),
+    adminOrderRecord = /^\/admin\/orders\/([0-9]{6,}|[0-9a-f-]{36})$/.exec(
+      path,
+    ),
     providerRecord = /^\/admin\/providers\/([0-9a-f-]{36})$/.exec(path);
   if (request.method === "GET" && providerRecord) {
     response.setHeader("content-type", "text/html; charset=utf-8");
@@ -73,13 +76,13 @@ const server = createServer((request, response) => {
     );
     return;
   }
-  if (request.method === "GET" && adminRecord) {
+  if (request.method === "GET" && (adminUserRecord || adminOrderRecord)) {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
       adminRecordPage(
         config.apiUrl.origin,
-        adminRecord[1] as "users" | "orders",
-        adminRecord[2]!,
+        adminUserRecord ? "users" : "orders",
+        (adminUserRecord || adminOrderRecord)![1]!,
       ),
     );
     return;

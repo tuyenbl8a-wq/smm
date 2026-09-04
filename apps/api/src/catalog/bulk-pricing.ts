@@ -337,7 +337,7 @@ export class BulkPricingService {
   }
 
   private async tierInputs(db: any, input: SimpleTierInput) {
-    const codes = ["KHACH_LE", "CTV", "DAI_LY"],
+    const codes = ["CUSTOMER", "AGENT", "DISTRIBUTOR"],
       groups = await db.priceGroup.findMany({
         where: { active: true, code: { in: codes } },
       }),

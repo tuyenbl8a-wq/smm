@@ -62,9 +62,9 @@ test("development seed defines exactly three default customer tiers without VIP"
     new URL("../prisma/seed.mjs", import.meta.url),
     "utf8",
   );
-  assert.match(seed, /code: "KHACH_LE"/);
-  assert.match(seed, /code: "CTV"/);
-  assert.match(seed, /code: "DAI_LY"/);
+  assert.match(seed, /code: "CUSTOMER"/);
+  assert.match(seed, /code: "AGENT"/);
+  assert.match(seed, /code: "DISTRIBUTOR"/);
   assert.doesNotMatch(seed, /code: "DAI_LY_VIP"|code: "VIP"/);
 });
 
@@ -279,4 +279,27 @@ test("wallet manage permission migration preserves legacy grants additively", ()
   assert.match(sql, /user_permissions/);
   assert.match(sql, /ON CONFLICT \("user_id", "permission_id"\) DO NOTHING/);
   assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
+});
+
+test("admin profile migration is additive and canonical tiers preserve users", () => {
+  const profile = readFileSync(
+    new URL(
+      "../prisma/migrations/20260904160000_user_admin_profile/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const tiers = readFileSync(
+    new URL(
+      "../prisma/migrations/20260904120000_rbac_customer_tiers/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(profile, /ADD COLUMN "full_name"/);
+  assert.match(profile, /ADD COLUMN "phone"/);
+  for (const code of ["CUSTOMER", "AGENT", "DISTRIBUTOR"])
+    assert.match(tiers, new RegExp(`'${code}'`));
+  assert.match(tiers, /UPDATE "users"/);
+  assert.doesNotMatch(profile + tiers, /DELETE FROM "users"|TRUNCATE/i);
 });

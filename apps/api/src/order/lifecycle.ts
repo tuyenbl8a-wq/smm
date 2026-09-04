@@ -1,4 +1,8 @@
-import { orderAmount } from "./service.js";
+import {
+  applyOrderTargetRefund,
+  moneyToUnits,
+  partialRefundTarget,
+} from "@smm/database";
 import { settleReferral } from "../promotion/service.js";
 export class LifecycleError extends Error {
   constructor(
@@ -28,9 +32,15 @@ export class OrderLifecycleService {
     if (!allowed.includes(status))
       throw new LifecycleError("STATUS_INVALID", "Invalid provider status");
     return this.db.$transaction(async (tx: any) => {
+      if (tx.$executeRawUnsafe)
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock($1::bigint)`,
+          orderId,
+        );
       const order = await tx.order.findUnique({ where: { id: orderId } });
       if (!order)
         throw new LifecycleError("ORDER_NOT_FOUND", "Order not found");
+      if (order.manualOverride) return order;
       if (["COMPLETED", "CANCELED", "REFUNDED"].includes(order.status))
         return order;
       if (status === "PARTIAL") {
@@ -40,37 +50,26 @@ export class OrderLifecycleService {
           remains > order.quantity
         )
           throw new LifecycleError("REMAINS_INVALID", "Invalid remains");
-        const refund = orderAmount(order.saleRate, remains);
-        if (
-          String(order.refundedAmount) !== "0" &&
-          String(order.refundedAmount) !== "0.00000000"
-        )
-          return order;
-        const rows = await tx.$queryRawUnsafe(
-          `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
-          refund,
-          order.userId,
+        const calculated = partialRefundTarget(
+          order.charge,
+          remains,
+          order.quantity,
         );
-        await tx.walletTransaction.create({
-          data: {
-            walletId: rows[0].id,
-            userId: order.userId,
-            type: "REFUND",
-            amount: refund,
-            balanceBefore: rows[0].before,
-            balanceAfter: rows[0].after,
-            referenceId: order.publicId,
-            idempotencyKey: `refund:order:${order.publicId}`,
-            description: "Partial order refund",
-          },
-        });
+        const refund = await applyOrderTargetRefund(
+          tx,
+          order,
+          moneyToUnits(calculated) < moneyToUnits(order.refundedAmount)
+            ? order.refundedAmount
+            : calculated,
+          "Partial order refund",
+        );
         await tx.order.update({
           where: { id: orderId },
           data: {
             status: "PARTIAL",
             remains,
             startCount,
-            refundedAmount: refund,
+            refundedAmount: refund.target,
           },
         });
       } else
@@ -83,7 +82,21 @@ export class OrderLifecycleService {
           orderId,
           fromStatus: order.status,
           toStatus: status,
-          details: { remains, startCount },
+          details: { source: "WORKER_PROVIDER_SYNC", remains, startCount },
+        },
+      });
+      await tx.auditLog?.create({
+        data: {
+          action: "ORDER_PROVIDER_SYNC",
+          resource: "Order",
+          resourceId: order.publicId,
+          before: {
+            status: order.status,
+            remains: order.remains,
+            startCount: order.startCount,
+            refundedAmount: String(order.refundedAmount),
+          },
+          after: { status, remains, startCount },
         },
       });
       const updated = await tx.order.findUnique({ where: { id: orderId } });
@@ -93,7 +106,7 @@ export class OrderLifecycleService {
   }
   async request(
     userId: string,
-    publicId: string,
+    reference: string,
     action: "refill" | "cancel",
     key: string,
   ) {
@@ -102,7 +115,16 @@ export class OrderLifecycleService {
         "IDEMPOTENCY_INVALID",
         "Invalid idempotency key",
       );
-    const order = await this.db.order.findUnique({ where: { publicId } });
+    const numericId = /^\d+$/.test(reference)
+      ? BigInt(reference) - 100000n
+      : null;
+    const where =
+      numericId !== null && numericId > 0n
+        ? { id: numericId }
+        : { publicId: reference };
+    const order = this.db.order.findFirst
+      ? await this.db.order.findFirst({ where })
+      : await this.db.order.findUnique({ where });
     if (!order || order.userId !== userId)
       throw new LifecycleError("ORDER_NOT_FOUND", "Order not found");
     if (action === "refill") {
