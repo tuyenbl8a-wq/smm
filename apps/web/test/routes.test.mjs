@@ -254,3 +254,20 @@ test("service operations use real modal forms and authenticated toggle API", () 
     assert.match(page, new RegExp(contract.replaceAll("/", "\\/")));
   assert.doesNotMatch(page, /window\.(?:prompt|alert|confirm)\s*\(/);
 });
+
+test("shared service form supports Manual, provider source, three tiers and clone", () => {
+  for (const contract of [
+    'name="source"',
+    'value="MANUAL"',
+    'value="API"',
+    'name="providerServiceId"',
+    '"CUSTOMER"',
+    '"AGENT"',
+    '"DISTRIBUTOR"',
+    "100000000n",
+    "sticky-actions",
+    "data-service-clone",
+    "/clone",
+  ])
+    assert.match(page, new RegExp(contract.replaceAll("/", "\\/")));
+});

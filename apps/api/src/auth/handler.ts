@@ -650,6 +650,25 @@ export class AuthHandler {
           ),
         );
       }
+      const serviceClone =
+        /^\/api\/v1\/admin\/services\/([0-9a-f-]{36})\/clone$/.exec(path);
+      if (request.method === "POST" && serviceClone) {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Bạn không có quyền quản lý dịch vụ",
+          );
+        return this.ok(
+          response,
+          await this.catalog!.cloneService(
+            auth.user.id,
+            serviceClone[1]!,
+            await this.body(request),
+          ),
+        );
+      }
       const sourcePreview =
         /^\/api\/v1\/admin\/services\/([0-9a-f-]{36})\/source-preview$/.exec(
           path,
@@ -1711,12 +1730,32 @@ export class AuthHandler {
           ? targets.map(String)
           : [String(targets ?? "")];
         const username = fields.some((field) => field.includes("username"));
-        return this.error(
-          response,
-          409,
-          username ? "USERNAME_ALREADY_USED" : "EMAIL_ALREADY_USED",
-          username ? "Tên đăng nhập đã tồn tại" : "Email đã được sử dụng",
-        );
+        const slug = fields.some((field) => field.includes("slug"));
+        const catalogName =
+          !username &&
+          fields.some(
+            (field) => field === "name" || field.endsWith("_name_key"),
+          );
+        const email = fields.some((field) => field.includes("email"));
+        const code = slug
+          ? "CATALOG_SLUG_ALREADY_USED"
+          : catalogName
+            ? "CATALOG_NAME_ALREADY_USED"
+            : username
+              ? "USERNAME_ALREADY_USED"
+              : email
+                ? "EMAIL_ALREADY_USED"
+                : "UNIQUE_CONFLICT";
+        const message = slug
+          ? "Slug đã được sử dụng"
+          : catalogName
+            ? "Tên này đã được sử dụng"
+            : username
+              ? "Tên đăng nhập đã tồn tại"
+              : email
+                ? "Email đã được sử dụng"
+                : "Dữ liệu đã tồn tại trong hệ thống";
+        return this.error(response, 409, code, message);
       }
       if (error instanceof CatalogError)
         return this.error(response, 422, error.code, error.message);
