@@ -55,7 +55,7 @@ const STAFF_CANDIDATE_USER_SELECT = {
   email: true,
   status: true,
   priceGroupId: true,
-} satisfies Prisma.UserSelect;
+} as const;
 const CANONICAL_ADMIN_PERMISSION_SET = new Set<string>(
   CANONICAL_ADMIN_PERMISSIONS,
 );
@@ -2390,4 +2390,3 @@ import {
 } from "@smm/database";
 import { ProviderError, StandardSmmAdapter } from "../provider/adapter.js";
 import { decryptSecret } from "../provider/crypto.js";
-import type { Prisma } from "@prisma/client";
