@@ -51,6 +51,7 @@ const permissions = [
   "orders.manage",
   "orders.sync",
   "orders.refund",
+  "orders.retry",
   "services.view",
   "services.manage",
   "services.import",

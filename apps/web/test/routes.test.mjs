@@ -165,7 +165,7 @@ test("short order routes keep customer actions and admin operations distinct", (
   assert.match(page, /customer\/orders\/'\+x\.publicId\+'\/'\+a/);
   for (const action of [
     "Cập nhật từ NCC",
-    "Chỉnh sửa đơn",
+    "Xem chi tiết",
     "ghi đè thủ công",
     "Hoàn tiền",
   ])
@@ -219,6 +219,9 @@ test("staff RBAC UI groups effective permissions and requires reason", () => {
   assert.match(page, /data-all/);
   assert.match(page, /Lý do/);
   assert.match(page, /thu hồi session/i);
+  assert.match(page, /Nâng tài khoản hiện có/);
+  assert.match(page, /admin\/staff\/candidates/);
+  assert.match(page, /value="CUSTOMER">Hạ về khách hàng/);
 });
 
 test("final admin UX includes provider assignment, live status counts and secure profile password flow", () => {
@@ -295,4 +298,34 @@ test("service editor requires audited reason and uses the same three-tier fields
   assert.match(editor, /name="providerServiceId"/);
   assert.match(editor, /name="categoryId"/);
   assert.match(editor, /sticky-actions/);
+});
+
+test("orders script is isolated and uses page-specific identifiers before loading API data", () => {
+  const start = page.indexOf("orders: `");
+  const orders = page.slice(start, page.indexOf("reports:", start));
+  assert.match(orders, /orders: `\(\(\)=>\{/);
+  assert.match(orders, /orderStatusFilters/);
+  assert.match(orders, /ordersContent/);
+  assert.match(orders, /\/api\/v1\/admin\/orders\?/);
+  assert.match(orders, /load\(1\)\}\)\(\)`/);
+  assert.doesNotMatch(orders, /\bconst statuses\b/);
+  assert.doesNotMatch(orders, /\bconst content\b/);
+});
+
+test("order action modal exposes only task-specific fields and provider retry is permission scoped", () => {
+  const start = page.indexOf("orders: `");
+  const orders = page.slice(start, page.indexOf("reports:", start));
+  assert.match(page, /\[hidden\]\{display:none!important\}/);
+  assert.match(
+    orders,
+    /for\(const el of \[statusField,providerField,providerOrderField,startField,remainsField,targetField\]\)el\.hidden=true/,
+  );
+  assert.match(
+    orders,
+    /mode==='provider'.*providerField\.hidden=false.*providerOrderField\.hidden=false/,
+  );
+  assert.match(orders, /mode==='retry'/);
+  assert.match(orders, /data-admin-permission="orders\.retry"/);
+  assert.match(orders, /\/retry-provider/);
+  assert.match(orders, /idempotency-key/);
 });

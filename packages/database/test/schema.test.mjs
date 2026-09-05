@@ -341,3 +341,17 @@ test("legacy grants are copied to canonical Vietnamese permissions", () => {
   assert.match(sql, /Xem đơn hàng/);
   assert.match(sql, /Điều chỉnh số dư khách hàng/);
 });
+
+test("provider retry permission migration is additive and restricted to super admin", () => {
+  const sql = readFileSync(
+    new URL(
+      "../prisma/migrations/20260905120000_order_provider_retry_permission/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(sql, /'orders\.retry'/);
+  assert.match(sql, /SUPER_ADMIN/);
+  assert.match(sql, /ON CONFLICT/);
+  assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
+});

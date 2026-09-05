@@ -26,6 +26,7 @@ const CANONICAL_ADMIN_PERMISSIONS = [
   "orders.manage",
   "orders.sync",
   "orders.refund",
+  "orders.retry",
   "services.view",
   "services.manage",
   "services.import",
@@ -77,6 +78,12 @@ export class AdminOperationsService {
   constructor(
     private db: any,
     private encryptionKey = "",
+    private adapterFactory: (provider: any) => any = (provider) =>
+      new StandardSmmAdapter(
+        provider.apiUrl,
+        decryptSecret(provider.apiKeyEncrypted, encryptionKey),
+        provider.timeoutMs,
+      ),
   ) {
     this.snapshots = new DailySnapshotService(db);
   }
@@ -956,6 +963,50 @@ export class AdminOperationsService {
     };
   }
 
+  async staffCandidates(search: unknown) {
+    const term = String(search ?? "").trim();
+    if (term.length < 2 || term.length > 254)
+      throw new AdminOperationError(
+        "STAFF_SEARCH_INVALID",
+        "Nhập ít nhất 2 ký tự để tìm tài khoản",
+      );
+    const users = await this.db.user.findMany({
+      where: {
+        deletedAt: null,
+        OR: [
+          { id: /^[0-9a-f-]{36}$/i.test(term) ? term : undefined },
+          { username: { contains: term, mode: "insensitive" } },
+          { email: { contains: term, mode: "insensitive" } },
+        ],
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        fullName: true,
+        status: true,
+        priceGroup: { select: { code: true, name: true } },
+      },
+      take: 20,
+      orderBy: { createdAt: "desc" },
+    });
+    const links = await this.db.userRole.findMany({
+        where: { userId: { in: users.map((user: any) => user.id) } },
+      }),
+      roles = await this.db.role.findMany({
+        where: { id: { in: links.map((link: any) => link.roleId) } },
+        select: { id: true, code: true },
+      }),
+      roleMap = new Map(roles.map((role: any) => [role.id, role.code]));
+    return users.map((user: any) => ({
+      ...user,
+      roles: links
+        .filter((link: any) => link.userId === user.id)
+        .map((link: any) => roleMap.get(link.roleId))
+        .filter(Boolean),
+    }));
+  }
+
   async createStaff(
     actorId: string,
     input: any,
@@ -1067,7 +1118,9 @@ export class AdminOperationsService {
         ? [...new Set<string>(input.permissions.map(String))]
         : [],
       reason = optional(input.reason),
-      roleCode = input.role === "ADMIN" ? "ADMIN" : "STAFF";
+      roleCode = ["ADMIN", "CUSTOMER"].includes(input.role)
+        ? input.role
+        : "STAFF";
     if (!reason)
       throw new AdminOperationError("REASON_REQUIRED", "Reason is required");
     if (targetRoles.some((role: any) => role.code === "SUPER_ADMIN"))
@@ -1082,6 +1135,7 @@ export class AdminOperationsService {
       );
     if (
       !superAdmin &&
+      roleCode !== "CUSTOMER" &&
       requested.some((code) => !actorPermissions.includes(code))
     )
       throw new AdminOperationError(
@@ -1092,19 +1146,27 @@ export class AdminOperationsService {
       const existing = await tx.userPermission.findMany({
           where: { userId: targetId },
         }),
-        role = await tx.role.findUniqueOrThrow({ where: { code: roleCode } }),
+        role =
+          roleCode === "CUSTOMER"
+            ? null
+            : await tx.role.findUniqueOrThrow({ where: { code: roleCode } }),
         permissions = await tx.permission.findMany({
-          where: { code: { in: requested } },
+          where: {
+            code: { in: roleCode === "CUSTOMER" ? [] : requested },
+          },
         });
-      if (permissions.length !== requested.length)
+      if (roleCode !== "CUSTOMER" && permissions.length !== requested.length)
         throw new AdminOperationError(
           "PERMISSION_INVALID",
           "Unknown permission",
         );
       await tx.userRole.deleteMany({ where: { userId: targetId } });
-      await tx.userRole.create({ data: { userId: targetId, roleId: role.id } });
+      if (role)
+        await tx.userRole.create({
+          data: { userId: targetId, roleId: role.id },
+        });
       await tx.userPermission.deleteMany({ where: { userId: targetId } });
-      if (permissions.length)
+      if (roleCode !== "CUSTOMER" && permissions.length)
         await tx.userPermission.createMany({
           data: permissions.map((permission: any) => ({
             userId: targetId,
@@ -1134,7 +1196,7 @@ export class AdminOperationsService {
           },
           after: {
             role: roleCode,
-            permissions: requested,
+            permissions: roleCode === "CUSTOMER" ? [] : requested,
             status: input.status,
             reason,
           },
@@ -1143,8 +1205,9 @@ export class AdminOperationsService {
       return {
         id: targetId,
         role: roleCode,
-        permissions: requested,
+        permissions: roleCode === "CUSTOMER" ? [] : requested,
         status: input.status,
+        sessionsRevoked: true,
       };
     });
   }
@@ -1394,12 +1457,22 @@ export class AdminOperationsService {
     });
     if (!provider)
       throw new AdminOperationError("PROVIDER_NOT_FOUND", "Provider not found");
-    const adapter = new StandardSmmAdapter(
-      provider.apiUrl,
-      decryptSecret(provider.apiKeyEncrypted, this.encryptionKey),
-      provider.timeoutMs,
-    );
-    const x = await adapter.getOrderStatus(String(order.providerOrderId));
+    const adapter = this.adapterFactory(provider);
+    let x: any;
+    try {
+      x = await adapter.getOrderStatus(String(order.providerOrderId));
+    } catch (error: any) {
+      const message = String(error?.message ?? "");
+      if (/incorrect order id|order not found|invalid order/i.test(message))
+        throw new AdminOperationError(
+          "PROVIDER_ORDER_NOT_FOUND",
+          "NCC không tìm thấy mã đơn hoặc mã đơn không thuộc tài khoản API đang cấu hình.",
+        );
+      throw new AdminOperationError(
+        "PROVIDER_SYNC_FAILED",
+        "Không thể cập nhật đơn từ NCC. Vui lòng kiểm tra cấu hình và thử lại.",
+      );
+    }
     const status = String(x?.status ?? "")
       .trim()
       .toUpperCase()
@@ -1434,6 +1507,215 @@ export class AdminOperationsService {
       remains,
       startCount,
     );
+  }
+
+  async retryProviderOrder(actorId: string, reference: string, input: any) {
+    const reason = String(input?.reason ?? "").trim(),
+      idempotencyKey = String(input?.idempotencyKey ?? "").trim();
+    if (reason.length < 3 || reason.length > 500)
+      throw new AdminOperationError(
+        "REASON_REQUIRED",
+        "Vui lòng nhập lý do từ 3 đến 500 ký tự",
+      );
+    if (!/^[A-Za-z0-9:_-]{8,128}$/.test(idempotencyKey))
+      throw new AdminOperationError(
+        "IDEMPOTENCY_KEY_INVALID",
+        "Khóa chống trùng không hợp lệ",
+      );
+    const order = await this.findOrderReference(reference);
+    return this.db.$transaction(async (tx: any) => {
+      if (tx.$executeRawUnsafe)
+        await tx.$executeRawUnsafe(
+          `SELECT pg_advisory_xact_lock($1::bigint)`,
+          order.id,
+        );
+      const current = await tx.order.findUnique({ where: { id: order.id } });
+      if (!current)
+        throw new AdminOperationError("ORDER_NOT_FOUND", "Không tìm thấy đơn");
+      const blocked = (reasonCode: string, message: string) => ({
+        orderNumber: String(100000n + BigInt(current.id)),
+        publicId: current.publicId,
+        outcome: "BLOCKED",
+        reasonCode,
+        message,
+      });
+      const previousAttempt = await tx.auditLog.findFirst?.({
+        where: {
+          resource: "Order",
+          resourceId: current.publicId,
+          action: {
+            in: ["ORDER_PROVIDER_RETRY", "ORDER_PROVIDER_RETRY_FAILED"],
+          },
+          after: { path: ["idempotencyKey"], equals: idempotencyKey },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      if (previousAttempt)
+        return blocked(
+          "RETRY_ALREADY_PROCESSED",
+          "Yêu cầu gửi lại này đã được xử lý trước đó.",
+        );
+      if (current.status !== "FAILED")
+        return blocked(
+          "ORDER_NOT_FAILED",
+          "Chỉ có thể gửi lại đơn đang thất bại.",
+        );
+      if (current.providerOrderId)
+        return blocked(
+          "PROVIDER_ORDER_EXISTS",
+          "Đơn đã có mã NCC. Hãy xác minh hoặc gán lại mã đơn NCC, không tự động mua lại.",
+        );
+      if (moneyToUnits(current.refundedAmount) >= moneyToUnits(current.charge))
+        return blocked(
+          "ORDER_FULLY_REFUNDED",
+          "Đơn đã được hoàn tiền toàn phần nên không thể mua lại tự động.",
+        );
+      if (!current.providerId)
+        return blocked("PROVIDER_MISSING", "Đơn chưa được gán nhà cung cấp.");
+      const mapping = await tx.serviceMapping.findFirst({
+        where: {
+          serviceId: current.serviceId,
+          active: true,
+          providerService: {
+            providerId: current.providerId,
+            active: true,
+            stale: false,
+          },
+        },
+        include: { providerService: true },
+        orderBy: { priority: "asc" },
+      });
+      const provider = await tx.provider.findFirst({
+        where: {
+          id: current.providerId,
+          status: { in: ["ACTIVE", "DEGRADED"] },
+          deletedAt: null,
+        },
+      });
+      if (!provider || !mapping?.providerService)
+        return blocked(
+          "PROVIDER_MAPPING_UNAVAILABLE",
+          "Nhà cung cấp hoặc ánh xạ dịch vụ không còn hoạt động.",
+        );
+      try {
+        const result = await this.adapterFactory(provider).createOrder({
+          service: mapping.providerService.externalId,
+          link: current.link,
+          quantity: current.quantity,
+          idempotencyKey: `admin-retry:${current.publicId}:${idempotencyKey}`,
+        });
+        const providerOrderId = String(result?.providerOrderId ?? "").trim();
+        if (!providerOrderId)
+          throw new ProviderError(
+            "PROVIDER_RESPONSE_INVALID",
+            "Missing provider order id",
+            true,
+          );
+        const updated = await tx.order.update({
+          where: { id: current.id },
+          data: {
+            providerOrderId,
+            status: "PENDING",
+            manualOverride: false,
+            manualOverrideAt: null,
+          },
+        });
+        await tx.orderHistory.create({
+          data: {
+            orderId: current.id,
+            fromStatus: current.status,
+            toStatus: "PENDING",
+            actorId,
+            details: {
+              source: "ADMIN_PROVIDER_RETRY",
+              reason,
+              idempotencyKey,
+              providerOrderId,
+            },
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorId,
+            action: "ORDER_PROVIDER_RETRY",
+            resource: "Order",
+            resourceId: current.publicId,
+            before: {
+              status: current.status,
+              providerId: current.providerId,
+              providerOrderId: null,
+              refundedAmount: String(current.refundedAmount),
+            },
+            after: {
+              status: updated.status,
+              providerOrderId,
+              reason,
+              idempotencyKey,
+            },
+          },
+        });
+        return {
+          orderNumber: String(100000n + BigInt(updated.id)),
+          publicId: updated.publicId,
+          outcome: "ACCEPTED",
+          providerOrderId,
+          status: updated.status,
+          message: "NCC đã nhận đơn thành công.",
+        };
+      } catch (error: any) {
+        const unknownOutcome =
+          error instanceof ProviderError ? error.unknownOutcome : true;
+        const errorCode =
+          error instanceof ProviderError
+            ? String(error.code).slice(0, 100)
+            : "PROVIDER_UNKNOWN";
+        if (unknownOutcome) {
+          await tx.order.update({
+            where: { id: current.id },
+            data: { manualOverride: true, manualOverrideAt: new Date() },
+          });
+        }
+        await tx.orderHistory.create({
+          data: {
+            orderId: current.id,
+            fromStatus: current.status,
+            toStatus: current.status,
+            actorId,
+            details: {
+              source: "ADMIN_PROVIDER_RETRY",
+              reason,
+              outcome: unknownOutcome ? "UNKNOWN" : "REJECTED",
+              errorCode,
+            },
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorId,
+            action: "ORDER_PROVIDER_RETRY_FAILED",
+            resource: "Order",
+            resourceId: current.publicId,
+            before: { status: current.status, providerOrderId: null },
+            after: {
+              outcome: unknownOutcome ? "UNKNOWN" : "REJECTED",
+              errorCode,
+              reason,
+              idempotencyKey,
+              manualOverride: unknownOutcome,
+            },
+          },
+        });
+        return {
+          orderNumber: String(100000n + BigInt(current.id)),
+          publicId: current.publicId,
+          outcome: unknownOutcome ? "UNKNOWN" : "REJECTED",
+          errorCode,
+          message: unknownOutcome
+            ? "Kết quả gửi NCC chưa xác định. Đơn đã chuyển sang cần kiểm tra thủ công và sẽ không tự gửi lại."
+            : "NCC từ chối nhận đơn. Vui lòng kiểm tra dịch vụ và dữ liệu đơn.",
+        };
+      }
+    });
   }
 
   private async applyProviderOrderSync(
@@ -1527,7 +1809,7 @@ export class AdminOperationsService {
     if (reason.length < 3 || reason.length > 500)
       throw new AdminOperationError(
         "REASON_REQUIRED",
-        "Refund reason is required",
+        "Vui lòng nhập lý do hoàn tiền từ 3 đến 500 ký tự",
       );
     const target = String(input?.targetRefundAmount ?? "");
     try {
@@ -1535,7 +1817,7 @@ export class AdminOperationsService {
     } catch {
       throw new AdminOperationError(
         "REFUND_AMOUNT_INVALID",
-        "Invalid target refund amount",
+        "Tổng tiền hoàn không hợp lệ",
       );
     }
     const found = await this.findOrderReference(reference);
@@ -1547,7 +1829,7 @@ export class AdminOperationsService {
         );
       const order = await tx.order.findUnique({ where: { id: found.id } });
       if (!order)
-        throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
+        throw new AdminOperationError("ORDER_NOT_FOUND", "Không tìm thấy đơn");
       let refund;
       try {
         refund = await applyOrderTargetRefund(
@@ -1560,12 +1842,12 @@ export class AdminOperationsService {
         if (error?.message === "REFUND_EXCEEDS_CHARGE")
           throw new AdminOperationError(
             "REFUND_EXCEEDS_CHARGE",
-            "Refund cannot exceed charge",
+            "Tổng tiền hoàn không được vượt số tiền khách đã trả",
           );
         if (error?.message === "REFUND_BELOW_EXISTING")
           throw new AdminOperationError(
             "REFUND_BELOW_EXISTING",
-            "Refund cannot be less than amount already refunded",
+            "Tổng tiền hoàn không được thấp hơn số tiền đã hoàn",
           );
         throw error;
       }
@@ -1622,7 +1904,7 @@ export class AdminOperationsService {
     if (reason.length < 3 || reason.length > 500)
       throw new AdminOperationError(
         "REASON_REQUIRED",
-        "Manual operation reason is required",
+        "Vui lòng nhập lý do thao tác từ 3 đến 500 ký tự",
       );
     const order = await this.findOrderReference(reference),
       allowed = [
@@ -1638,7 +1920,7 @@ export class AdminOperationsService {
     if (input.status !== undefined && !allowed.includes(input.status))
       throw new AdminOperationError(
         "ORDER_STATUS_INVALID",
-        "Invalid order status",
+        "Trạng thái đơn không hợp lệ",
       );
     for (const field of ["remains", "startCount"])
       if (
@@ -1648,14 +1930,17 @@ export class AdminOperationsService {
       )
         throw new AdminOperationError(
           "ORDER_COUNTS_INVALID",
-          "Order counts must be integers",
+          "Start count và Remains phải là số nguyên",
         );
     if (
       input.remains !== undefined &&
       input.remains !== null &&
       (input.remains < 0 || input.remains > order.quantity)
     )
-      throw new AdminOperationError("REMAINS_INVALID", "Invalid remains");
+      throw new AdminOperationError(
+        "REMAINS_INVALID",
+        "Remains phải nằm trong phạm vi số lượng đơn",
+      );
     if (
       input.startCount !== undefined &&
       input.startCount !== null &&
@@ -1663,7 +1948,7 @@ export class AdminOperationsService {
     )
       throw new AdminOperationError(
         "START_COUNT_INVALID",
-        "Invalid start count",
+        "Start count phải là số nguyên không âm",
       );
     if (
       input.manualOverride !== undefined &&
@@ -1671,7 +1956,7 @@ export class AdminOperationsService {
     )
       throw new AdminOperationError(
         "MANUAL_OVERRIDE_INVALID",
-        "Invalid manual override",
+        "Giá trị ghi đè thủ công không hợp lệ",
       );
     if (input.providerId) {
       const provider = await this.db.provider.findFirst({
@@ -1680,10 +1965,10 @@ export class AdminOperationsService {
       if (!provider)
         throw new AdminOperationError(
           "PROVIDER_NOT_FOUND",
-          "Provider not found",
+          "Không tìm thấy nhà cung cấp",
         );
     }
-    const before = {
+    const before: any = {
       providerId: order.providerId,
       providerOrderId: order.providerOrderId,
       status: order.status,
@@ -1706,6 +1991,55 @@ export class AdminOperationsService {
       data.manualOverrideAt = input.manualOverride ? new Date() : null;
     try {
       return await this.db.$transaction(async (tx: any) => {
+        if (tx.$executeRawUnsafe)
+          await tx.$executeRawUnsafe(
+            `SELECT pg_advisory_xact_lock($1::bigint)`,
+            order.id,
+          );
+        const current = await tx.order.findUnique({ where: { id: order.id } });
+        if (!current)
+          throw new AdminOperationError(
+            "ORDER_NOT_FOUND",
+            "Không tìm thấy đơn",
+          );
+        Object.assign(before, {
+          providerId: current.providerId,
+          providerOrderId: current.providerOrderId,
+          status: current.status,
+          startCount: current.startCount,
+          remains: current.remains,
+          manualOverride: current.manualOverride,
+        });
+        let refund = {
+          target: String(current.refundedAmount),
+          added: moneyFromUnits(0n),
+        };
+        if (input.status === "PARTIAL") {
+          if (input.remains === undefined || input.remains === null)
+            throw new AdminOperationError(
+              "REMAINS_REQUIRED",
+              "Vui lòng nhập số lượng còn lại cho đơn hoàn một phần",
+            );
+          refund = await applyOrderTargetRefund(
+            tx,
+            current,
+            partialRefundTarget(
+              current.charge,
+              input.remains,
+              current.quantity,
+            ),
+            reason,
+          );
+          data.refundedAmount = refund.target;
+        } else if (input.status === "CANCELED") {
+          refund = await applyOrderTargetRefund(
+            tx,
+            current,
+            String(current.charge),
+            reason,
+          );
+          data.refundedAmount = refund.target;
+        }
         const updated = await tx.order.update({
           where: { id: order.id },
           data,
@@ -1717,7 +2051,13 @@ export class AdminOperationsService {
               fromStatus: order.status,
               toStatus: input.status,
               actorId,
-              details: { source: "ADMIN_MANUAL", reason, before, after: data },
+              details: {
+                source: "ADMIN_MANUAL",
+                reason,
+                before,
+                after: data,
+                refundAdded: refund.added,
+              },
             },
           });
         await tx.auditLog.create({
@@ -1727,7 +2067,7 @@ export class AdminOperationsService {
             resource: "Order",
             resourceId: order.publicId,
             before,
-            after: { ...data, reason },
+            after: { ...data, reason, refundAdded: refund.added },
           },
         });
         return {
@@ -1740,6 +2080,8 @@ export class AdminOperationsService {
           providerOrderId: updated.providerOrderId,
           manualOverride: updated.manualOverride,
           manualOverrideAt: updated.manualOverrideAt,
+          refundedAmount: String(updated.refundedAmount),
+          refundAdded: refund.added,
         };
       });
     } catch (error: any) {
@@ -2017,5 +2359,5 @@ import {
   moneyToUnits,
   partialRefundTarget,
 } from "@smm/database";
-import { StandardSmmAdapter } from "../provider/adapter.js";
+import { ProviderError, StandardSmmAdapter } from "../provider/adapter.js";
 import { decryptSecret } from "../provider/crypto.js";

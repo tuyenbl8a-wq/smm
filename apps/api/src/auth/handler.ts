@@ -296,6 +296,23 @@ export class AuthHandler {
           );
         return this.ok(response, await this.admin!.staff());
       }
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/admin/staff/candidates"
+      ) {
+        if (!canAccessAdmin(auth.access, "staff.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Bạn không có quyền quản lý nhân viên",
+          );
+        const query = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.staffCandidates(query.searchParams.get("search")),
+        );
+      }
       if (request.method === "GET" && path === "/api/v1/admin/price-groups") {
         if (!canAccessAdmin(auth.access, "users.pricing.manage"))
           return this.error(
@@ -903,7 +920,7 @@ export class AuthHandler {
         );
       }
       const adminOrderMutation =
-        /^\/api\/v1\/admin\/orders\/([0-9]{6,}|[0-9a-f-]{36})(?:\/(sync|refund))?$/.exec(
+        /^\/api\/v1\/admin\/orders\/([0-9]{6,}|[0-9a-f-]{36})(?:\/(sync|refund|retry-provider))?$/.exec(
           path,
         );
       if (
@@ -916,13 +933,15 @@ export class AuthHandler {
             ? "orders.sync"
             : adminOrderMutation[2] === "refund"
               ? "orders.refund"
-              : "orders.manage";
+              : adminOrderMutation[2] === "retry-provider"
+                ? "orders.retry"
+                : "orders.manage";
         if (!canAccessAdmin(auth.access, orderPermission))
           return this.error(
             response,
             403,
             "PERMISSION_DENIED",
-            "Permission denied",
+            "Bạn không có quyền thực hiện thao tác này",
           );
         if (adminOrderMutation[2] === "sync")
           return this.ok(
@@ -941,6 +960,22 @@ export class AuthHandler {
               await this.body(request),
             ),
           );
+        if (adminOrderMutation[2] === "retry-provider") {
+          const idempotencyKey = this.header(request, "idempotency-key");
+          if (!idempotencyKey)
+            throw new InputError(
+              "IDEMPOTENCY_KEY_REQUIRED",
+              "Vui lòng cung cấp khóa chống gửi trùng",
+            );
+          return this.ok(
+            response,
+            await this.admin!.retryProviderOrder(
+              auth.user.id,
+              adminOrderMutation[1]!,
+              { ...(await this.body(request)), idempotencyKey },
+            ),
+          );
+        }
         return this.ok(
           response,
           await this.admin!.updateOrder(
@@ -2039,7 +2074,7 @@ export class AuthHandler {
       !authPaths.has(
         new URL(request.url ?? "/", this.config.apiUrl).pathname,
       ) &&
-      request.method !== "POST"
+      !["POST", "PATCH", "PUT", "DELETE"].includes(request.method ?? "")
     )
       return {};
     return new Promise((resolve, reject) => {

@@ -4,6 +4,7 @@ import {
   AdminOperationError,
   AdminOperationsService,
 } from "../src/admin/operations.js";
+import { ProviderError } from "../src/provider/adapter.js";
 
 test("admin user search is paginated and never selects password hashes", async () => {
   let selection: any;
@@ -305,7 +306,11 @@ test("manual order update validates counts and records before/after with actor",
   };
   const audits: any[] = [];
   const tx: any = {
-    order: { update: async ({ data }: any) => ({ ...order, ...data }) },
+    $executeRawUnsafe: async () => 1,
+    order: {
+      findUnique: async () => order,
+      update: async ({ data }: any) => ({ ...order, ...data }),
+    },
     orderHistory: { create: async () => ({}) },
     auditLog: { create: async ({ data }: any) => audits.push(data) },
   };
@@ -327,7 +332,7 @@ test("manual order update validates counts and records before/after with actor",
         remains: 101,
         reason: "invalid count",
       }),
-    /Invalid remains/,
+    (error: AdminOperationError) => error.code === "REMAINS_INVALID",
   );
 });
 
@@ -482,4 +487,159 @@ test("admin password reset revokes sessions without leaking password hash into a
   assert.equal(revoked.length, 1);
   assert.equal(JSON.stringify(audits).includes("secret-material"), false);
   assert.equal(JSON.stringify(audits).includes("passwordHash"), false);
+});
+
+function retryFixture(createOrder: () => Promise<any>, overrides: any = {}) {
+  const histories: any[] = [],
+    audits: any[] = [],
+    updates: any[] = [];
+  const current: any = {
+    id: 2n,
+    publicId: "11111111-1111-4111-8111-111111111111",
+    userId: "user",
+    serviceId: "service",
+    providerId: "provider",
+    providerOrderId: null,
+    status: "FAILED",
+    refundedAmount: "30.00000000",
+    charge: "100.00000000",
+    quantity: 100,
+    link: "https://example.test/post",
+    ...overrides,
+  };
+  const tx: any = {
+    $executeRawUnsafe: async () => 1,
+    order: {
+      findUnique: async () => current,
+      update: async ({ data }: any) => {
+        Object.assign(current, data);
+        updates.push(data);
+        return current;
+      },
+    },
+    serviceMapping: {
+      findFirst: async () => ({
+        providerService: { externalId: "777", active: true, stale: false },
+      }),
+    },
+    provider: {
+      findFirst: async () => ({ id: "provider", status: "ACTIVE" }),
+    },
+    orderHistory: { create: async ({ data }: any) => histories.push(data) },
+    auditLog: {
+      findFirst: async () => null,
+      create: async ({ data }: any) => audits.push(data),
+    },
+  };
+  const db: any = {
+    order: { findFirst: async () => current },
+    $transaction: async (run: any) => run(tx),
+  };
+  return {
+    current,
+    histories,
+    audits,
+    updates,
+    service: new AdminOperationsService(db, "key", () => ({ createOrder })),
+  };
+}
+
+test("retrying a failed provider order is locked, audited and never debits the wallet", async () => {
+  let submissions = 0;
+  const fixture = retryFixture(async () => {
+    submissions += 1;
+    return { providerOrderId: "provider-new-1" };
+  });
+  const result = await fixture.service.retryProviderOrder("admin", "100002", {
+    reason: "NCC xác nhận có thể gửi lại",
+    idempotencyKey: "retry-safe-0001",
+  });
+  assert.equal(result.outcome, "ACCEPTED");
+  assert.equal(result.providerOrderId, "provider-new-1");
+  assert.equal(submissions, 1);
+  assert.equal(fixture.current.status, "PENDING");
+  assert.equal(fixture.current.refundedAmount, "30.00000000");
+  assert.equal(fixture.histories[0].actorId, "admin");
+  assert.equal(fixture.audits[0].action, "ORDER_PROVIDER_RETRY");
+  assert.equal(JSON.stringify(fixture.audits).includes("apiKey"), false);
+});
+
+test("retry is blocked when a provider order id exists or the order was fully refunded", async () => {
+  let submissions = 0;
+  for (const overrides of [
+    { providerOrderId: "already-there" },
+    { refundedAmount: "100.00000000" },
+  ]) {
+    const fixture = retryFixture(async () => {
+      submissions += 1;
+      return { providerOrderId: "never" };
+    }, overrides);
+    const result = await fixture.service.retryProviderOrder("admin", "100002", {
+      reason: "Kiểm tra điều kiện an toàn",
+      idempotencyKey: "retry-safe-0002",
+    });
+    assert.equal(result.outcome, "BLOCKED");
+  }
+  assert.equal(submissions, 0);
+});
+
+test("unknown provider retry outcome enables manual override and provider rejection stays failed", async () => {
+  const unknown = retryFixture(async () => {
+    throw new ProviderError("PROVIDER_TIMEOUT", "secret request", true);
+  });
+  const unknownResult = await unknown.service.retryProviderOrder(
+    "admin",
+    "100002",
+    { reason: "Kiểm tra timeout NCC", idempotencyKey: "retry-timeout-1" },
+  );
+  assert.equal(unknownResult.outcome, "UNKNOWN");
+  assert.equal(unknown.current.manualOverride, true);
+  assert.equal(
+    JSON.stringify(unknown.audits).includes("secret request"),
+    false,
+  );
+
+  const rejected = retryFixture(async () => {
+    throw new ProviderError("PROVIDER_REJECTED", "credential=hidden", false);
+  });
+  const rejectedResult = await rejected.service.retryProviderOrder(
+    "admin",
+    "100002",
+    { reason: "NCC từ chối đơn", idempotencyKey: "retry-reject-1" },
+  );
+  assert.equal(rejectedResult.outcome, "REJECTED");
+  assert.equal(rejected.current.status, "FAILED");
+  assert.equal(
+    JSON.stringify(rejected.audits).includes("credential=hidden"),
+    false,
+  );
+});
+
+test("provider sync translates an incorrect provider order id", async () => {
+  const order: any = {
+    id: 2n,
+    publicId: "11111111-1111-4111-8111-111111111111",
+    providerId: "provider",
+    providerOrderId: "wrong-id",
+    quantity: 10,
+    remains: 10,
+  };
+  const service = new AdminOperationsService(
+    {
+      order: { findFirst: async () => order },
+      provider: { findFirst: async () => ({ id: "provider" }) },
+    },
+    "key",
+    () => ({
+      getOrderStatus: async () => {
+        throw new Error("Incorrect order ID");
+      },
+    }),
+  );
+  await assert.rejects(
+    () => service.syncOrderFromProvider("admin", "100002"),
+    (error: AdminOperationError) =>
+      error.code === "PROVIDER_ORDER_NOT_FOUND" &&
+      /NCC không tìm thấy mã đơn/.test(error.message),
+  );
 });
