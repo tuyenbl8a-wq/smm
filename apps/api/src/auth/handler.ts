@@ -45,6 +45,32 @@ const authPaths = new Set([
   "/api/v1/auth/forgot-password",
   "/api/v1/auth/reset-password",
 ]);
+export function uniqueConflictDetails(targets: unknown) {
+  const fields = (Array.isArray(targets) ? targets : [targets]).map((value) =>
+    String(value ?? ""),
+  );
+  if (fields.some((field) => field.includes("slug")))
+    return {
+      code: "CATALOG_SLUG_ALREADY_USED",
+      message: "Slug đã được sử dụng",
+    };
+  if (fields.some((field) => field === "name" || field.endsWith("_name_key")))
+    return {
+      code: "CATALOG_NAME_ALREADY_USED",
+      message: "Tên này đã được sử dụng",
+    };
+  if (fields.some((field) => field.includes("username")))
+    return {
+      code: "USERNAME_ALREADY_USED",
+      message: "Tên đăng nhập đã tồn tại",
+    };
+  if (fields.some((field) => field.includes("email")))
+    return { code: "EMAIL_ALREADY_USED", message: "Email đã được sử dụng" };
+  return {
+    code: "UNIQUE_CONFLICT",
+    message: "Dữ liệu đã tồn tại trong hệ thống",
+  };
+}
 export class AuthHandler {
   private readonly attempts = new Map<string, number[]>();
 
@@ -1726,35 +1752,7 @@ export class AuthHandler {
     } catch (error) {
       if ((error as { code?: string })?.code === "P2002") {
         const targets = (error as { meta?: { target?: unknown } }).meta?.target;
-        const fields = Array.isArray(targets)
-          ? targets.map(String)
-          : [String(targets ?? "")];
-        const username = fields.some((field) => field.includes("username"));
-        const slug = fields.some((field) => field.includes("slug"));
-        const catalogName =
-          !username &&
-          fields.some(
-            (field) => field === "name" || field.endsWith("_name_key"),
-          );
-        const email = fields.some((field) => field.includes("email"));
-        const code = slug
-          ? "CATALOG_SLUG_ALREADY_USED"
-          : catalogName
-            ? "CATALOG_NAME_ALREADY_USED"
-            : username
-              ? "USERNAME_ALREADY_USED"
-              : email
-                ? "EMAIL_ALREADY_USED"
-                : "UNIQUE_CONFLICT";
-        const message = slug
-          ? "Slug đã được sử dụng"
-          : catalogName
-            ? "Tên này đã được sử dụng"
-            : username
-              ? "Tên đăng nhập đã tồn tại"
-              : email
-                ? "Email đã được sử dụng"
-                : "Dữ liệu đã tồn tại trong hệ thống";
+        const { code, message } = uniqueConflictDetails(targets);
         return this.error(response, 409, code, message);
       }
       if (error instanceof CatalogError)

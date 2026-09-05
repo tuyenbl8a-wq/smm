@@ -267,7 +267,32 @@ test("shared service form supports Manual, provider source, three tiers and clon
     "100000000n",
     "sticky-actions",
     "data-service-clone",
-    "/clone",
+    "cloneId",
+    "servicePageLabel",
+    "Giá CUSTOMER",
+    'id="providerSearch"',
+    "cloneDetail",
+    "Nhân bản dịch vụ",
+    "Giá AGENT",
+    "Giá NPP",
+    "Thời gian TB",
+    "servicePrevious",
+    "serviceNext",
+    "result.failed",
   ])
     assert.match(page, new RegExp(contract.replaceAll("/", "\\/")));
+});
+
+test("service editor requires audited reason and uses the same three-tier fields", () => {
+  const editor = page.slice(
+    page.indexOf("export function adminServiceEditorPage"),
+    page.indexOf("export function adminServiceImportPage"),
+  );
+  assert.match(editor, /name="reason"/);
+  assert.match(editor, /CUSTOMER/);
+  assert.match(editor, /AGENT/);
+  assert.match(editor, /DISTRIBUTOR/);
+  assert.match(editor, /name="providerServiceId"/);
+  assert.match(editor, /name="categoryId"/);
+  assert.match(editor, /sticky-actions/);
 });

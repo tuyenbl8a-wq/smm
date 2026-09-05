@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ProviderService } from "../src/provider/service.js";
+import {
+  normalizeExistingImportAction,
+  ProviderService,
+} from "../src/provider/service.js";
 import { repriceMappedServices } from "../src/catalog/repricing.js";
 
 const provider = {
@@ -49,6 +52,14 @@ test("provider fetch is server-side, sanitized and paginated", async () => {
   assert.equal(result.items.length, 1);
   assert.equal((result.items[0] as any).raw, undefined);
   assert.equal(JSON.stringify(result).includes("apiKey"), false);
+});
+
+test("repeat import actions normalize to SKIP, UPDATE or REMAP", () => {
+  assert.equal(normalizeExistingImportAction(undefined), "SKIP");
+  assert.equal(normalizeExistingImportAction("SKIP"), "SKIP");
+  assert.equal(normalizeExistingImportAction("UPDATE"), "UPDATE");
+  assert.equal(normalizeExistingImportAction("REMAP"), "REMAP");
+  assert.equal(normalizeExistingImportAction("DELETE"), "SKIP");
 });
 
 test("import preview uses existing professional pricing for three default tiers", async () => {
@@ -156,6 +167,9 @@ test("multi-service import is transactional, mapped, priced and audited", async 
   assert.equal(mappings.length, 2);
   assert.equal(mappings[0].syncAll, true);
   assert.equal(audits[0].action, "PROVIDER_SERVICE_IMPORT");
+  assert.equal(audits[0].actorId, "admin");
+  assert.equal(JSON.stringify(audits[0]).includes("apiKey"), false);
+  assert.equal(JSON.stringify(audits[0]).includes("credential"), false);
 });
 
 test("provider request failure never opens an import transaction", async () => {

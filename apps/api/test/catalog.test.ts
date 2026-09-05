@@ -3,6 +3,7 @@ import test from "node:test";
 import { canAccessAdmin } from "../src/admin/dashboard.js";
 import { calculateSaleRate, decimalInput } from "../src/catalog/pricing.js";
 import { CatalogService } from "../src/catalog/service.js";
+import { uniqueConflictDetails } from "../src/auth/handler.js";
 
 test("pricing uses exact eight-place fixed-point arithmetic", () => {
   assert.equal(decimalInput("10.00000001"), "10.00000001");
@@ -50,6 +51,36 @@ test("catalog administration requires services.manage", () => {
       "services.manage",
     ),
     true,
+  );
+});
+
+test("service management and import remain separately permissioned", () => {
+  const viewer = { roles: ["STAFF"], permissions: ["services.view"] };
+  const manager = { roles: ["STAFF"], permissions: ["services.manage"] };
+  const importer = { roles: ["STAFF"], permissions: ["services.import"] };
+  assert.equal(canAccessAdmin(viewer, "services.manage"), false);
+  assert.equal(canAccessAdmin(viewer, "services.import"), false);
+  assert.equal(canAccessAdmin(manager, "services.manage"), true);
+  assert.equal(canAccessAdmin(manager, "services.import"), false);
+  assert.equal(canAccessAdmin(importer, "services.import"), true);
+  assert.equal(canAccessAdmin(importer, "services.manage"), false);
+});
+
+test("catalog unique conflicts expose stable Vietnamese error codes", () => {
+  assert.deepEqual(uniqueConflictDetails(["slug"]), {
+    code: "CATALOG_SLUG_ALREADY_USED",
+    message: "Slug đã được sử dụng",
+  });
+  assert.deepEqual(uniqueConflictDetails(["service_categories_name_key"]), {
+    code: "CATALOG_NAME_ALREADY_USED",
+    message: "Tên này đã được sử dụng",
+  });
+  assert.deepEqual(
+    uniqueConflictDetails(["service_id", "provider_service_id"]),
+    {
+      code: "UNIQUE_CONFLICT",
+      message: "Dữ liệu đã tồn tại trong hệ thống",
+    },
   );
 });
 

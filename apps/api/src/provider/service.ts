@@ -65,6 +65,11 @@ function resolveImportFixedRate(
   return { fixedRate, minProfit };
 }
 
+export const normalizeExistingImportAction = (value: unknown) =>
+  ["UPDATE", "REMAP", "SKIP"].includes(String(value))
+    ? (String(value) as "UPDATE" | "REMAP" | "SKIP")
+    : "SKIP";
+
 export class ProviderService {
   constructor(
     private readonly db: any,
@@ -276,11 +281,7 @@ export class ProviderService {
     const provider = await this.provider(id),
       records = await this.selectedRecords(provider, input),
       categoryId = String(input.categoryId ?? ""),
-      action = ["UPDATE", "REMAP", "SKIP"].includes(
-        String(input.existingAction),
-      )
-        ? String(input.existingAction)
-        : "SKIP";
+      action = normalizeExistingImportAction(input.existingAction);
     return this.db.$transaction(async (tx: any) => {
       const category = await tx.serviceCategory.findFirst({
         where: { id: categoryId, active: true, deletedAt: null },

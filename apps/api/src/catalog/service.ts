@@ -257,7 +257,7 @@ export class CatalogService {
         take: 5000,
       }),
       this.db.priceGroup.findMany({ orderBy: { name: "asc" } }),
-      this.db.priceRule.findMany({ take: 500 }),
+      this.db.priceRule.findMany({ take: 15000 }),
       this.db.providerService.findMany({
         where: { active: true },
         orderBy: { name: "asc" },
@@ -268,7 +268,7 @@ export class CatalogService {
         select: { id: true, name: true, status: true },
         orderBy: { name: "asc" },
       }),
-      this.db.serviceMapping.findMany({ take: 500 }),
+      this.db.serviceMapping.findMany({ take: 15000 }),
       this.db.servicePriceHistory.findMany({
         orderBy: { createdAt: "desc" },
         take: 100,
@@ -492,7 +492,8 @@ export class CatalogService {
   }
 
   async updateServiceEditor(actorId: string, id: string, input: any) {
-    const requestedSource = String(input.source ?? "API");
+    const requestedSource = String(input.source ?? "API"),
+      reason = mutationReason(input.reason);
     if (!["MANUAL", "API"].includes(requestedSource))
       throw new CatalogError(
         "SERVICE_SOURCE_INVALID",
@@ -763,6 +764,7 @@ export class CatalogService {
         ...service,
         mappingId: mapping?.id ?? null,
         sync,
+        reason,
       });
       return { service, mapping, action };
     });

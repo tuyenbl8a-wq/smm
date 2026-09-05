@@ -174,6 +174,7 @@ test("manual service becomes API-backed without changing local identity", async 
     "service-1",
     {
       source: "API",
+      reason: "Kiểm thử cập nhật",
       providerServiceId: "ps-a",
       syncAll: true,
       disabledPolicy: "REQUIRE_REVIEW",
@@ -192,7 +193,7 @@ test("API service becomes manual while retaining data and disabling mapping", as
   const result = await new CatalogService(db).updateServiceEditor(
     "admin-1",
     "service-1",
-    { source: "MANUAL" },
+    { source: "MANUAL", reason: "Kiểm thử cập nhật" },
   );
   assert.equal(result.service.id, before.id);
   assert.equal(result.service.name, before.name);
@@ -208,6 +209,7 @@ test("provider remap disables A, activates B, and applies request sync flags now
     "service-1",
     {
       source: "API",
+      reason: "Kiểm thử cập nhật",
       providerServiceId: "ps-b",
       syncAll: false,
       syncName: true,
@@ -238,6 +240,7 @@ test("description override disables only current description sync and survives r
   const { db, state } = database("API");
   await new CatalogService(db).updateServiceEditor("admin-1", "service-1", {
     source: "API",
+    reason: "Kiểm thử cập nhật",
     providerServiceId: "ps-a",
     syncAll: true,
     description: "Mô tả do admin viết",
@@ -250,6 +253,7 @@ test("description override disables only current description sync and survives r
   assert.equal(reload.service.description, "Mô tả do admin viết");
   await new CatalogService(db).updateServiceEditor("admin-1", "service-1", {
     source: "API",
+    reason: "Kiểm thử cập nhật",
     providerServiceId: "ps-a",
     syncAll: false,
     syncDescription: true,
@@ -262,6 +266,7 @@ test("tier percentage and fixed price save to existing PriceRule engine", async 
   const { db, state } = database("MANUAL");
   await new CatalogService(db).updateServiceEditor("admin-1", "service-1", {
     source: "MANUAL",
+    reason: "Kiểm thử cập nhật",
     pricing: {
       CUSTOMER: { mode: "PERCENT", value: "30" },
       AGENT: { mode: "FIXED", value: "0.98000000" },
@@ -280,6 +285,7 @@ test("fixed tier price below safety floor is rejected atomically", async () => {
     () =>
       new CatalogService(db).updateServiceEditor("admin-1", "service-1", {
         source: "MANUAL",
+        reason: "Kiểm thử cập nhật",
         pricing: { CUSTOMER: { mode: "FIXED", value: "0.70000000" } },
       }),
     /thấp hơn mức an toàn/,
@@ -388,6 +394,9 @@ test("creates manual and provider services with exactly three tier prices", asyn
   });
   assert.equal(manual.service.source, "MANUAL");
   assert.equal(state().rules.length, 3);
+  assert.equal(state().audits[0].actorId, "admin-1");
+  assert.equal(state().audits[0].before, null);
+  assert.equal(state().audits[0].after.reason, "Tạo mới");
   const provider = await catalog.createService("admin-1", {
     source: "API",
     providerServiceId: "ps-create",
@@ -437,4 +446,7 @@ test("clones service disabled with pricing and mapping copied safely", async () 
     3,
   );
   assert.equal(state().audits.at(-1).action, "SERVICE_CLONE");
+  assert.equal(state().audits.at(-1).actorId, "admin-1");
+  assert.equal(state().audits.at(-1).before.id, original.service.id);
+  assert.equal(state().audits.at(-1).after.reason, "Tạo biến thể");
 });
