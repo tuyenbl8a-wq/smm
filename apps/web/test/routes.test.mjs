@@ -329,3 +329,23 @@ test("order action modal exposes only task-specific fields and provider retry is
   assert.match(orders, /\/retry-provider/);
   assert.match(orders, /idempotency-key/);
 });
+
+test("admin orders copies only selected short IDs with page-scoped select-all state", () => {
+  const start = page.indexOf("orders: `");
+  const orders = page.slice(start, page.indexOf("reports:", start));
+  for (const text of [
+    "Chọn tất cả đơn trên trang",
+    "Đã chọn ",
+    "Sao chép mã đã chọn",
+    "Sao chép tất cả mã trên trang",
+    "Bỏ chọn",
+    "Đã sao chép ",
+    "Không thể sao chép mã đơn. Vui lòng thử lại.",
+  ])
+    assert.match(orders, new RegExp(text.replaceAll(".", "\\.")));
+  assert.match(orders, /numbers\.join\('\\n'\)/);
+  assert.match(orders, /selectAllOrders\.indeterminate/);
+  assert.match(orders, /resetSelection\(\);ordersContent/);
+  assert.match(orders, /String\(o\.orderNumber\)/);
+  assert.doesNotMatch(orders, /copyOrderNumbers\([^)]*providerOrderId/);
+});

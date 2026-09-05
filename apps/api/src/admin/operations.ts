@@ -49,6 +49,13 @@ const CANONICAL_ADMIN_PERMISSIONS = [
   "staff.manage",
   "audit.view",
 ] as const;
+const STAFF_CANDIDATE_USER_SELECT = {
+  id: true,
+  username: true,
+  email: true,
+  status: true,
+  priceGroupId: true,
+} satisfies Prisma.UserSelect;
 const CANONICAL_ADMIN_PERMISSION_SET = new Set<string>(
   CANONICAL_ADMIN_PERMISSIONS,
 );
@@ -970,27 +977,43 @@ export class AdminOperationsService {
         "STAFF_SEARCH_INVALID",
         "Nhập ít nhất 2 ký tự để tìm tài khoản",
       );
+    const uuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          term,
+        ),
+      searchConditions: any[] = [
+        { username: { contains: term, mode: "insensitive" } },
+        { email: { contains: term, mode: "insensitive" } },
+      ];
+    if (uuid) searchConditions.push({ id: term });
     const users = await this.db.user.findMany({
       where: {
         deletedAt: null,
-        OR: [
-          { id: /^[0-9a-f-]{36}$/i.test(term) ? term : undefined },
-          { username: { contains: term, mode: "insensitive" } },
-          { email: { contains: term, mode: "insensitive" } },
-        ],
+        OR: searchConditions,
       },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        fullName: true,
-        status: true,
-        priceGroup: { select: { code: true, name: true } },
-      },
+      select: STAFF_CANDIDATE_USER_SELECT,
       take: 20,
       orderBy: { createdAt: "desc" },
     });
-    const links = await this.db.userRole.findMany({
+    if (!users.length) return [];
+    const priceGroupIds = [
+        ...new Set<string>(
+          users.map((user: any) => user.priceGroupId).filter(Boolean),
+        ),
+      ],
+      priceGroups = priceGroupIds.length
+        ? await this.db.priceGroup.findMany({
+            where: { id: { in: priceGroupIds } },
+            select: { id: true, code: true, name: true },
+          })
+        : [],
+      priceGroupMap = new Map(
+        priceGroups.map((group: any) => [
+          group.id,
+          { code: group.code, name: group.name },
+        ]),
+      ),
+      links = await this.db.userRole.findMany({
         where: { userId: { in: users.map((user: any) => user.id) } },
       }),
       roles = await this.db.role.findMany({
@@ -998,13 +1021,19 @@ export class AdminOperationsService {
         select: { id: true, code: true },
       }),
       roleMap = new Map(roles.map((role: any) => [role.id, role.code]));
-    return users.map((user: any) => ({
-      ...user,
-      roles: links
-        .filter((link: any) => link.userId === user.id)
-        .map((link: any) => roleMap.get(link.roleId))
-        .filter(Boolean),
-    }));
+    return users.map((user: any) => {
+      const { priceGroupId, ...safeUser } = user;
+      return {
+        ...safeUser,
+        priceGroup: priceGroupId
+          ? (priceGroupMap.get(priceGroupId) ?? null)
+          : null,
+        roles: links
+          .filter((link: any) => link.userId === user.id)
+          .map((link: any) => roleMap.get(link.roleId))
+          .filter(Boolean),
+      };
+    });
   }
 
   async createStaff(
@@ -2361,3 +2390,4 @@ import {
 } from "@smm/database";
 import { ProviderError, StandardSmmAdapter } from "../provider/adapter.js";
 import { decryptSecret } from "../provider/crypto.js";
+import type { Prisma } from "@prisma/client";

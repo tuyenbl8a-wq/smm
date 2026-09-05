@@ -355,3 +355,12 @@ test("provider retry permission migration is additive and restricted to super ad
   assert.match(sql, /ON CONFLICT/);
   assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
 });
+
+test("User price group stays a scalar foreign key without an implicit Prisma relation", () => {
+  const userModel = schema.slice(
+    schema.indexOf("model User {"),
+    schema.indexOf("model Role {"),
+  );
+  assert.match(userModel, /priceGroupId String\?/);
+  assert.doesNotMatch(userModel, /^\s*priceGroup\s+PriceGroup/m);
+});

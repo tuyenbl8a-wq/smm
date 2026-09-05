@@ -1835,7 +1835,7 @@ export class AuthHandler {
         response,
         500,
         "INTERNAL_ERROR",
-        "Request could not be completed",
+        "Không thể hoàn tất yêu cầu. Vui lòng thử lại.",
       );
     }
   }

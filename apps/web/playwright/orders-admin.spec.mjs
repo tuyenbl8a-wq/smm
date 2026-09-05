@@ -20,6 +20,14 @@ const order = {
   user: { username: "khachhang" },
   provider: { name: "NCC kiểm thử" },
 };
+const secondOrder = {
+  ...order,
+  id: "3",
+  publicId: "33333333-3333-4333-8333-333333333333",
+  orderNumber: "100003",
+  providerOrderId: "provider-secret-9988",
+  status: "COMPLETED",
+};
 
 async function mockOrders(page) {
   const calls = [];
@@ -49,11 +57,11 @@ async function mockOrders(page) {
       };
     else if (path === "/api/v1/admin/orders")
       body = {
-        items: [order],
+        items: [order, secondOrder],
         page: 1,
         pages: 1,
-        total: 1,
-        statusCounts: { FAILED: 1 },
+        total: 2,
+        statusCounts: { FAILED: 1, COMPLETED: 1 },
         manualCount: 0,
       };
     else if (path.endsWith("/providers"))
@@ -115,4 +123,44 @@ test("failed order retry uses a unique idempotency key and Vietnamese confirmati
   const retry = calls.find((call) => call.path.endsWith("/retry-provider"));
   expect(retry.method).toBe("POST");
   expect(retry.body.reason).toMatch(/NCC xác nhận/);
+});
+
+test("copy order IDs uses only short website IDs and resets selection on search", async ({
+  page,
+}) => {
+  await mockOrders(page);
+  await page.addInitScript(() => {
+    globalThis.__copiedOrderIds = "";
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (value) => {
+          globalThis.__copiedOrderIds = value;
+        },
+      },
+    });
+  });
+  await page.goto("/admin/orders");
+  const selectAll = page.getByLabel("Chọn tất cả đơn trên trang");
+  const first = page.getByLabel("Chọn đơn #100002");
+  await first.check();
+  await expect(page.getByText("Đã chọn 1 đơn")).toBeVisible();
+  await expect(selectAll).not.toBeChecked();
+  expect(await selectAll.evaluate((input) => input.indeterminate)).toBe(true);
+  await page.getByRole("button", { name: "Sao chép mã đã chọn" }).click();
+  expect(await page.evaluate(() => globalThis.__copiedOrderIds)).toBe("100002");
+  await selectAll.check();
+  await page
+    .getByRole("button", { name: "Sao chép tất cả mã trên trang" })
+    .click();
+  expect(await page.evaluate(() => globalThis.__copiedOrderIds)).toBe(
+    "100002\n100003",
+  );
+  expect(await page.evaluate(() => globalThis.__copiedOrderIds)).not.toContain(
+    "provider-secret-9988",
+  );
+  await page.getByPlaceholder("Mã đơn website").fill("100002");
+  await page.getByRole("button", { name: "Tìm kiếm" }).click();
+  await expect(page.getByText(/Đã chọn/)).toBeHidden();
+  await expect(selectAll).not.toBeChecked();
 });

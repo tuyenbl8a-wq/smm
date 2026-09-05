@@ -185,17 +185,35 @@ test("demotion removes only administrative role and grants, then revokes session
   assert.equal(writes.includes("audit"), true);
 });
 
-test("staff candidate search returns only safe profile and commercial-tier labels", async () => {
+test("staff candidate search uses scalar priceGroupId and returns a safe mapped tier", async () => {
+  const queries: any[] = [];
   const service = new AdminOperationsService({
     user: {
-      findMany: async ({ select }: any) => {
-        assert.equal(select.passwordHash, undefined);
+      findMany: async (query: any) => {
+        queries.push(query);
+        assert.equal(query.select.priceGroup, undefined);
+        assert.equal(query.select.priceGroupId, true);
+        assert.equal(query.select.passwordHash, undefined);
+        assert.equal(query.select.session, undefined);
         return [
           {
-            id: "user",
+            id: "11111111-1111-4111-8111-111111111111",
             username: "member",
             email: "m@example.com",
-            priceGroup: { code: "CUSTOMER", name: "Khách hàng" },
+            priceGroupId: "tier-customer",
+          },
+        ];
+      },
+    },
+    priceGroup: {
+      findMany: async ({ where, select }: any) => {
+        assert.deepEqual(where.id.in, ["tier-customer"]);
+        assert.deepEqual(select, { id: true, code: true, name: true });
+        return [
+          {
+            id: "tier-customer",
+            code: "CUSTOMER",
+            name: "Khách hàng",
           },
         ];
       },
@@ -203,8 +221,55 @@ test("staff candidate search returns only safe profile and commercial-tier label
     userRole: { findMany: async () => [] },
     role: { findMany: async () => [] },
   });
-  const result = await service.staffCandidates("member");
-  assert.equal(result[0].roles.length, 0);
-  assert.equal((result[0] as any).passwordHash, undefined);
-  assert.equal(result[0].priceGroup.code, "CUSTOMER");
+  for (const search of [
+    "m@example.com",
+    "member",
+    "11111111-1111-4111-8111-111111111111",
+  ]) {
+    const [result] = await service.staffCandidates(search);
+    assert.deepEqual(result.priceGroup, {
+      code: "CUSTOMER",
+      name: "Khách hàng",
+    });
+    assert.equal(result.priceGroupId, undefined);
+    assert.equal(result.passwordHash, undefined);
+    assert.equal(result.token, undefined);
+  }
+  assert.equal(
+    queries[0].where.OR.some((condition: any) => "id" in condition),
+    false,
+  );
+  assert.deepEqual(queries[2].where.OR.at(-1), {
+    id: "11111111-1111-4111-8111-111111111111",
+  });
+});
+
+test("staff candidate search supports users without a tier and missing users", async () => {
+  let mode: "without-tier" | "missing" = "without-tier";
+  const service = new AdminOperationsService({
+    user: {
+      findMany: async () =>
+        mode === "missing"
+          ? []
+          : [
+              {
+                id: "user",
+                username: "member",
+                email: "m@example.com",
+                priceGroupId: null,
+              },
+            ],
+    },
+    priceGroup: {
+      findMany: async () => {
+        throw new Error("Không được query price group khi không có ID");
+      },
+    },
+    userRole: { findMany: async () => [] },
+    role: { findMany: async () => [] },
+  });
+  const [withoutTier] = await service.staffCandidates("member");
+  assert.equal(withoutTier.priceGroup, null);
+  mode = "missing";
+  assert.deepEqual(await service.staffCandidates("missing@example.com"), []);
 });
