@@ -1,0 +1,17 @@
+{
+  "name": "@smm/web-v2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsc -p tsconfig.json --watch",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@smm/config": "workspace:*"
+  }
+}

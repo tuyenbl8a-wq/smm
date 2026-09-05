@@ -257,3 +257,42 @@ test("manual service fields disable only their provider sync controls", async ()
     syncStatus: false,
   });
 });
+
+test("public catalog returns only explicitly selected safe fields", async () => {
+  const db: any = {
+    serviceCategory: {
+      findMany: async () => [
+        { id: "c", platformId: "p", name: "Follow", slug: "follow" },
+      ],
+    },
+    platform: {
+      findMany: async () => [{ id: "p", name: "TikTok", slug: "tiktok" }],
+    },
+    service: {
+      count: async () => 1,
+      findMany: async ({ select }: any) => {
+        assert.equal(select.providerCost, undefined);
+        assert.equal(select.providerId, undefined);
+        return [
+          {
+            id: "s",
+            categoryId: "c",
+            name: "Followers",
+            rate: "10",
+            min: 10,
+            max: 1000,
+            averageTime: "1 giờ",
+            refill: true,
+            cancel: false,
+          },
+        ];
+      },
+    },
+  };
+  const result = await new CatalogService(db).publicCatalog({
+    page: 1,
+    limit: 12,
+  });
+  assert.equal(result.categories[0].platform.name, "TikTok");
+  assert.equal((result.services[0] as any).providerCost, undefined);
+});

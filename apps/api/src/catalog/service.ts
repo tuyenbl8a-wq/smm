@@ -75,6 +75,78 @@ export class CatalogService {
     return this.bulk.apply(actorId, input);
   }
 
+  /** A deliberately small, read-only catalogue for unauthenticated marketing pages. */
+  async publicCatalog(query: { page: number; limit: number; search?: string }) {
+    const page = integer(query.page, "page", 1);
+    const limit = integer(query.limit, "limit", 1);
+    if (limit > 50)
+      throw new CatalogError("PAGINATION_INVALID", "Limit cannot exceed 50");
+    const [categoryRows, platforms] = await Promise.all([
+      this.db.serviceCategory.findMany({
+        where: { active: true, deletedAt: null },
+        select: {
+          id: true,
+          platformId: true,
+          name: true,
+          slug: true,
+        },
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      }),
+      this.db.platform.findMany({
+        where: { active: true },
+        select: { id: true, name: true, slug: true },
+      }),
+    ]);
+    const platformMap = new Map(platforms.map((item: any) => [item.id, item]));
+    const categories = categoryRows.map((category: any) => ({
+      id: category.id,
+      name: category.name,
+      slug: category.slug,
+      platform: category.platformId
+        ? (platformMap.get(category.platformId) ?? null)
+        : null,
+    }));
+    const where = {
+      active: true,
+      deletedAt: null,
+      categoryId: { in: categories.map((category: any) => category.id) },
+      ...(query.search
+        ? {
+            name: { contains: query.search.slice(0, 100), mode: "insensitive" },
+          }
+        : {}),
+    };
+    const [total, services] = await Promise.all([
+      this.db.service.count({ where }),
+      this.db.service.findMany({
+        where,
+        select: {
+          id: true,
+          categoryId: true,
+          name: true,
+          description: true,
+          rate: true,
+          min: true,
+          max: true,
+          averageTime: true,
+          refill: true,
+          cancel: true,
+        },
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+    return {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+      categories,
+      services,
+    };
+  }
+
   simplePricingPreview(input: any) {
     return this.bulk.previewSimple(input);
   }

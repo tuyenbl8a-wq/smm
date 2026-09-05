@@ -96,6 +96,7 @@ export class AuthHandler {
     path: string,
   ): Promise<boolean> {
     if (
+      path !== "/api/v1/public/catalog" &&
       !path.startsWith("/api/v1/auth") &&
       path !== "/api/v1/me" &&
       !path.startsWith("/api/v1/customer") &&
@@ -103,6 +104,20 @@ export class AuthHandler {
     )
       return false;
     try {
+      if (request.method === "GET" && path === "/api/v1/public/catalog") {
+        if (!this.catalog) throw new Error("Catalog service unavailable");
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.catalog.publicCatalog({
+            page: Number(url.searchParams.get("page") ?? "1"),
+            limit: Number(url.searchParams.get("limit") ?? "12"),
+            ...(url.searchParams.get("search")
+              ? { search: url.searchParams.get("search")! }
+              : {}),
+          }),
+        );
+      }
       if (authPaths.has(path)) this.checkBurst(request, path);
       if (request.method === "POST" && path === "/api/v1/auth/register")
         return await this.register(request, response);
@@ -2008,9 +2023,10 @@ export class AuthHandler {
     });
     const csrf = csrfValue(rawToken, this.config.sessionSecret);
     const secure = this.config.environment === "production" ? "; Secure" : "";
+    const domain = this.cookieDomain();
     response.setHeader("set-cookie", [
-      `smm_session=${rawToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${secure}`,
-      `smm_csrf=${csrf}; Path=/; SameSite=Lax; Max-Age=${SESSION_SECONDS}${secure}`,
+      `smm_session=${rawToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${domain}${secure}`,
+      `smm_csrf=${csrf}; Path=/; SameSite=Lax; Max-Age=${SESSION_SECONDS}${domain}${secure}`,
     ]);
     return this.ok(
       response,
@@ -2023,10 +2039,18 @@ export class AuthHandler {
     );
   }
   private clearCookies(response: ServerResponse) {
+    const domain = this.cookieDomain();
+    const secure = this.config.environment === "production" ? "; Secure" : "";
     response.setHeader("set-cookie", [
-      "smm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
-      "smm_csrf=; Path=/; SameSite=Lax; Max-Age=0",
+      `smm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${domain}${secure}`,
+      `smm_csrf=; Path=/; SameSite=Lax; Max-Age=0${domain}${secure}`,
     ]);
+  }
+  private cookieDomain() {
+    if (this.config.environment !== "production") return "";
+    const host = this.config.appUrl.hostname.toLowerCase();
+    const parts = host.split(".");
+    return parts.length >= 2 ? `; Domain=.${parts.slice(-2).join(".")}` : "";
   }
   private async rateLimit(request: IncomingMessage, identity: string) {
     const meta = this.meta(request);
