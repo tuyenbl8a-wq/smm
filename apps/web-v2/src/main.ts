@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { loadConfig } from "@smm/config";
 import { authPage, landingPage } from "./page.js";
 import { customerPage } from "./customer.js";
+import { adminPage, isAdminRoute } from "./admin.js";
 const config = loadConfig(process.env, 3001);
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", config.appUrl),
@@ -45,7 +46,9 @@ const server = createServer((request, response) => {
     /^\/support\/\d+$/.test(path) ||
     path === "/notifications" ||
     path === "/account";
-  const render = customerRoute
+  const render = isAdminRoute(path)
+    ? () => adminPage(config.apiUrl.origin, path)
+    : customerRoute
     ? () => customerPage(config.apiUrl.origin, path)
     : pages[path];
   response.setHeader("content-type", "text/html; charset=utf-8");

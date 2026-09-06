@@ -21,6 +21,10 @@ const main = await readFile(
   new URL("../dist/main.js", import.meta.url),
   "utf8",
 );
+const admin = await readFile(
+  new URL("../dist/admin.js", import.meta.url),
+  "utf8",
+);
 test("public experience includes real catalog, navigation and responsive UI", () => {
   assert.match(page, /api\/v1\/public\/catalog/);
   assert.match(page, /DỊCH VỤ CỦA CHÚNG TÔI/);
@@ -119,4 +123,35 @@ test("public pricing has search, platform/category filters, loading, retry and p
     "URLSearchParams",
   ])
     assert.match(page, new RegExp(token.replace("-", "\\-")));
+});
+test("admin routes, shell and permission-aware navigation are registered", () => {
+  for (const route of [
+    "admin/orders", "admin/users", "admin/staff", "admin/services",
+    "admin/platforms", "admin/categories", "admin/providers", "admin/price-groups",
+    "admin/pricing", "admin/deposits", "admin/payment-methods", "admin/transactions",
+    "admin/coupons", "admin/affiliate", "admin/support", "admin/reports",
+    "admin/logs", "admin/settings",
+  ]) assert.match(main + admin, new RegExp(route.replaceAll("/", "\\/")));
+  assert.match(admin, /admin-shell/);
+  assert.match(admin, /data-permission/);
+  assert.match(admin, /SUPER_ADMIN/);
+  assert.match(admin, /PERMISSION_DENIED/);
+});
+test("admin orders keep website IDs distinct and use protected operations", () => {
+  assert.match(admin, /Website Order ID/);
+  assert.match(admin, /Provider Order ID/);
+  assert.match(admin, /providerOrderId/);
+  assert.match(admin, /replace\(\/\^#\//);
+  assert.match(admin, /filter\(id=>/);
+  assert.match(admin, /\\d\{6,\}/);
+  assert.match(admin, /navigator\.clipboard\.writeText\(ids\.join/);
+  for (const operation of ["sync", "refund", "manualOverride", "targetRefundAmount", "idempotency-key"])
+    assert.match(admin, new RegExp(operation));
+  assert.match(admin + client, /x-csrf-token/);
+});
+test("admin UI excludes secret fields and never stores sessions locally", () => {
+  assert.match(admin, /password\|token\|secret\|credential\|encrypted\|authorization/);
+  assert.doesNotMatch(admin + client, /localStorage/);
+  for (const secret of ["SESSION_SECRET", "JWT_SECRET", "ENCRYPTION_KEY", "DATABASE_URL", "POSTGRES_PASSWORD", "REDIS_URL"])
+    assert.doesNotMatch(admin, new RegExp(secret));
 });
