@@ -240,6 +240,61 @@ export class DepositService {
       take: 100,
     });
   }
+  async adminOperate(actorId: string, id: string, action: unknown, reasonValue: unknown) {
+    const operation = String(action ?? "").toUpperCase();
+    const reason = String(reasonValue ?? "").trim();
+    if (reason.length < 3)
+      throw new PaymentError("REASON_REQUIRED", "Reason is required");
+    if (!["APPROVE", "REJECT", "REVIEW"].includes(operation))
+      throw new PaymentError("DEPOSIT_ACTION_INVALID", "Invalid deposit action");
+    return this.db.$transaction(async (tx: any) => {
+      const rows = tx.$queryRawUnsafe
+        ? await tx.$queryRawUnsafe(
+            `SELECT * FROM "deposits" WHERE "id" = $1::uuid FOR UPDATE`,
+            id,
+          )
+        : [];
+      const deposit = rows[0] ?? (await tx.deposit.findUnique({ where: { id } }));
+      if (!deposit)
+        throw new PaymentError("DEPOSIT_NOT_FOUND", "Deposit not found");
+      const current = String(deposit.status);
+      if (operation === "APPROVE") {
+        const key = `deposit-approval:${id}`;
+        const existing = await tx.walletTransaction.findUnique({
+          where: { idempotencyKey: key },
+        });
+        if (existing) {
+          if (current !== "PAID")
+            throw new PaymentError("DEPOSIT_STATE_CONFLICT", "Deposit state conflicts with existing credit");
+          return { deposit, walletTransaction: existing, idempotent: true };
+        }
+        if (!["PENDING", "MANUAL_REVIEW"].includes(current))
+          throw new PaymentError("DEPOSIT_TRANSITION_INVALID", "Deposit cannot be approved from its current status");
+        const amount = String(deposit.credited_amount ?? deposit.creditedAmount);
+        const walletRows = await tx.$queryRawUnsafe(
+          `UPDATE "wallets" SET "balance" = "balance" + $1::numeric, "version" = "version" + 1, "updated_at" = CURRENT_TIMESTAMP WHERE "user_id" = $2::uuid RETURNING "id", "balance" - $1::numeric AS "balanceBefore", "balance" AS "balanceAfter"`,
+          amount,
+          deposit.user_id ?? deposit.userId,
+        );
+        const wallet = walletRows[0];
+        if (!wallet) throw new PaymentError("WALLET_NOT_FOUND", "Wallet not found");
+        const userId = deposit.user_id ?? deposit.userId;
+        const ledger = await tx.walletTransaction.create({ data: { walletId: wallet.id, userId, type: "DEPOSIT", amount, balanceBefore: wallet.balanceBefore, balanceAfter: wallet.balanceAfter, referenceId: id, idempotencyKey: key, description: reason.slice(0, 500), metadata: { depositId: id, approvedBy: actorId } } });
+        const updated = await tx.deposit.update({ where: { id }, data: { status: "PAID", paidAt: new Date() } });
+        await tx.auditLog.create({ data: { actorId, action: "DEPOSIT_APPROVE", resource: "deposit", resourceId: id, before: { status: current }, after: { status: "PAID", reason, walletTransactionId: ledger.id } } });
+        return { deposit: updated, walletTransaction: ledger, idempotent: false };
+      }
+      if (!["PENDING", "MANUAL_REVIEW"].includes(current))
+        throw new PaymentError("DEPOSIT_TRANSITION_INVALID", "Deposit cannot be changed from its current status");
+      const next = operation === "REJECT" ? "CANCELED" : "MANUAL_REVIEW";
+      if (current === next)
+        throw new PaymentError("DEPOSIT_TRANSITION_INVALID", "Deposit already has this status");
+      const updated = await tx.deposit.update({ where: { id }, data: { status: next } });
+      await tx.auditLog.create({ data: { actorId, action: operation === "REJECT" ? "DEPOSIT_REJECT" : "DEPOSIT_REVIEW", resource: "deposit", resourceId: id, before: { status: current }, after: { status: next, reason } } });
+      return { deposit: updated };
+    });
+  }
+
   async adminHistory(query: any = {}) {
     const rawStatus = String(query.status ?? "").trim(),
       status = ["", "undefined", "null"].includes(rawStatus)
@@ -306,8 +361,8 @@ export class DepositService {
         ...row,
         user: await this.db.user.findUnique({
           where: { id: row.userId },
-          select: { id: true, email: true, username: true },
-        }),
+          select: { id: true, userNumber: true, email: true, username: true },
+        }).then((user: any) => user ? { ...user, userNumber: String(user.userNumber) } : null),
         paymentMethod: await this.db.paymentMethod.findUnique({
           where: { id: row.paymentMethodId },
           select: { code: true, name: true },

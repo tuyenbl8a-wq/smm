@@ -137,3 +137,46 @@ test("concurrent deposit reservations cannot exceed daily count", async () => {
   assert.equal(results.filter((row) => row.status === "rejected").length, 1);
   assert.equal(deposits.length, 1);
 });
+
+test("manual deposit approval is atomic, reasoned and idempotent", async () => {
+  const state: any = {
+    deposit: { id: "11111111-1111-4111-8111-111111111111", userId: "22222222-2222-4222-8222-222222222222", status: "PENDING", creditedAmount: "125.00000000" },
+    ledger: null,
+    credits: 0,
+    audits: [],
+  };
+  const tx: any = {
+    $queryRawUnsafe: async (sql: string) => {
+      if (sql.includes('FROM "deposits"')) return [state.deposit];
+      state.credits++;
+      return [{ id: "wallet", balanceBefore: "10", balanceAfter: "135" }];
+    },
+    deposit: {
+      findUnique: async () => state.deposit,
+      update: async ({ data }: any) => (state.deposit = { ...state.deposit, ...data }),
+    },
+    walletTransaction: {
+      findUnique: async () => state.ledger,
+      create: async ({ data }: any) => (state.ledger = { id: "ledger", ...data }),
+    },
+    auditLog: { create: async ({ data }: any) => state.audits.push(data) },
+  };
+  const service = new DepositService({ $transaction: async (fn: any) => fn(tx) });
+  const first = await service.adminOperate("actor", state.deposit.id, "APPROVE", "Đã đối soát ngân hàng");
+  assert.equal(first.idempotent, false);
+  assert.equal(state.deposit.status, "PAID");
+  assert.equal(state.credits, 1);
+  assert.equal(state.ledger.type, "DEPOSIT");
+  assert.equal(state.audits[0].after.reason, "Đã đối soát ngân hàng");
+  const again = await service.adminOperate("actor", state.deposit.id, "APPROVE", "Đã đối soát ngân hàng");
+  assert.equal(again.idempotent, true);
+  assert.equal(state.credits, 1);
+});
+
+test("manual deposit operations require a reason and valid transition", async () => {
+  const deposit = { id: "11111111-1111-4111-8111-111111111111", userId: "u", status: "PAID", creditedAmount: "1" };
+  const tx: any = { $queryRawUnsafe: async () => [deposit], deposit: { findUnique: async () => deposit }, walletTransaction: { findUnique: async () => null } };
+  const service = new DepositService({ $transaction: async (fn: any) => fn(tx) });
+  await assert.rejects(() => service.adminOperate("actor", deposit.id, "REJECT", ""), (error: any) => error.code === "REASON_REQUIRED");
+  await assert.rejects(() => service.adminOperate("actor", deposit.id, "REJECT", "Không hợp lệ"), (error: any) => error.code === "DEPOSIT_TRANSITION_INVALID");
+});
