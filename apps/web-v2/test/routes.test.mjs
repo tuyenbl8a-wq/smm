@@ -349,3 +349,31 @@ test("five persistent runtime themes are available and safely allowlisted", asyn
     /Bạn muốn áp dụng giao diện này cho khách hàng/,
   );
 });
+
+test("customer and conditional payment workflows are behavioral and secret-safe", () => {
+  assert.match(adminOperations, /\['ID khách hàng','#'\+safe\.userNumber\]/);
+  assert.match(adminOperations, /Hồ sơ khách hàng/);
+  assert.match(adminOperations, /Chuyển khoản ngân hàng/);
+  assert.match(adminOperations, /Sử dụng API VietQR nâng cao/);
+  assert.match(adminOperations, /advanced\.checked/);
+  assert.match(adminOperations, /Kết nối API Casso/);
+  assert.match(adminOperations, /casso\.checked/);
+  assert.match(adminOperations, /mode\.value!==['"]AUTO['"]/);
+  for (const option of ["limits", "fees", "daily", "bonus"])
+    assert.match(adminOperations, new RegExp(`data-option=.?${option}`));
+  assert.match(adminOperations, /feeFixed\)\|\|nonzero\(initial\.feePercent/);
+  assert.match(adminOperations, /dailyTransactionLimit\)\|\|nonzero\(initial\.dailyAmountLimit/);
+  assert.match(adminOperations, /secret\(n,l\).*input\(n,l,''/);
+  assert.match(adminOperations, /Đã cấu hình · để trống để giữ nguyên/);
+});
+
+test("price groups use customer lookup and deposits expose real protected operations", () => {
+  assert.match(adminOperations, /customerLookup/);
+  assert.match(adminOperations, /staff\/candidates/);
+  assert.match(adminOperations, /#100001, tên đăng nhập hoặc email/);
+  assert.doesNotMatch(adminOperations, /name:'userIds'.*type:'textarea'/);
+  for (const label of ["Xem chi tiết", "Duyệt", "Từ chối", "Đánh dấu cần kiểm tra"])
+    assert.match(adminOperations, new RegExp(label));
+  assert.match(adminOperations, /admin\/deposits\/'\+id\+'\/action/);
+  assert.match(adminOperations, /can\('payments\.manage'\)/);
+});

@@ -640,6 +640,19 @@ export class AuthHandler {
           }),
         );
       }
+      const depositOperation =
+        /^\/api\/v1\/admin\/deposits\/([0-9a-f-]{36})\/action$/.exec(path);
+      if (request.method === "POST" && depositOperation) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(response, 403, "PERMISSION_DENIED", "Permission denied");
+        const body = await this.body(request);
+        return this.ok(response, await this.deposits!.adminOperate(
+          auth.user.id,
+          depositOperation[1]!,
+          body.action,
+          body.reason,
+        ));
+      }
       const adminTicket = /^\/api\/v1\/admin\/tickets\/(\d+)$/.exec(path);
       if (request.method === "GET" && adminTicket) {
         if (

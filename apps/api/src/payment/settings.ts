@@ -204,6 +204,8 @@ export class PaymentSettingsService {
       throw new Error("PAYMENT_PROVIDER_TYPE_INVALID");
     const minAmount = this.decimal(input.minAmount, "min_amount"),
       maxAmount = this.decimal(input.maxAmount, "max_amount"),
+      feeFixed = this.decimal(input.feeFixed, "fee_fixed"),
+      feePercent = this.decimal(input.feePercent, "fee_percent", 6),
       dailyAmountLimit = this.decimal(
         input.dailyAmountLimit,
         "daily_amount_limit",
@@ -277,6 +279,8 @@ export class PaymentSettingsService {
         icon: input.icon ? String(input.icon).trim().slice(0, 2048) : null,
         minAmount,
         maxAmount,
+        feeFixed,
+        feePercent,
         exchangeRate,
         dailyTransactionLimit,
         dailyAmountLimit,
