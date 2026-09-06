@@ -307,3 +307,45 @@ test("numeric public user and service IDs replace UUID presentation", () => {
   assert.match(admin, /o\.user\?\.userNumber/);
   assert.match(admin, /o\.service\?\.serviceNumber/);
 });
+test("specialized admin renderer survives without generic overwrite", async () => {
+  const { renderWithFallback } = await import("../dist/admin-render-flow.js");
+  for (const route of [
+    "/admin/users",
+    "/admin/staff",
+    "/admin/services",
+    "/admin/payment-methods",
+  ]) {
+    const calls = [];
+    renderWithFallback(
+      route,
+      () => calls.push("specialized"),
+      () => calls.push("fallback"),
+    );
+    assert.deepEqual(calls, ["specialized"]);
+  }
+  const calls = [];
+  renderWithFallback(
+    "/admin/unknown",
+    () => calls.push("specialized"),
+    () => calls.push("fallback"),
+  );
+  assert.deepEqual(calls, ["fallback"]);
+});
+test("five persistent runtime themes are available and safely allowlisted", async () => {
+  const themes = await import("../dist/themes.js");
+  assert.equal(themes.themePresets.length, 5);
+  assert.deepEqual(
+    themes.themePresets.map((x) => x.id),
+    themes.themeIds,
+  );
+  assert.match(
+    themes.runtimeThemeScript("http://api", "public"),
+    /public\/settings/,
+  );
+  assert.doesNotMatch(themes.themeStyles, /<script|javascript:/i);
+  assert.match(adminOperations, /Bản xem trước không thay đổi/);
+  assert.match(
+    adminOperations,
+    /Bạn muốn áp dụng giao diện này cho khách hàng/,
+  );
+});
