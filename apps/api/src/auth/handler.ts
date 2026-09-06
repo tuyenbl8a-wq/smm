@@ -635,7 +635,11 @@ export class AuthHandler {
       }
       const adminTicket = /^\/api\/v1\/admin\/tickets\/(\d+)$/.exec(path);
       if (request.method === "GET" && adminTicket) {
-        if (!canAccessAdmin(auth.access, "tickets.manage"))
+        if (
+          !canAccessAdmin(auth.access, "support.view") &&
+          !canAccessAdmin(auth.access, "support.manage") &&
+          !canAccessAdmin(auth.access, "tickets.manage")
+        )
           return this.error(
             response,
             403,
@@ -1412,6 +1416,36 @@ export class AuthHandler {
           response,
           await this.support!.create(auth.user.id, await this.body(request)),
         );
+      const adminTicketAction =
+        /^\/api\/v1\/admin\/tickets\/(\d+)\/(reply|close|reopen)$/.exec(path);
+      if (request.method === "POST" && adminTicketAction) {
+        if (
+          !canAccessAdmin(auth.access, "support.manage") &&
+          !canAccessAdmin(auth.access, "tickets.manage")
+        )
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Bạn không có quyền xử lý ticket",
+          );
+        const ticketId = BigInt(adminTicketAction[1]!);
+        return this.ok(
+          response,
+          adminTicketAction[2] === "reply"
+            ? await this.support!.reply(
+                auth.user.id,
+                ticketId,
+                await this.body(request),
+                true,
+              )
+            : await this.support!.adminStatus(
+                auth.user.id,
+                ticketId,
+                adminTicketAction[2] === "close" ? "CLOSED" : "OPEN",
+              ),
+        );
+      }
       const adminAttachmentUpload =
         /^\/api\/v1\/admin\/tickets\/(\d+)\/attachments$/.exec(path);
       if (request.method === "POST" && adminAttachmentUpload) {
