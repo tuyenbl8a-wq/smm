@@ -115,6 +115,12 @@ export class AuthHandler {
             ...(url.searchParams.get("search")
               ? { search: url.searchParams.get("search")! }
               : {}),
+            ...(url.searchParams.get("platform")
+              ? { platform: url.searchParams.get("platform")! }
+              : {}),
+            ...(url.searchParams.get("category")
+              ? { category: url.searchParams.get("category")! }
+              : {}),
           }),
         );
       }
@@ -185,6 +191,9 @@ export class AuthHandler {
             ...(url.searchParams.get("search")
               ? { search: url.searchParams.get("search")! }
               : {}),
+            ...(url.searchParams.get("platform")
+              ? { platform: url.searchParams.get("platform")! }
+              : {}),
           }),
         );
       }
@@ -239,11 +248,14 @@ export class AuthHandler {
         const url = new URL(request.url ?? path, this.config.apiUrl);
         return this.ok(
           response,
-          await this.orders.list(
-            auth.user.id,
-            Number(url.searchParams.get("page") ?? "1"),
-            Number(url.searchParams.get("limit") ?? "20"),
-          ),
+          await this.orders.list(auth.user.id, {
+            page: Number(url.searchParams.get("page") ?? "1"),
+            limit: Number(url.searchParams.get("limit") ?? "20"),
+            search: url.searchParams.get("search") ?? "",
+            status: url.searchParams.get("status") ?? "",
+            from: url.searchParams.get("from") ?? "",
+            to: url.searchParams.get("to") ?? "",
+          }),
         );
       }
       const orderDetail =

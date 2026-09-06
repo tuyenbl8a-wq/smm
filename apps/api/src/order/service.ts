@@ -171,12 +171,20 @@ export class OrderService {
     }
   }
   async detail(userId: string, reference: string) {
-    const numericId = /^\d+$/.test(reference) ? BigInt(reference) - 100000n : null;
+    const numericId = /^\d+$/.test(reference)
+      ? BigInt(reference) - 100000n
+      : null;
     const order = await this.db.order.findFirst({
-      where: numericId !== null && numericId > 0n ? { id: numericId, userId } : { publicId: reference, userId },
+      where:
+        numericId !== null && numericId > 0n
+          ? { id: numericId, userId }
+          : { publicId: reference, userId },
     });
     if (!order) throw new OrderError("ORDER_NOT_FOUND", "Order not found");
-    const service = await this.db.service.findUnique({ where: { id: order.serviceId }, select: { id: true, name: true } });
+    const service = await this.db.service.findUnique({
+      where: { id: order.serviceId },
+      select: { id: true, name: true },
+    });
     const [history, refills, cancellations] = await Promise.all([
       this.db.orderHistory.findMany({
         where: { orderId: order.id },
@@ -198,12 +206,62 @@ export class OrderService {
       startCount: order.startCount,
       remains: order.remains,
       updatedAt: order.updatedAt,
-      history,
-      refills,
-      cancellations,
+      history: history.map((item: any) => ({
+        fromStatus: item.fromStatus,
+        toStatus: item.toStatus,
+        createdAt: item.createdAt,
+      })),
+      refills: refills.map((item: any) => ({
+        status: item.status,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+      })),
+      cancellations: cancellations.map((item: any) => ({
+        status: item.status,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+      })),
+      capabilities: {
+        refill:
+          Boolean(
+            (
+              await this.db.service.findUnique({
+                where: { id: order.serviceId },
+                select: { refill: true },
+              })
+            )?.refill,
+          ) && order.status === "COMPLETED",
+        cancel:
+          Boolean(
+            (
+              await this.db.service.findUnique({
+                where: { id: order.serviceId },
+                select: { cancel: true },
+              })
+            )?.cancel,
+          ) && ["PENDING", "PROCESSING", "IN_PROGRESS"].includes(order.status),
+      },
     };
   }
-  async list(userId: string, page: number, limit: number) {
+  async list(
+    userId: string,
+    pageOrQuery:
+      | number
+      | {
+          page: number;
+          limit: number;
+          search?: string;
+          status?: string;
+          from?: string;
+          to?: string;
+        },
+    oldLimit?: number,
+  ) {
+    const query =
+      typeof pageOrQuery === "number"
+        ? { page: pageOrQuery, limit: oldLimit ?? 20 }
+        : pageOrQuery;
+    const { page, limit } = query;
     if (
       !Number.isInteger(page) ||
       page < 1 ||
@@ -212,24 +270,69 @@ export class OrderService {
       limit > 100
     )
       throw new OrderError("PAGINATION_INVALID", "Invalid pagination");
+    const statuses = [
+      "PENDING",
+      "PROCESSING",
+      "IN_PROGRESS",
+      "COMPLETED",
+      "PARTIAL",
+      "CANCELED",
+      "FAILED",
+    ];
+    if (query.status && !statuses.includes(query.status))
+      throw new OrderError("STATUS_INVALID", "Invalid status filter");
+    const search = String(query.search ?? "")
+        .trim()
+        .slice(0, 200),
+      numeric = /^#?\d{6,}$/.test(search)
+        ? BigInt(search.replace(/^#/, "")) - 100000n
+        : null;
+    const createdAt = {
+      ...(query.from ? { gte: new Date(query.from + "T00:00:00.000Z") } : {}),
+      ...(query.to ? { lte: new Date(query.to + "T23:59:59.999Z") } : {}),
+    };
+    const where: any = {
+      userId,
+      ...(query.status ? { status: query.status } : {}),
+      ...(Object.keys(createdAt).length ? { createdAt } : {}),
+      ...(search
+        ? numeric !== null && numeric > 0n
+          ? { id: numeric }
+          : {
+              OR: [
+                { link: { contains: search, mode: "insensitive" } },
+                {
+                  service: { name: { contains: search, mode: "insensitive" } },
+                },
+              ],
+            }
+        : {}),
+    };
     const [total, rows] = await Promise.all([
-      this.db.order.count({ where: { userId } }),
+      this.db.order.count({ where }),
       this.db.order.findMany({
-        where: { userId },
+        where,
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
         take: limit,
       }),
     ]);
     const serviceIds = [...new Set(rows.map((x: any) => x.serviceId))];
-    const services = serviceIds.length ? await this.db.service.findMany({ where: { id: { in: serviceIds } }, select: { id: true, name: true } }) : [];
+    const services = serviceIds.length
+      ? await this.db.service.findMany({
+          where: { id: { in: serviceIds } },
+          select: { id: true, name: true },
+        })
+      : [];
     const serviceMap = new Map(services.map((x: any) => [x.id, x]));
     return {
       page,
       limit,
       total,
       pages: Math.ceil(total / limit),
-      items: rows.map((x: any) => this.serialize({ ...x, service: serviceMap.get(x.serviceId) })),
+      items: rows.map((x: any) =>
+        this.serialize({ ...x, service: serviceMap.get(x.serviceId) }),
+      ),
     };
   }
   private serialize(x: any) {
@@ -246,7 +349,6 @@ export class OrderService {
       discountAmount: String(x.discountAmount ?? 0),
       couponCode: x.couponCode,
       saleRate: String(x.saleRate),
-      profit: String(x.profit),
       status: x.status,
       createdAt: x.createdAt,
     };

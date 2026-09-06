@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { loadConfig } from "@smm/config";
-import { authPage, dashboardHandoff, landingPage } from "./page.js";
+import { authPage, landingPage } from "./page.js";
+import { customerPage } from "./customer.js";
 const config = loadConfig(process.env, 3001);
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", config.appUrl),
@@ -27,15 +28,32 @@ const server = createServer((request, response) => {
         "reset",
         url.searchParams.get("token") ?? "",
       ),
-    "/dashboard": () => dashboardHandoff(config.apiUrl.origin),
   };
-  const render = pages[path];
+  const customerRoute =
+    path === "/dashboard" ||
+    path === "/orders" ||
+    path === "/orders/new" ||
+    /^\/orders\/(?:[0-9]{6,}|[0-9a-f-]{36})$/.test(path) ||
+    path === "/services" ||
+    path === "/wallet" ||
+    path === "/deposit" ||
+    /^\/deposit\/[0-9a-f-]{36}$/.test(path) ||
+    path === "/transactions" ||
+    path === "/affiliate" ||
+    path === "/api" ||
+    path === "/support" ||
+    /^\/support\/\d+$/.test(path) ||
+    path === "/notifications" ||
+    path === "/account";
+  const render = customerRoute
+    ? () => customerPage(config.apiUrl.origin, path)
+    : pages[path];
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("referrer-policy", "strict-origin-when-cross-origin");
   response.setHeader(
     "content-security-policy",
-    `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${config.apiUrl.origin}; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
+    `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src https: data:; connect-src ${config.apiUrl.origin}; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
   );
   if (!render) {
     response.statusCode = 404;
