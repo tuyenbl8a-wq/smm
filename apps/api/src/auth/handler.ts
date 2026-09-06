@@ -635,7 +635,11 @@ export class AuthHandler {
       }
       const adminTicket = /^\/api\/v1\/admin\/tickets\/(\d+)$/.exec(path);
       if (request.method === "GET" && adminTicket) {
-        if (!canAccessAdmin(auth.access, "tickets.manage"))
+        if (
+          !canAccessAdmin(auth.access, "support.view") &&
+          !canAccessAdmin(auth.access, "support.manage") &&
+          !canAccessAdmin(auth.access, "tickets.manage")
+        )
           return this.error(
             response,
             403,
@@ -1327,6 +1331,22 @@ export class AuthHandler {
           ),
         );
       }
+      if (request.method === "DELETE" && paymentMethodUpdate) {
+        if (!canAccessAdmin(auth.access, "payments.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Bạn không có quyền xóa phương thức thanh toán",
+          );
+        return this.ok(
+          response,
+          await this.paymentSettings!.archiveMethod(
+            auth.user.id,
+            paymentMethodUpdate[1]!,
+          ),
+        );
+      }
       if (request.method === "POST" && path === "/api/v1/customer/api-keys")
         return this.ok(response, await this.reseller!.generate(auth.user.id));
       const keyDisable =
@@ -1407,11 +1427,54 @@ export class AuthHandler {
           ),
         );
       }
+      if (request.method === "DELETE" && couponUpdate) {
+        if (!canAccessAdmin(auth.access, "coupons.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Bạn không có quyền xóa mã giảm giá",
+          );
+        return this.ok(
+          response,
+          await this.promotions!.archiveCoupon(auth.user.id, couponUpdate[1]!),
+        );
+      }
       if (request.method === "POST" && path === "/api/v1/customer/tickets")
         return this.ok(
           response,
           await this.support!.create(auth.user.id, await this.body(request)),
         );
+      const adminTicketAction =
+        /^\/api\/v1\/admin\/tickets\/(\d+)\/(reply|close|reopen)$/.exec(path);
+      if (request.method === "POST" && adminTicketAction) {
+        if (
+          !canAccessAdmin(auth.access, "support.manage") &&
+          !canAccessAdmin(auth.access, "tickets.manage")
+        )
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Bạn không có quyền xử lý ticket",
+          );
+        const ticketId = BigInt(adminTicketAction[1]!);
+        return this.ok(
+          response,
+          adminTicketAction[2] === "reply"
+            ? await this.support!.reply(
+                auth.user.id,
+                ticketId,
+                await this.body(request),
+                true,
+              )
+            : await this.support!.adminStatus(
+                auth.user.id,
+                ticketId,
+                adminTicketAction[2] === "close" ? "CLOSED" : "OPEN",
+              ),
+        );
+      }
       const adminAttachmentUpload =
         /^\/api\/v1\/admin\/tickets\/(\d+)\/attachments$/.exec(path);
       if (request.method === "POST" && adminAttachmentUpload) {
@@ -1627,6 +1690,28 @@ export class AuthHandler {
             ),
           );
       }
+      const catalogArchive =
+        /^\/api\/v1\/admin\/catalog\/(platforms|categories|services|price-groups)\/([0-9a-f-]{36})$/.exec(
+          path,
+        );
+      if (request.method === "DELETE" && catalogArchive) {
+        if (!canAccessAdmin(auth.access, "services.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Bạn không có quyền xóa dữ liệu danh mục",
+          );
+        return this.ok(
+          response,
+          await this.catalog!.archiveEntity(
+            auth.user.id,
+            catalogArchive[1]! as
+              "platforms" | "categories" | "services" | "price-groups",
+            catalogArchive[2]!,
+          ),
+        );
+      }
       if (
         request.method === "POST" &&
         path.startsWith("/api/v1/admin/providers")
@@ -1693,6 +1778,21 @@ export class AuthHandler {
               ? await this.providers.test(action[1]!)
               : await this.providers.sync(auth.user.id, action[1]!),
           );
+      }
+      const providerArchive =
+        /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})$/.exec(path);
+      if (request.method === "DELETE" && providerArchive) {
+        if (!canAccessAdmin(auth.access, "providers.manage"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Bạn không có quyền xóa nhà cung cấp",
+          );
+        return this.ok(
+          response,
+          await this.providers!.archive(auth.user.id, providerArchive[1]!),
+        );
       }
       if (
         request.method === "POST" &&
