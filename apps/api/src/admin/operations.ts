@@ -51,6 +51,7 @@ const CANONICAL_ADMIN_PERMISSIONS = [
 ] as const;
 const STAFF_CANDIDATE_USER_SELECT = {
   id: true,
+  userNumber: true,
   username: true,
   email: true,
   status: true,
@@ -990,7 +991,8 @@ export class AdminOperationsService {
         "STAFF_SEARCH_INVALID",
         "Nhập ít nhất 2 ký tự để tìm tài khoản",
       );
-    const uuid =
+    const numericTerm = term.replace(/^#/, ""),
+      uuid =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
           term,
         ),
@@ -998,6 +1000,8 @@ export class AdminOperationsService {
         { username: { contains: term, mode: "insensitive" } },
         { email: { contains: term, mode: "insensitive" } },
       ];
+    if (/^\d+$/.test(numericTerm))
+      searchConditions.push({ userNumber: { equals: BigInt(numericTerm) } });
     if (uuid) searchConditions.push({ id: term });
     const users = await this.db.user.findMany({
       where: {
@@ -1038,6 +1042,7 @@ export class AdminOperationsService {
       const { priceGroupId, ...safeUser } = user;
       return {
         ...safeUser,
+        userNumber: String(safeUser.userNumber),
         priceGroup: priceGroupId
           ? (priceGroupMap.get(priceGroupId) ?? null)
           : null,
@@ -1047,6 +1052,41 @@ export class AdminOperationsService {
           .filter(Boolean),
       };
     });
+  }
+
+  async customerSearch(search: unknown) {
+    const term = String(search ?? "").trim();
+    if (term.length < 2 || term.length > 254)
+      throw new AdminOperationError(
+        "USER_SEARCH_INVALID",
+        "Nhập ít nhất 2 ký tự để tìm tài khoản",
+      );
+    const numericTerm = term.replace(/^#/, ""),
+      conditions: any[] = [
+        { username: { contains: term, mode: "insensitive" } },
+        { email: { contains: term, mode: "insensitive" } },
+      ];
+    if (/^\d+$/.test(numericTerm))
+      conditions.push({ userNumber: { equals: BigInt(numericTerm) } });
+    const users = await this.db.user.findMany({
+      where: { deletedAt: null, OR: conditions },
+      select: {
+        id: true,
+        userNumber: true,
+        username: true,
+        email: true,
+        status: true,
+      },
+      take: 20,
+      orderBy: { createdAt: "desc" },
+    });
+    return users.map((user: any) => ({
+      id: user.id,
+      userNumber: String(user.userNumber),
+      username: user.username,
+      email: user.email,
+      status: user.status,
+    }));
   }
 
   async createStaff(
