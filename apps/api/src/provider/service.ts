@@ -738,6 +738,54 @@ export class ProviderService {
       return { id: item.id, status: item.status };
     });
   }
+
+  async archive(actorId: string, id: string) {
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.provider.findFirst({
+        where: { id, deletedAt: null },
+      });
+      if (!before)
+        throw new ProviderConfigError(
+          "PROVIDER_NOT_FOUND",
+          "Không tìm thấy nhà cung cấp",
+        );
+      const item = await tx.provider.update({
+        where: { id },
+        data: {
+          status: "INACTIVE",
+          deletedAt: new Date(),
+          autoSyncEnabled: false,
+        },
+      });
+      await tx.serviceMapping.updateMany({
+        where: {
+          providerServiceId: {
+            in: (
+              await tx.providerService.findMany({
+                where: { providerId: id },
+                select: { id: true },
+              })
+            ).map((x: any) => x.id),
+          },
+        },
+        data: { active: false },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "PROVIDER_ARCHIVE",
+          resource: "provider",
+          resourceId: id,
+          before: { status: before.status },
+          after: { status: item.status, archived: true },
+        },
+      });
+      return {
+        archived: true,
+        message: "Đã lưu trữ nhà cung cấp và tắt các ánh xạ đang hoạt động.",
+      };
+    });
+  }
   async sync(actorId: string, id: string) {
     const provider = await this.db.provider.findUnique({ where: { id } });
     if (!provider)

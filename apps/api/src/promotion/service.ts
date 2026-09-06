@@ -180,6 +180,36 @@ export class PromotionService {
     });
   }
 
+  async archiveCoupon(actorId: string, id: string) {
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.coupon.findUnique({ where: { id } });
+      if (!before)
+        throw new PromotionError(
+          "COUPON_NOT_FOUND",
+          "Mã giảm giá không tồn tại.",
+        );
+      const item = await tx.coupon.update({
+        where: { id },
+        data: { active: false },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "COUPON_ARCHIVE",
+          resource: "coupon",
+          resourceId: id,
+          before: { active: before.active },
+          after: { active: false, archived: true },
+        },
+      });
+      return {
+        item,
+        archived: true,
+        message: "Đã lưu trữ mã giảm giá; lịch sử sử dụng được giữ nguyên.",
+      };
+    });
+  }
+
   async referralSummary(userId: string) {
     let affiliate = await this.db.affiliate.findUnique({ where: { userId } });
     if (!affiliate) {

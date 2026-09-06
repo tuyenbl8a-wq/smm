@@ -126,7 +126,17 @@ export class CatalogService {
       categoryId: { in: categories.map((category: any) => category.id) },
       ...(query.search
         ? {
-            name: { contains: query.search.slice(0, 100), mode: "insensitive" },
+            OR: [
+              {
+                name: {
+                  contains: query.search.slice(0, 100),
+                  mode: "insensitive",
+                },
+              },
+              ...(/^\d+$/.test(query.search)
+                ? [{ serviceNumber: { equals: BigInt(query.search) } }]
+                : []),
+            ],
           }
         : {}),
     };
@@ -136,6 +146,7 @@ export class CatalogService {
         where,
         select: {
           id: true,
+          serviceNumber: true,
           categoryId: true,
           name: true,
           description: true,
@@ -336,6 +347,7 @@ export class CatalogService {
         const rule: any = ruleMap.get(service.id);
         return {
           ...service,
+          serviceNumber: String(service.serviceNumber),
           rate: resolveCustomerRate({
             service: source,
             group,
@@ -410,6 +422,7 @@ export class CatalogService {
               active: x.active,
               priceReviewStatus: x.priceReviewStatus,
             }),
+        serviceNumber: String(x.serviceNumber),
       })),
       priceGroups: includePricing ? priceGroups : [],
       priceRules: includePricing
@@ -1349,6 +1362,65 @@ export class CatalogService {
         item,
       );
       return item;
+    });
+  }
+
+  async archiveEntity(
+    actorId: string,
+    kind: "platforms" | "categories" | "services" | "price-groups",
+    id: string,
+  ) {
+    return this.db.$transaction(async (tx: any) => {
+      const config = {
+        platforms: {
+          model: "platform",
+          resource: "platform",
+          data: { active: false },
+        },
+        categories: {
+          model: "serviceCategory",
+          resource: "category",
+          data: { active: false, deletedAt: new Date() },
+        },
+        services: {
+          model: "service",
+          resource: "service",
+          data: { active: false, deletedAt: new Date() },
+        },
+        "price-groups": {
+          model: "priceGroup",
+          resource: "price_group",
+          data: { active: false },
+        },
+      }[kind];
+      const repository = tx[config.model];
+      const before = await repository.findUnique({ where: { id } });
+      if (!before)
+        throw new CatalogError(
+          "CATALOG_ITEM_NOT_FOUND",
+          "Không tìm thấy dữ liệu cần xóa",
+        );
+      const item = await repository.update({
+        where: { id },
+        data: config.data,
+      });
+      await this.audit(
+        tx,
+        actorId,
+        "CATALOG_ARCHIVE",
+        config.resource,
+        id,
+        before,
+        {
+          ...item,
+          archiveReason: "Giữ nguyên lịch sử đơn hàng, giá và nhật ký",
+        },
+      );
+      return {
+        item,
+        archived: true,
+        message: "Đã lưu trữ an toàn; dữ liệu lịch sử được giữ nguyên.",
+      };
     });
   }
   async createPriceGroup(actorId: string, input: any) {
