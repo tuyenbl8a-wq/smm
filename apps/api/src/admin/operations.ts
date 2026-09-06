@@ -2388,19 +2388,39 @@ export class AdminOperationsService {
         "themeAuth",
         "themeCustomer",
         "themeOptions",
+        "themeContent",
       ]),
       themeIds = new Set([
-        "MIDNIGHT_CYAN",
-        "AURORA_PURPLE",
-        "CLEAN_LIGHT",
-        "EMERALD_PRO",
-        "ROYAL_BLUE",
+        "DARK_LUXURY",
+        "MINIMAL_LIGHT",
+        "CYBER_NEON",
+        "SOFT_PASTEL",
+        "NATURE_GREEN",
+        "GLASSMORPHISM",
+        "BOLD_ECOMMERCE",
+        "DASHBOARD_FOCUSED",
+        "CREATIVE_AGENCY",
+        "PREMIUM_CORPORATE",
+        "ZEN_JAPAN",
+        "EDITORIAL_IVORY",
+        "FUTURE_AI",
+        "SAAS_ULTRA",
+        "TECH_ENTERPRISE",
+        "CREATOR_POP",
+        "BLACK_GOLD",
+        "TRUST_FINTECH",
+        "CLEAN_MARKET",
+        "CONVERSION_ORANGE",
       ]),
       entries = Object.entries(input).filter(([key, value]) => {
         if (!allowed.has(key)) return false;
         if (key === "themeMode")
           return value === "GLOBAL" || value === "SEPARATE";
-        if (key.startsWith("theme") && key !== "themeOptions")
+        if (
+          key.startsWith("theme") &&
+          key !== "themeOptions" &&
+          key !== "themeContent"
+        )
           return themeIds.has(String(value));
         if (key === "themeOptions") {
           if (!value || typeof value !== "object" || Array.isArray(value))
@@ -2417,6 +2437,38 @@ export class AdminOperationsService {
             (option.sidebarCollapsed === undefined ||
               typeof option.sidebarCollapsed === "boolean")
           );
+        }
+        if (key === "themeContent") {
+          if (!value || typeof value !== "object" || Array.isArray(value))
+            return false;
+          const content = value as Record<string, unknown>;
+          const textKeys = new Set([
+            "brandTitle",
+            "tagline",
+            "heroTitle",
+            "heroSubtitle",
+            "primaryCta",
+            "secondaryCta",
+            "statsText",
+            "footerText",
+            "supportSummary",
+            "dashboardWelcome",
+          ]);
+          return Object.entries(content).every(([name, field]) => {
+            if (name === "featureBullets")
+              return (
+                Array.isArray(field) &&
+                field.length <= 6 &&
+                field.every(
+                  (item) => typeof item === "string" && item.length <= 160,
+                )
+              );
+            return (
+              textKeys.has(name) &&
+              typeof field === "string" &&
+              field.length <= (name === "heroSubtitle" ? 500 : 240)
+            );
+          });
         }
         return (
           typeof value === "string" ||
@@ -2470,6 +2522,7 @@ export class AdminOperationsService {
       "themeAuth",
       "themeCustomer",
       "themeOptions",
+      "themeContent",
     ];
     const rows = await this.db.setting.findMany({
       where: { group: "general", key: { in: allowed }, encrypted: false },

@@ -20,6 +20,9 @@ const server = createServer((request, response) => {
   }
   const pages: Record<string, () => string> = {
     "/": () => landingPage(config.apiUrl.origin),
+    "/services": () => landingPage(config.apiUrl.origin),
+    "/pricing": () => landingPage(config.apiUrl.origin),
+    "/help": () => landingPage(config.apiUrl.origin),
     "/login": () => authPage(config.apiUrl.origin, "login"),
     "/register": () => authPage(config.apiUrl.origin, "register"),
     "/forgot-password": () => authPage(config.apiUrl.origin, "forgot"),
@@ -49,8 +52,8 @@ const server = createServer((request, response) => {
   const render = isAdminRoute(path)
     ? () => adminPage(config.apiUrl.origin, path)
     : customerRoute
-    ? () => customerPage(config.apiUrl.origin, path)
-    : pages[path];
+      ? () => customerPage(config.apiUrl.origin, path)
+      : pages[path];
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("referrer-policy", "strict-origin-when-cross-origin");
