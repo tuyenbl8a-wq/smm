@@ -230,7 +230,49 @@ test("admin security recursively redacts nested secrets and allowlists settings"
     adminOperations,
     /password\|token\|secret\|credential\|authorization\|encrypted\|api\.\?key\|session/,
   );
-  assert.match(adminOperations, /const allowed=\['siteName'/);
-  assert.match(adminOperations, /apiKey:''/);
+  assert.match(adminOperations, /siteName:'Tên website'/);
+  assert.match(adminOperations, /apiKey:'',active/);
   assert.match(adminOperations, /type:'password'/);
+});
+test("admin runtime UX avoids native prompts and protects responsive layout", () => {
+  assert.doesNotMatch(admin + adminOperations, /\b(prompt|alert|confirm)\s*\(/);
+  assert.match(adminOperations, /candidateSearch\.oninput/);
+  assert.match(adminOperations, /Nâng tài khoản thành nhân viên/);
+  assert.match(admin, /html,body\{max-width:100%;overflow-x:hidden\}/);
+  assert.match(admin, /font-family:Inter,system-ui,-apple-system/);
+  assert.match(admin, /\.admin-heading h1\{line-height:1\.25/);
+  assert.match(
+    admin,
+    /\.admin-table\{width:100%;max-width:100%;overflow-x:auto/,
+  );
+});
+test("admin renders real response shapes, relationships and localized tables", () => {
+  for (const key of [
+    "platforms",
+    "categories",
+    "services",
+    "providers",
+    "mappings",
+    "priceGroups",
+    "priceRules",
+    "items",
+    "messages",
+  ])
+    assert.match(adminOperations, new RegExp("['\"]" + key + "['\"]"));
+  assert.match(adminOperations, /type:'select',options:options\(platforms\)/);
+  assert.match(adminOperations, /type:'select',options:options\(categories\)/);
+  assert.match(adminOperations, /providerServiceId',label:'Dịch vụ nhà cung cấp',type:'select'/);
+  assert.doesNotMatch(
+    adminOperations,
+    /label:'(Platform|Category|Provider|Service|Price Group) ID'/,
+  );
+  assert.match(adminOperations, /moduleHeader\('Thêm '\+title/);
+  for (const label of ["Thêm nhà cung cấp", "Tạo mã giảm giá"])
+    assert.match(adminOperations, new RegExp(label));
+});
+test("admin order identity and money formatting are presentation safe", () => {
+  assert.match(admin, /o\.orderNumber\|\|o\.websiteOrderId/);
+  assert.doesNotMatch(admin, /o\.publicId\|\|o\.websiteOrderId/);
+  assert.match(admin, /currency:'VND',maximumFractionDigits:0/);
+  assert.match(adminOperations, /label:'Số dư',render:r=>money\(r\.balance\)/);
 });
