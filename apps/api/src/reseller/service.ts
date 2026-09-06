@@ -81,6 +81,7 @@ export class ResellerService {
           where: { active: true, restrictFromApi: false },
           select: {
             id: true,
+            serviceNumber: true,
             name: true,
             type: true,
             rate: true,
@@ -108,7 +109,7 @@ export class ResellerService {
       ]);
       const ruleMap = new Map(rules.map((x: any) => [x.serviceId, x]));
       return services.map((s: any) => ({
-        service: s.id,
+        service: String(s.serviceNumber),
         name: s.name,
         type: s.type,
         rate: resolveCustomerRate({

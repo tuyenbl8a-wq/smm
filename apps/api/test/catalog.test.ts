@@ -5,6 +5,47 @@ import { calculateSaleRate, decimalInput } from "../src/catalog/pricing.js";
 import { CatalogService } from "../src/catalog/service.js";
 import { uniqueConflictDetails } from "../src/auth/handler.js";
 
+test("catalog delete archives records and preserves historical references", async () => {
+  const updates: any[] = [],
+    audits: any[] = [];
+  const repository = {
+    findUnique: async () => ({ id: "item", active: true }),
+    update: async ({ data }: any) => {
+      updates.push(data);
+      return { id: "item", ...data };
+    },
+  };
+  const db: any = {
+    $transaction: async (fn: any) =>
+      fn({
+        platform: repository,
+        serviceCategory: repository,
+        service: repository,
+        priceGroup: repository,
+        auditLog: { create: async (x: any) => audits.push(x) },
+      }),
+  };
+  const service = new CatalogService(db);
+  for (const kind of [
+    "platforms",
+    "categories",
+    "services",
+    "price-groups",
+  ] as const) {
+    const result = await service.archiveEntity("admin", kind, "item");
+    assert.equal(result.archived, true);
+  }
+  assert.equal(
+    updates.every((x) => x.active === false),
+    true,
+  );
+  assert.equal(audits.length, 4);
+  assert.equal(
+    audits.every((x) => x.data.action === "CATALOG_ARCHIVE"),
+    true,
+  );
+});
+
 test("pricing uses exact eight-place fixed-point arithmetic", () => {
   assert.equal(decimalInput("10.00000001"), "10.00000001");
   assert.equal(

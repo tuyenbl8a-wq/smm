@@ -99,6 +99,7 @@ export class AdminOperationsService {
     const page = Math.max(1, Number(query.page) || 1),
       limit = clamp(query.limit),
       search = optional(query.search) ?? "",
+      numericSearch = search.replace(/^#/, ""),
       status = enumFilter(
         query.status,
         ["PENDING", "ACTIVE", "BANNED", "DELETED"],
@@ -129,7 +130,12 @@ export class AdminOperationsService {
         ...(search
           ? {
               OR: [
-                { id: { equals: search } },
+                ...(/^[0-9a-f-]{36}$/i.test(search)
+                  ? [{ id: { equals: search } }]
+                  : []),
+                ...(/^\d+$/.test(numericSearch)
+                  ? [{ userNumber: { equals: BigInt(numericSearch) } }]
+                  : []),
                 { email: { contains: search, mode: "insensitive" } },
                 { username: { contains: search, mode: "insensitive" } },
               ],
@@ -152,6 +158,7 @@ export class AdminOperationsService {
         where,
         select: {
           id: true,
+          userNumber: true,
           email: true,
           username: true,
           fullName: true,
@@ -212,6 +219,7 @@ export class AdminOperationsService {
     return {
       items: rows.map((row: any) => ({
         ...row,
+        userNumber: String(row.userNumber),
         priceGroup: row.priceGroupId ? groupMap.get(row.priceGroupId) : null,
         balance: String(
           wallets.find((wallet: any) => wallet.userId === row.id)?.balance ??
@@ -247,9 +255,12 @@ export class AdminOperationsService {
 
   async user(id: string) {
     const user = await this.db.user.findUnique({
-      where: { id },
+      where: /^#?\d+$/.test(id)
+        ? { userNumber: BigInt(id.replace(/^#/, "")) }
+        : { id },
       select: {
         id: true,
+        userNumber: true,
         email: true,
         username: true,
         fullName: true,
@@ -263,6 +274,7 @@ export class AdminOperationsService {
     });
     if (!user)
       throw new AdminOperationError("USER_NOT_FOUND", "User not found");
+    id = user.id;
     const links = await this.db.userRole.findMany({ where: { userId: id } }),
       roles = await this.db.role.findMany({
         where: { id: { in: links.map((x: any) => x.roleId) } },
@@ -358,6 +370,7 @@ export class AdminOperationsService {
     ]);
     return {
       ...user,
+      userNumber: String(user.userNumber),
       roles,
       wallet: wallet
         ? { balance: String(wallet.balance), currency: wallet.currency }
@@ -1356,7 +1369,7 @@ export class AdminOperationsService {
             where: {
               id: { in: [...new Set(items.map((item: any) => item.userId))] },
             },
-            select: { id: true, email: true, username: true },
+            select: { id: true, userNumber: true, email: true, username: true },
           })
         : [],
       items.length && this.db.service?.findMany
@@ -1366,7 +1379,7 @@ export class AdminOperationsService {
                 in: [...new Set(items.map((item: any) => item.serviceId))],
               },
             },
-            select: { id: true, name: true },
+            select: { id: true, serviceNumber: true, name: true },
           })
         : [],
       items.length && this.db.provider?.findMany
@@ -1391,8 +1404,18 @@ export class AdminOperationsService {
       items: items.map((item: any) => ({
         ...item,
         orderNumber: String(100000n + BigInt(item.id)),
-        user: userMap.get(item.userId),
-        service: serviceMap.get(item.serviceId),
+        user: (() => {
+          const user: any = userMap.get(item.userId);
+          return user
+            ? { ...user, userNumber: String(user.userNumber) }
+            : undefined;
+        })(),
+        service: (() => {
+          const service: any = serviceMap.get(item.serviceId);
+          return service
+            ? { ...service, serviceNumber: String(service.serviceNumber) }
+            : undefined;
+        })(),
         provider: item.providerId ? providerMap.get(item.providerId) : null,
       })),
       page,
@@ -1438,11 +1461,11 @@ export class AdminOperationsService {
         this.db.cancellation.findMany({ where: { orderId: order.id } }),
         this.db.user.findUnique({
           where: { id: order.userId },
-          select: { id: true, email: true, username: true },
+          select: { id: true, userNumber: true, email: true, username: true },
         }),
         this.db.service.findUnique({
           where: { id: order.serviceId },
-          select: { id: true, name: true },
+          select: { id: true, serviceNumber: true, name: true },
         }),
         order.providerId
           ? this.db.provider.findUnique({
@@ -1454,8 +1477,10 @@ export class AdminOperationsService {
     return {
       ...order,
       orderNumber: String(100000n + BigInt(order.id)),
-      user,
-      service,
+      user: user ? { ...user, userNumber: String(user.userNumber) } : null,
+      service: service
+        ? { ...service, serviceNumber: String(service.serviceNumber) }
+        : null,
       provider,
       history,
       providerLogs: logs,

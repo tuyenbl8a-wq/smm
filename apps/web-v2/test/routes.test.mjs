@@ -261,7 +261,10 @@ test("admin renders real response shapes, relationships and localized tables", (
     assert.match(adminOperations, new RegExp("['\"]" + key + "['\"]"));
   assert.match(adminOperations, /type:'select',options:options\(platforms\)/);
   assert.match(adminOperations, /type:'select',options:options\(categories\)/);
-  assert.match(adminOperations, /providerServiceId',label:'Dịch vụ nhà cung cấp',type:'select'/);
+  assert.match(
+    adminOperations,
+    /providerServiceId',label:'Dịch vụ nhà cung cấp',type:'select'/,
+  );
   assert.doesNotMatch(
     adminOperations,
     /label:'(Platform|Category|Provider|Service|Price Group) ID'/,
@@ -275,4 +278,32 @@ test("admin order identity and money formatting are presentation safe", () => {
   assert.doesNotMatch(admin, /o\.publicId\|\|o\.websiteOrderId/);
   assert.match(admin, /currency:'VND',maximumFractionDigits:0/);
   assert.match(adminOperations, /label:'Số dư',render:r=>money\(r\.balance\)/);
+});
+test("super admin action renderers include real archive endpoints", () => {
+  for (const endpoint of [
+    "admin/catalog/",
+    "admin/providers/",
+    "admin/coupons/",
+    "admin/payment-methods/",
+  ])
+    assert.match(adminOperations, new RegExp(endpoint.replaceAll("/", "\\/")));
+  assert.match(adminOperations, /api\.delete\(path\)/);
+  assert.match(adminOperations, /button\('Xóa','delete'/);
+  for (const action of [
+    "Thêm nhà cung cấp",
+    "Thêm nhóm giá",
+    "Thêm phương thức thanh toán",
+    "Nâng tài khoản thành nhân viên",
+  ])
+    assert.match(adminOperations, new RegExp(action));
+});
+test("numeric public user and service IDs replace UUID presentation", () => {
+  assert.match(admin, /"\/admin\/services"\s*:\s*"\/api\/v1\/admin\/catalog"/);
+  assert.match(adminOperations, /label:'ID khách hàng'/);
+  assert.match(adminOperations, /key:'serviceNumber',label:'Mã DV'/);
+  assert.doesNotMatch(adminOperations, /id\?\.slice\(0,8\)/);
+  assert.match(customer, /ID '\+esc\(s\.serviceNumber\)/);
+  assert.match(customer, /esc\(s\.serviceNumber\)\+' — '/);
+  assert.match(admin, /o\.user\?\.userNumber/);
+  assert.match(admin, /o\.service\?\.serviceNumber/);
 });

@@ -314,6 +314,33 @@ export class PaymentSettingsService {
     });
   }
 
+  async archiveMethod(actorId: string, id: string) {
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.paymentMethod.findUnique({ where: { id } });
+      if (!before) throw new Error("PAYMENT_METHOD_NOT_FOUND");
+      const item = await tx.paymentMethod.update({
+        where: { id },
+        data: { active: false },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: "PAYMENT_METHOD_ARCHIVE",
+          resource: "payment_method",
+          resourceId: id,
+          before: { active: before.active },
+          after: { active: false, archived: true },
+        },
+      });
+      return {
+        item: this.publicMethod(item),
+        archived: true,
+        message:
+          "Đã lưu trữ phương thức thanh toán; giao dịch cũ được giữ nguyên.",
+      };
+    });
+  }
+
   async webhookToken(fallback = "") {
     const method = this.db.paymentMethod?.findFirst
       ? await this.db.paymentMethod.findFirst({

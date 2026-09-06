@@ -34,7 +34,7 @@ export class OrderService {
         "IDEMPOTENCY_KEY_INVALID",
         "Idempotency-Key is required",
       );
-    const serviceId = String(input.serviceId ?? "");
+    const serviceReference = String(input.serviceId ?? "");
     const quantity = Number(input.quantity);
     const link = String(input.link ?? "").trim();
     if (!Number.isSafeInteger(quantity) || quantity < 1)
@@ -53,8 +53,11 @@ export class OrderService {
     try {
       return await this.db.$transaction(async (tx: any) => {
         const service = await tx.service.findUnique({
-          where: { id: serviceId },
+          where: /^\d+$/.test(serviceReference)
+            ? { serviceNumber: BigInt(serviceReference) }
+            : { id: serviceReference },
         });
+        const serviceId = service?.id ?? serviceReference;
         if (!service || !service.active || service.deletedAt)
           throw new OrderError("SERVICE_UNAVAILABLE", "Service unavailable");
         if (quantity < service.min || quantity > service.max)
@@ -183,7 +186,7 @@ export class OrderService {
     if (!order) throw new OrderError("ORDER_NOT_FOUND", "Order not found");
     const service = await this.db.service.findUnique({
       where: { id: order.serviceId },
-      select: { id: true, name: true },
+      select: { id: true, serviceNumber: true, name: true },
     });
     const [history, refills, cancellations] = await Promise.all([
       this.db.orderHistory.findMany({
@@ -321,7 +324,7 @@ export class OrderService {
     const services = serviceIds.length
       ? await this.db.service.findMany({
           where: { id: { in: serviceIds } },
-          select: { id: true, name: true },
+          select: { id: true, serviceNumber: true, name: true },
         })
       : [];
     const serviceMap = new Map(services.map((x: any) => [x.id, x]));
@@ -341,7 +344,9 @@ export class OrderService {
       publicId: x.publicId,
       orderNumber: String(100000n + BigInt(x.id)),
       serviceId: x.serviceId,
-      service: x.service ?? undefined,
+      service: x.service
+        ? { ...x.service, serviceNumber: String(x.service.serviceNumber) }
+        : undefined,
       link: x.link,
       quantity: x.quantity,
       charge: String(x.charge),
