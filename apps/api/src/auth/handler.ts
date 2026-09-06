@@ -936,7 +936,7 @@ export class AuthHandler {
       if (request.method === "GET" && adminWallet) {
         if (
           !canAccessAdmin(auth.access, "users.view") &&
-          !canAccessAdmin(auth.access, "wallet.manage")
+          !canAccessAdmin(auth.access, "users.balance.manage")
         )
           return this.error(
             response,
@@ -1837,7 +1837,7 @@ export class AuthHandler {
         path.endsWith("/mutations")
       ) {
         this.checkBurst(request, "admin-wallet-mutation");
-        if (!canAccessAdmin(auth.access, "wallet.manage"))
+        if (!canAccessAdmin(auth.access, "users.balance.manage"))
           return this.error(
             response,
             403,

@@ -33,6 +33,7 @@ export function canAccessAdmin(
     "users.read": ["users.view"],
     "users.update": ["users.manage"],
     "users.ban": ["users.manage"],
+    "users.balance.manage": ["wallet.manage"],
     "payments.view": ["payments.manage"],
     "coupons.view": ["coupons.manage"],
     "support.view": ["support.manage", "tickets.manage"],
