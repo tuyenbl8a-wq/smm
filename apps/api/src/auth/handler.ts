@@ -318,6 +318,23 @@ export class AuthHandler {
           await this.admin!.users(Object.fromEntries(url.searchParams)),
         );
       }
+      if (request.method === "GET" && path === "/api/v1/admin/users/search") {
+        if (
+          !canAccessAdmin(auth.access, "users.view") &&
+          !canAccessAdmin(auth.access, "users.pricing.manage")
+        )
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const query = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.customerSearch(query.searchParams.get("search")),
+        );
+      }
       if (request.method === "GET" && path === "/api/v1/admin/staff") {
         if (!canAccessAdmin(auth.access, "staff.view"))
           return this.error(

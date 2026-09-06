@@ -273,3 +273,63 @@ test("staff candidate search supports users without a tier and missing users", a
   mode = "missing";
   assert.deepEqual(await service.staffCandidates("missing@example.com"), []);
 });
+
+test("staff and customer searches support customer numbers safely", async () => {
+  const queries: any[] = [];
+  const safeUser = {
+    id: "11111111-1111-4111-8111-111111111111",
+    userNumber: 100001n,
+    username: "member",
+    email: "member@example.com",
+    status: "ACTIVE",
+    priceGroupId: null,
+    passwordHash: "must-not-leak",
+    sessions: [{ token: "must-not-leak" }],
+  };
+  const service = new AdminOperationsService({
+    user: {
+      findMany: async (query: any) => {
+        queries.push(query);
+        return [safeUser];
+      },
+    },
+    priceGroup: { findMany: async () => [] },
+    userRole: { findMany: async () => [] },
+    role: { findMany: async () => [] },
+  });
+
+  for (const search of ["100001", "#100001", "member", "member@example.com"])
+    await service.staffCandidates(search);
+  assert.deepEqual(queries[0].where.OR.at(-1), {
+    userNumber: { equals: 100001n },
+  });
+  assert.deepEqual(queries[1].where.OR.at(-1), {
+    userNumber: { equals: 100001n },
+  });
+  assert.deepEqual(queries[2].where.OR.slice(0, 2), [
+    { username: { contains: "member", mode: "insensitive" } },
+    { email: { contains: "member", mode: "insensitive" } },
+  ]);
+  assert.deepEqual(queries[3].where.OR.slice(0, 2), [
+    { username: { contains: "member@example.com", mode: "insensitive" } },
+    { email: { contains: "member@example.com", mode: "insensitive" } },
+  ]);
+
+  const result = await service.customerSearch("#100001");
+  assert.deepEqual(queries.at(-1).select, {
+    id: true,
+    userNumber: true,
+    username: true,
+    email: true,
+    status: true,
+  });
+  assert.deepEqual(result, [
+    {
+      id: safeUser.id,
+      userNumber: "100001",
+      username: safeUser.username,
+      email: safeUser.email,
+      status: safeUser.status,
+    },
+  ]);
+});

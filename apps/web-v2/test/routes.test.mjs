@@ -223,6 +223,16 @@ test("remaining admin modules use real mutation contracts", () => {
   ])
     assert.match(adminOperations, new RegExp(label));
 });
+
+test("price-group customer lookup uses the dedicated user search endpoint", () => {
+  assert.match(adminOperations, /admin\/users\/search/);
+  const priceGroupModule = adminOperations.slice(
+    adminOperations.indexOf("function renderPriceGroups"),
+    adminOperations.indexOf("function renderSettings"),
+  );
+  assert.doesNotMatch(priceGroupModule, /staff\/candidates/);
+  assert.doesNotMatch(priceGroupModule, /x\.id[^\n]{0,80}(innerHTML|textContent)/);
+});
 test("admin security recursively redacts nested secrets and allowlists settings", () => {
   assert.match(adminOperations, /function redact/);
   assert.match(adminOperations, /value\.map\(x=>redact/);
