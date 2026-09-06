@@ -297,3 +297,13 @@ test("super admin action renderers include real archive endpoints", () => {
   ])
     assert.match(adminOperations, new RegExp(action));
 });
+test("numeric public user and service IDs replace UUID presentation", () => {
+  assert.match(admin, /"\/admin\/services"\s*:\s*"\/api\/v1\/admin\/catalog"/);
+  assert.match(adminOperations, /label:'ID khách hàng'/);
+  assert.match(adminOperations, /key:'serviceNumber',label:'Mã DV'/);
+  assert.doesNotMatch(adminOperations, /id\?\.slice\(0,8\)/);
+  assert.match(customer, /ID '\+esc\(s\.serviceNumber\)/);
+  assert.match(customer, /esc\(s\.serviceNumber\)\+' — '/);
+  assert.match(admin, /o\.user\?\.userNumber/);
+  assert.match(admin, /o\.service\?\.serviceNumber/);
+});

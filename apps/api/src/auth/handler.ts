@@ -350,7 +350,9 @@ export class AuthHandler {
           );
         return this.ok(response, await this.admin!.priceGroupConfiguration());
       }
-      const adminUser = /^\/api\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(path);
+      const adminUser = /^\/api\/v1\/admin\/users\/(#?\d+|[0-9a-f-]{36})$/.exec(
+        path,
+      );
       if (request.method === "GET" && adminUser) {
         if (!canAccessAdmin(auth.access, "users.view"))
           return this.error(

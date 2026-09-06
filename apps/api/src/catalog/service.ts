@@ -126,7 +126,17 @@ export class CatalogService {
       categoryId: { in: categories.map((category: any) => category.id) },
       ...(query.search
         ? {
-            name: { contains: query.search.slice(0, 100), mode: "insensitive" },
+            OR: [
+              {
+                name: {
+                  contains: query.search.slice(0, 100),
+                  mode: "insensitive",
+                },
+              },
+              ...(/^\d+$/.test(query.search)
+                ? [{ serviceNumber: { equals: BigInt(query.search) } }]
+                : []),
+            ],
           }
         : {}),
     };
@@ -136,6 +146,7 @@ export class CatalogService {
         where,
         select: {
           id: true,
+          serviceNumber: true,
           categoryId: true,
           name: true,
           description: true,
@@ -336,6 +347,7 @@ export class CatalogService {
         const rule: any = ruleMap.get(service.id);
         return {
           ...service,
+          serviceNumber: String(service.serviceNumber),
           rate: resolveCustomerRate({
             service: source,
             group,
@@ -410,6 +422,7 @@ export class CatalogService {
               active: x.active,
               priceReviewStatus: x.priceReviewStatus,
             }),
+        serviceNumber: String(x.serviceNumber),
       })),
       priceGroups: includePricing ? priceGroups : [],
       priceRules: includePricing

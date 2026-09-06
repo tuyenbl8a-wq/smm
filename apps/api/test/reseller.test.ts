@@ -101,3 +101,26 @@ test("API v2 multiple status remains scoped and bounded", async () => {
   assert.equal(where.userId, "u");
   assert.equal(result["1"].status, "COMPLETED");
 });
+
+test("API v2 accepts a numeric public service identifier", async () => {
+  let received: any;
+  const orders: any = {
+    create: async (_userId: string, input: any) => {
+      received = input;
+      return { id: "100123" };
+    },
+  };
+  const result = await new ResellerService({} as any, orders).execute(
+    "unused",
+    {
+      action: "add",
+      service: "1001",
+      link: "https://example.com/post",
+      quantity: 10,
+      idempotency_key: "numeric-service-1001",
+    },
+    { userId: "user" },
+  );
+  assert.equal(received.serviceId, "1001");
+  assert.deepEqual(result, { order: "100123" });
+});
