@@ -35,6 +35,7 @@ const CANONICAL_ADMIN_PERMISSIONS = [
   "users.view",
   "users.manage",
   "users.balance.manage",
+  "users.pricing.manage",
   "payments.view",
   "payments.manage",
   "payments.approve",

@@ -249,7 +249,7 @@ test("admin runtime UX avoids native prompts and protects responsive layout", ()
   assert.match(adminOperations, /candidateSearch\.oninput/);
   assert.match(adminOperations, /Nâng tài khoản thành nhân viên/);
   assert.match(admin, /html,body\{max-width:100%;overflow-x:hidden\}/);
-  assert.match(admin, /font-family:Inter,system-ui,-apple-system/);
+  assert.match(admin, /font-family:system-ui,-apple-system,BlinkMacSystemFont/);
   assert.match(admin, /\.admin-heading h1\{line-height:1\.25/);
   assert.match(
     admin,
@@ -386,4 +386,22 @@ test("price groups use customer lookup and deposits expose real protected operat
     assert.match(adminOperations, new RegExp(label));
   assert.match(adminOperations, /admin\/deposits\/'\+id\+'\/action/);
   assert.match(adminOperations, /can\('payments\.manage'\)/);
+});
+
+test("task 24 typography, forms and Vietnamese business labels are complete", () => {
+  assert.match(admin, /system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif/);
+  assert.match(admin, /html,body,button,input,select,textarea,table\{font-family/);
+  assert.doesNotMatch(admin, /margin:-62px 120px/);
+  assert.match(admin, /dialog\{width:min\(calc\(100% - 32px\),720px\);max-width:720px;max-height:90vh/);
+  assert.match(admin, /\.form-grid\{display:grid;grid-template-columns:repeat\(2/);
+  assert.match(admin, /@media\(max-width:780px\)\{\.form-grid,\.profile-grid\{grid-template-columns:1fr\}/);
+  for (const label of ["CTV", "Đại lý", "NPP", "Giá vốn + phần trăm lợi nhuận", "Tự động đồng bộ nhà cung cấp", "Ngưỡng tăng giá tự động tối đa"])
+    assert.ok(adminOperations.includes(label));
+});
+
+test("task 24 customer operations use protected real endpoints", () => {
+  for (const token of ["users.balance.manage", "users.pricing.manage", "wallets/", "mutations", "idempotency-key", "revoke-sessions", "price-group"])
+    assert.match(adminOperations, new RegExp(token.replace("/", "\\/")));
+  for (const label of ["Tổng nạp", "Tổng chi", "Tổng hoàn", "Đơn hoàn thành", "Ví & giao dịch", "Lịch sử đăng nhập", "Nhật ký Admin"])
+    assert.match(adminOperations, new RegExp(label));
 });
