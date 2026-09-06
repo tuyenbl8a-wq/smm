@@ -97,6 +97,7 @@ export class AuthHandler {
   ): Promise<boolean> {
     if (
       path !== "/api/v1/public/catalog" &&
+      path !== "/api/v1/public/settings" &&
       !path.startsWith("/api/v1/auth") &&
       path !== "/api/v1/me" &&
       !path.startsWith("/api/v1/customer") &&
@@ -123,6 +124,10 @@ export class AuthHandler {
               : {}),
           }),
         );
+      }
+      if (request.method === "GET" && path === "/api/v1/public/settings") {
+        if (!this.admin) throw new Error("Settings service unavailable");
+        return this.ok(response, await this.admin.publicSettings());
       }
       if (authPaths.has(path)) this.checkBurst(request, path);
       if (request.method === "POST" && path === "/api/v1/auth/register")

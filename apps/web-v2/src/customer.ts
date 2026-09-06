@@ -1,6 +1,7 @@
 import { apiClientScript } from "./api-client.js";
 import { brand, primitives } from "./components.js";
 import { styles } from "./styles.js";
+import { runtimeThemeScript, themeStyles } from "./themes.js";
 
 const escapeJson = (value: string) => value.replaceAll("<", "\\u003c");
 const nav = [
@@ -40,8 +41,8 @@ export function customerPage(api: string, path: string) {
     )
     .join("");
   const body = `<div class="customer"><aside class="sidebar">${brand}<nav aria-label="Điều hướng khách hàng">${links}</nav><button id="side-logout" class="logout">⇥ <span>Đăng xuất</span></button></aside><div class="customer-main"><header class="topbar"><button id="drawer-toggle" class="icon-button" aria-label="Mở menu" aria-expanded="false">☰</button><div><small>Trang chủ /</small><strong>${title[path] ?? "Chi tiết"}</strong></div><div class="top-actions"><a class="balance" href="/wallet">Số dư <b id="top-balance">—</b></a><a class="notice" href="/notifications" aria-label="Thông báo">♢<em id="unread"></em></a><button id="profile-menu" class="profile">D <span id="top-user">Tài khoản</span></button><button id="top-logout" class="icon-button" aria-label="Đăng xuất">⇥</button></div></header><main id="app" class="customer-content"><div class="page-head"><div><span class="eyebrow">DICHVU1ST CUSTOMER</span><h1>${title[path] ?? "Chi tiết"}</h1></div></div><div class="panel"><div class="skeleton"></div></div></main></div></div>${primitives}`;
-  const script = `const API=${escapeJson(JSON.stringify(api))},ROUTE=${escapeJson(JSON.stringify(path))};${apiClientScript}${customerRuntime}`;
-  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Khu vực khách hàng DichVu1st"><title>${title[path] ?? "Chi tiết"} · DichVu1st</title><style>${styles}</style></head><body>${body}<script>${script}</script></body></html>`;
+  const script = `${runtimeThemeScript(api, "customer")}const API=${escapeJson(JSON.stringify(api))},ROUTE=${escapeJson(JSON.stringify(path))};${apiClientScript}${customerRuntime}`;
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Khu vực khách hàng DichVu1st"><title>${title[path] ?? "Chi tiết"} · DichVu1st</title><style>${styles}${themeStyles}</style></head><body>${body}<script>${script}</script></body></html>`;
 }
 
 const customerRuntime = String.raw`

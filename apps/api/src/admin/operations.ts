@@ -2338,8 +2338,51 @@ export class AdminOperationsService {
         "supportEmail",
         "supportPhoneEnabled",
         "supportPhone",
+        "logoUrl",
+        "faviconUrl",
+        "footerText",
+        "themeMode",
+        "themeGlobal",
+        "themePublic",
+        "themeAuth",
+        "themeCustomer",
+        "themeOptions",
       ]),
-      entries = Object.entries(input).filter(([key]) => allowed.has(key));
+      themeIds = new Set([
+        "MIDNIGHT_CYAN",
+        "AURORA_PURPLE",
+        "CLEAN_LIGHT",
+        "EMERALD_PRO",
+        "ROYAL_BLUE",
+      ]),
+      entries = Object.entries(input).filter(([key, value]) => {
+        if (!allowed.has(key)) return false;
+        if (key === "themeMode")
+          return value === "GLOBAL" || value === "SEPARATE";
+        if (key.startsWith("theme") && key !== "themeOptions")
+          return themeIds.has(String(value));
+        if (key === "themeOptions") {
+          if (!value || typeof value !== "object" || Array.isArray(value))
+            return false;
+          const option = value as Record<string, unknown>;
+          return (
+            Object.keys(option).every((name) =>
+              ["density", "radius", "sidebarCollapsed"].includes(name),
+            ) &&
+            (option.density === undefined ||
+              ["compact", "comfortable"].includes(String(option.density))) &&
+            (option.radius === undefined ||
+              ["small", "medium", "large"].includes(String(option.radius))) &&
+            (option.sidebarCollapsed === undefined ||
+              typeof option.sidebarCollapsed === "boolean")
+          );
+        }
+        return (
+          typeof value === "string" ||
+          typeof value === "boolean" ||
+          typeof value === "number"
+        );
+      });
     if (!entries.length)
       throw new AdminOperationError("SETTING_INVALID", "No supported settings");
     return this.db.$transaction(async (tx: any) => {
@@ -2377,6 +2420,15 @@ export class AdminOperationsService {
       "supportEmail",
       "supportPhoneEnabled",
       "supportPhone",
+      "logoUrl",
+      "faviconUrl",
+      "footerText",
+      "themeMode",
+      "themeGlobal",
+      "themePublic",
+      "themeAuth",
+      "themeCustomer",
+      "themeOptions",
     ];
     const rows = await this.db.setting.findMany({
       where: { group: "general", key: { in: allowed }, encrypted: false },
