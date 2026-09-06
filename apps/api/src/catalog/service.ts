@@ -76,7 +76,13 @@ export class CatalogService {
   }
 
   /** A deliberately small, read-only catalogue for unauthenticated marketing pages. */
-  async publicCatalog(query: { page: number; limit: number; search?: string }) {
+  async publicCatalog(query: {
+    page: number;
+    limit: number;
+    search?: string;
+    platform?: string;
+    category?: string;
+  }) {
     const page = integer(query.page, "page", 1);
     const limit = integer(query.limit, "limit", 1);
     if (limit > 50)
@@ -98,7 +104,7 @@ export class CatalogService {
       }),
     ]);
     const platformMap = new Map(platforms.map((item: any) => [item.id, item]));
-    const categories = categoryRows.map((category: any) => ({
+    let categories = categoryRows.map((category: any) => ({
       id: category.id,
       name: category.name,
       slug: category.slug,
@@ -106,6 +112,14 @@ export class CatalogService {
         ? (platformMap.get(category.platformId) ?? null)
         : null,
     }));
+    if (query.platform)
+      categories = categories.filter(
+        (item: any) => item.platform?.slug === slug(query.platform),
+      );
+    if (query.category)
+      categories = categories.filter(
+        (item: any) => item.slug === slug(query.category),
+      );
     const where = {
       active: true,
       deletedAt: null,
@@ -198,21 +212,50 @@ export class CatalogService {
 
   async customerCatalog(
     userId: string,
-    query: { page: number; limit: number; category?: string; search?: string },
+    query: {
+      page: number;
+      limit: number;
+      category?: string;
+      platform?: string;
+      search?: string;
+    },
   ) {
     const page = integer(query.page, "page", 1);
     const limit = integer(query.limit, "limit", 1);
     if (limit > 100)
       throw new CatalogError("PAGINATION_INVALID", "Limit cannot exceed 100");
-    const categories = await this.db.serviceCategory.findMany({
+    const categoryRows = await this.db.serviceCategory.findMany({
       where: {
         active: true,
         deletedAt: null,
         ...(query.category ? { slug: slug(query.category) } : {}),
       },
-      select: { id: true, name: true, slug: true },
+      select: { id: true, platformId: true, name: true, slug: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     });
+    const platforms = this.db.platform?.findMany
+      ? await this.db.platform.findMany({
+          where: {
+            active: true,
+            ...(query.platform ? { slug: slug(query.platform) } : {}),
+          },
+          select: { id: true, name: true, slug: true },
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        })
+      : [];
+    const platformMap = new Map(platforms.map((item: any) => [item.id, item]));
+    const categories = categoryRows
+      .filter((item: any) =>
+        query.platform ? platformMap.has(item.platformId) : true,
+      )
+      .map((item: any) => ({
+        id: item.id,
+        name: item.name,
+        slug: item.slug,
+        platform: item.platformId
+          ? (platformMap.get(item.platformId) ?? null)
+          : null,
+      }));
     const where = {
       active: true,
       deletedAt: null,
