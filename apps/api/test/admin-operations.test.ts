@@ -643,3 +643,46 @@ test("provider sync translates an incorrect provider order id", async () => {
       /NCC không tìm thấy mã đơn/.test(error.message),
   );
 });
+
+test("runtime theme settings allow 20 presets and safe structured content", async () => {
+  const writes: any[] = [];
+  const audits: any[] = [];
+  const tx = {
+    setting: { upsert: async (input: any) => writes.push(input) },
+    auditLog: { create: async (input: any) => audits.push(input) },
+  };
+  const service = new AdminOperationsService({
+    $transaction: async (run: any) => run(tx),
+  });
+  const result = await service.updateSettings("admin", {
+    themeMode: "SEPARATE",
+    themePublic: "ZEN_JAPAN",
+    themeAuth: "CYBER_NEON",
+    themeCustomer: "DASHBOARD_FOCUSED",
+    themeContent: {
+      brandTitle: "Dịch Vụ Việt",
+      heroTitle: "Tăng trưởng bền vững",
+      featureBullets: ["Nhanh chóng", "Minh bạch"],
+    },
+  });
+  assert.deepEqual(result.updated, [
+    "themeMode",
+    "themePublic",
+    "themeAuth",
+    "themeCustomer",
+    "themeContent",
+  ]);
+  assert.equal(writes.length, 5);
+  assert.equal(audits[0].data.action, "SETTINGS_UPDATE");
+  await assert.rejects(
+    () =>
+      service.updateSettings("admin", {
+        themeContent: { heroTitle: "<b>".repeat(200) },
+      }),
+    (error: AdminOperationError) => error.code === "SETTING_INVALID",
+  );
+  await assert.rejects(
+    () => service.updateSettings("admin", { themeGlobal: "UNSAFE_THEME" }),
+    (error: AdminOperationError) => error.code === "SETTING_INVALID",
+  );
+});

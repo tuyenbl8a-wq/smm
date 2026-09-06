@@ -231,7 +231,10 @@ test("price-group customer lookup uses the dedicated user search endpoint", () =
     adminOperations.indexOf("function renderSettings"),
   );
   assert.doesNotMatch(priceGroupModule, /staff\/candidates/);
-  assert.doesNotMatch(priceGroupModule, /x\.id[^\n]{0,80}(innerHTML|textContent)/);
+  assert.doesNotMatch(
+    priceGroupModule,
+    /x\.id[^\n]{0,80}(innerHTML|textContent)/,
+  );
 });
 test("admin security recursively redacts nested secrets and allowlists settings", () => {
   assert.match(adminOperations, /function redact/);
@@ -341,9 +344,9 @@ test("specialized admin renderer survives without generic overwrite", async () =
   );
   assert.deepEqual(calls, ["fallback"]);
 });
-test("five persistent runtime themes are available and safely allowlisted", async () => {
+test("twenty persistent runtime themes are available and safely allowlisted", async () => {
   const themes = await import("../dist/themes.js");
-  assert.equal(themes.themePresets.length, 5);
+  assert.equal(themes.themePresets.length, 20);
   assert.deepEqual(
     themes.themePresets.map((x) => x.id),
     themes.themeIds,
@@ -354,10 +357,7 @@ test("five persistent runtime themes are available and safely allowlisted", asyn
   );
   assert.doesNotMatch(themes.themeStyles, /<script|javascript:/i);
   assert.match(adminOperations, /Bản xem trước không thay đổi/);
-  assert.match(
-    adminOperations,
-    /Bạn muốn áp dụng giao diện này cho khách hàng/,
-  );
+  assert.match(adminOperations, /Áp dụng.*cho website/);
 });
 
 test("customer and conditional payment workflows are behavioral and secret-safe", () => {
@@ -372,7 +372,10 @@ test("customer and conditional payment workflows are behavioral and secret-safe"
   for (const option of ["limits", "fees", "daily", "bonus"])
     assert.match(adminOperations, new RegExp(`data-option=.?${option}`));
   assert.match(adminOperations, /feeFixed\)\|\|nonzero\(initial\.feePercent/);
-  assert.match(adminOperations, /dailyTransactionLimit\)\|\|nonzero\(initial\.dailyAmountLimit/);
+  assert.match(
+    adminOperations,
+    /dailyTransactionLimit\)\|\|nonzero\(initial\.dailyAmountLimit/,
+  );
   assert.match(adminOperations, /secret\(n,l\).*input\(n,l,''/);
   assert.match(adminOperations, /Đã cấu hình · để trống để giữ nguyên/);
 });
@@ -382,26 +385,69 @@ test("price groups use customer lookup and deposits expose real protected operat
   assert.match(adminOperations, /staff\/candidates/);
   assert.match(adminOperations, /#100001, tên đăng nhập hoặc email/);
   assert.doesNotMatch(adminOperations, /name:'userIds'.*type:'textarea'/);
-  for (const label of ["Xem chi tiết", "Duyệt", "Từ chối", "Đánh dấu cần kiểm tra"])
+  for (const label of [
+    "Xem chi tiết",
+    "Duyệt",
+    "Từ chối",
+    "Đánh dấu cần kiểm tra",
+  ])
     assert.match(adminOperations, new RegExp(label));
   assert.match(adminOperations, /admin\/deposits\/'\+id\+'\/action/);
   assert.match(adminOperations, /can\('payments\.manage'\)/);
 });
 
 test("task 24 typography, forms and Vietnamese business labels are complete", () => {
-  assert.match(admin, /system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif/);
-  assert.match(admin, /html,body,button,input,select,textarea,table\{font-family/);
+  assert.match(
+    admin,
+    /system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif/,
+  );
+  assert.match(
+    admin,
+    /html,body,button,input,select,textarea,table\{font-family/,
+  );
   assert.doesNotMatch(admin, /margin:-62px 120px/);
-  assert.match(admin, /dialog\{width:min\(calc\(100% - 32px\),720px\);max-width:720px;max-height:90vh/);
-  assert.match(admin, /\.form-grid\{display:grid;grid-template-columns:repeat\(2/);
-  assert.match(admin, /@media\(max-width:780px\)\{\.form-grid,\.profile-grid\{grid-template-columns:1fr\}/);
-  for (const label of ["CTV", "Đại lý", "NPP", "Giá vốn + phần trăm lợi nhuận", "Tự động đồng bộ nhà cung cấp", "Ngưỡng tăng giá tự động tối đa"])
+  assert.match(
+    admin,
+    /dialog\{width:min\(calc\(100% - 32px\),720px\);max-width:720px;max-height:90vh/,
+  );
+  assert.match(
+    admin,
+    /\.form-grid\{display:grid;grid-template-columns:repeat\(2/,
+  );
+  assert.match(
+    admin,
+    /@media\(max-width:780px\)\{\.form-grid,\.profile-grid\{grid-template-columns:1fr\}/,
+  );
+  for (const label of [
+    "CTV",
+    "Đại lý",
+    "NPP",
+    "Giá vốn + phần trăm lợi nhuận",
+    "Tự động đồng bộ nhà cung cấp",
+    "Ngưỡng tăng giá tự động tối đa",
+  ])
     assert.ok(adminOperations.includes(label));
 });
 
 test("task 24 customer operations use protected real endpoints", () => {
-  for (const token of ["users.balance.manage", "users.pricing.manage", "wallets/", "mutations", "idempotency-key", "revoke-sessions", "price-group"])
+  for (const token of [
+    "users.balance.manage",
+    "users.pricing.manage",
+    "wallets/",
+    "mutations",
+    "idempotency-key",
+    "revoke-sessions",
+    "price-group",
+  ])
     assert.match(adminOperations, new RegExp(token.replace("/", "\\/")));
-  for (const label of ["Tổng nạp", "Tổng chi", "Tổng hoàn", "Đơn hoàn thành", "Ví & giao dịch", "Lịch sử đăng nhập", "Nhật ký Admin"])
+  for (const label of [
+    "Tổng nạp",
+    "Tổng chi",
+    "Tổng hoàn",
+    "Đơn hoàn thành",
+    "Ví & giao dịch",
+    "Lịch sử đăng nhập",
+    "Nhật ký Admin",
+  ])
     assert.match(adminOperations, new RegExp(label));
 });
