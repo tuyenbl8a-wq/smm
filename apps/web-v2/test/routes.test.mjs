@@ -364,20 +364,38 @@ test("customer and conditional payment workflows are behavioral and secret-safe"
   assert.match(adminOperations, /\['ID khách hàng','#'\+safe\.userNumber\]/);
   assert.match(adminOperations, /Hồ sơ khách hàng/);
   assert.match(adminOperations, /Chuyển khoản ngân hàng/);
-  assert.match(adminOperations, /Sử dụng API VietQR nâng cao/);
+  assert.match(adminOperations, /Sử dụng VietQR nâng cao/);
   assert.match(adminOperations, /advanced\.checked/);
   assert.match(adminOperations, /Kết nối API Casso/);
-  assert.match(adminOperations, /casso\.checked/);
+  assert.match(adminOperations, /cassoToggle\.checked/);
   assert.match(adminOperations, /mode\.value!==['"]AUTO['"]/);
   for (const option of ["limits", "fees", "daily", "bonus"])
-    assert.match(adminOperations, new RegExp(`data-option=.?${option}`));
+    assert.match(adminOperations, new RegExp(`\\['${option}','`));
   assert.match(adminOperations, /feeFixed\)\|\|nonzero\(initial\.feePercent/);
   assert.match(
     adminOperations,
     /dailyTransactionLimit\)\|\|nonzero\(initial\.dailyAmountLimit/,
   );
-  assert.match(adminOperations, /secret\(n,l\).*input\(n,l,''/);
+  assert.match(adminOperations, /secret\(n,l,extra=.*return input\(n,l,''/);
   assert.match(adminOperations, /Đã cấu hình · để trống để giữ nguyên/);
+});
+
+test("payment editor has responsive provider-specific structure", () => {
+  assert.match(adminOperations, /classList\.add\('payment-editor-modal'\)/);
+  assert.match(admin, /\.payment-editor-modal\{width:min\(900px,calc\(100vw - 32px\)\)/);
+  assert.match(adminOperations, /class="provider-choice"/);
+  assert.match(adminOperations, /class="form-section ['"]\+kind\+['"]"/);
+  assert.match(adminOperations, /bank-section/);
+  assert.match(adminOperations, /type!==['"]BINANCE['"]/);
+  assert.match(adminOperations, /if\(type===['"]BINANCE['"]\)/);
+  assert.match(adminOperations, /CẤU HÌNH VIETQR NÂNG CAO/);
+  assert.match(adminOperations, /KẾT NỐI CASSO/);
+  assert.match(adminOperations, /KẾT NỐI API BINANCE/);
+  assert.match(adminOperations, /input\(n,l,''\s*,false,['"]password['"]/);
+  assert.doesNotMatch(adminOperations, /input\(n,l,configured\[n\]/);
+  assert.match(admin, /input,select,button,\.admin-button\{min-height:44px\}/);
+  assert.match(admin, /\.payment-editor \.form-grid\{grid-template-columns:1fr\}/);
+  assert.match(admin, /html,body\{max-width:100%;overflow-x:hidden\}/);
 });
 
 test("price groups use customer lookup and deposits expose real protected operations", () => {
