@@ -558,3 +558,15 @@ test('three new references render nine distinct and responsive interfaces',async
   for(const copy of ['Kính pha lê · lớp nổi phát sáng','Emerald đậm · tăng trưởng doanh nghiệp','Creator pop · hồng cam tím năng lượng'])assert.ok(adminOperations.includes(copy));
   for(const thumb of ['thumb-glass','thumb-business','thumb-creator'])assert.ok(admin.includes(thumb));
 });
+test('final reference pair completes exactly ten unique three-scope architectures',async()=>{
+ const {themeStructure}=await import('../dist/themes.js'); const {fullPageThemePreview,themeEditorPage}=await import('../dist/theme-builder.js');
+ const references=['SOFT_BEIGE_PREMIUM','JAPANESE_ZEN','DARK_LUXURY','PREMIUM_CORPORATE','CYBER_NEON','GLASSMORPHISM','EMERALD_BUSINESS','SOCIAL_CREATOR','EDITORIAL_BRUTALIST','AI_FUTURISTIC'];
+ const expected={EDITORIAL_BRUTALIST:['brutal-masthead','concrete-spread','poster-access','block-rail','hard-ledger','manifesto-grid','ticket-desk'],AI_FUTURISTIC:['ai-command','neural-orbit','cognitive-gateway','agent-console','intelligence-grid','model-modules','prompt-pipeline']};
+ for(const [id,variants] of Object.entries(expected)){
+  assert.deepEqual(Object.values(themeStructure[id]).slice(0,7),variants);
+  for(const [scope,key,index] of [['landing','hero',1],['auth','auth',2],['customer','dashboard',4]]){const html=fullPageThemePreview('',id,scope);assert.match(html,new RegExp(`data-theme="${id}"`));assert.match(html,new RegExp(`data-${key}-variant="${variants[index]}"`));assert.doesNotMatch(html,/TÃ|Ä‘|CustomerChào|AuthĐăng/)}
+  const editor=themeEditorPage(id);for(const token of ['landing','auth','customer','desktop','tablet','mobile','theme-draft'])assert.match(editor,new RegExp(token));
+ }
+ const signatures=new Set(references.map(id=>Object.values(themeStructure[id]).slice(0,7).join('|')));assert.equal(signatures.size,10);
+ assert.ok(adminOperations.includes('Đen trắng · lime biên tập mạnh'));assert.ok(adminOperations.includes('Trí tuệ nhân tạo · bảng điều khiển tương lai'));assert.match(admin,/\.thumb-brutalist/);assert.match(admin,/\.thumb-stage/);
+});
