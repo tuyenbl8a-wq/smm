@@ -104,17 +104,36 @@ export class AdminOperationsService {
       type = optional(query.type),
       user = optional(query.user ?? query.customer),
       createdAt = {
-        ...(optional(query.from) ? { gte: new Date(`${query.from}T00:00:00.000Z`) } : {}),
-        ...(optional(query.to) ? { lte: new Date(`${query.to}T23:59:59.999Z`) } : {}),
+        ...(optional(query.from)
+          ? { gte: new Date(`${query.from}T00:00:00.000Z`) }
+          : {}),
+        ...(optional(query.to)
+          ? { lte: new Date(`${query.to}T23:59:59.999Z`) }
+          : {}),
       },
       where: any = {
         ...(type ? { type } : {}),
         ...(Object.keys(createdAt).length ? { createdAt } : {}),
         ...(search
-          ? { OR: [{ id: { contains: search } }, { referenceId: { contains: search } }, { description: { contains: search, mode: "insensitive" } }] }
+          ? {
+              OR: [
+                { id: { contains: search } },
+                { referenceId: { contains: search } },
+                { description: { contains: search, mode: "insensitive" } },
+              ],
+            }
           : {}),
         ...(user
-          ? { wallet: { user: { OR: [{ username: { contains: user, mode: "insensitive" } }, { email: { contains: user, mode: "insensitive" } }] } } }
+          ? {
+              wallet: {
+                user: {
+                  OR: [
+                    { username: { contains: user, mode: "insensitive" } },
+                    { email: { contains: user, mode: "insensitive" } },
+                  ],
+                },
+              },
+            }
           : {}),
       };
     const [items, total] = await Promise.all([
@@ -132,7 +151,9 @@ export class AdminOperationsService {
           referenceId: true,
           description: true,
           createdAt: true,
-          wallet: { select: { user: { select: { userNumber: true, username: true } } } },
+          wallet: {
+            select: { user: { select: { userNumber: true, username: true } } },
+          },
         },
       }),
       this.db.walletTransaction.count({ where }),
@@ -429,31 +450,68 @@ export class AdminOperationsService {
           where: { userId: id },
           orderBy: { createdAt: "desc" },
           take: 50,
-          select: { id: true, code: true, paymentMethodId: true, grossAmount: true, netAmount: true, creditedAmount: true, status: true, externalTransactionId: true, createdAt: true, paidAt: true },
+          select: {
+            id: true,
+            code: true,
+            paymentMethodId: true,
+            grossAmount: true,
+            netAmount: true,
+            creditedAmount: true,
+            status: true,
+            externalTransactionId: true,
+            createdAt: true,
+            paidAt: true,
+          },
         }),
         this.db.ticket.findMany({
           where: { userId: id },
           orderBy: { updatedAt: "desc" },
           take: 50,
-          select: { id: true, subject: true, priority: true, status: true, createdAt: true, updatedAt: true },
+          select: {
+            id: true,
+            subject: true,
+            priority: true,
+            status: true,
+            createdAt: true,
+            updatedAt: true,
+          },
         }),
         this.db.session.findMany({
           where: { userId: id },
           orderBy: { createdAt: "desc" },
           take: 50,
-          select: { id: true, userAgent: true, ipAddress: true, createdAt: true, expiresAt: true, revokedAt: true },
+          select: {
+            id: true,
+            userAgent: true,
+            ipAddress: true,
+            createdAt: true,
+            expiresAt: true,
+            revokedAt: true,
+          },
         }),
         this.db.apiKey.findMany({
           where: { userId: id },
           orderBy: { createdAt: "desc" },
           take: 50,
-          select: { id: true, keyPrefix: true, active: true, rateLimit: true, lastUsedAt: true, createdAt: true },
+          select: {
+            id: true,
+            keyPrefix: true,
+            active: true,
+            rateLimit: true,
+            lastUsedAt: true,
+            createdAt: true,
+          },
         }),
       ]);
     return {
       ...user,
       userNumber: String(user.userNumber),
-      deposits: safeDeposits.map((row: any) => ({ ...row, grossAmount: String(row.grossAmount), netAmount: String(row.netAmount), creditedAmount: String(row.creditedAmount) })),
+      deposits: safeDeposits.map((row: any) => ({
+        ...row,
+        grossAmount: String(row.grossAmount),
+        netAmount: String(row.netAmount),
+        creditedAmount: String(row.creditedAmount),
+      })),
       support: safeTickets.map((row: any) => ({ ...row, id: String(row.id) })),
       sessions: safeSessions,
       apiKeys: safeApiKeys,
@@ -1387,92 +1445,266 @@ export class AdminOperationsService {
     });
   }
 
-  async orders(query: any) {
-    const page = Math.max(1, Number(query.page) || 1),
-      limit = clamp(query.limit),
-      status = enumFilter(
-        query.status,
-        [
-          "PENDING",
-          "PROCESSING",
-          "IN_PROGRESS",
-          "COMPLETED",
-          "PARTIAL",
-          "CANCELED",
-          "REFUNDED",
-          "FAILED",
-        ],
-        "ORDER_STATUS_INVALID",
-      ),
-      provider = uuidFilter(query.provider, "PROVIDER_FILTER_INVALID"),
-      user = uuidFilter(query.user, "USER_FILTER_INVALID"),
-      service = uuidFilter(query.service, "SERVICE_FILTER_INVALID"),
-      search = optional(query.search),
-      searchOrderId =
-        search && /^[0-9]+$/.test(search) && BigInt(search) > 100000n
-          ? BigInt(search) - 100000n
-          : null,
-      providerOrderSearch = optional(query.providerOrderId),
+  private async orderWhere(query: any, siteId?: string) {
+    const status = enumFilter(
+      query.status,
+      [
+        "PENDING",
+        "PROCESSING",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "PARTIAL",
+        "CANCELED",
+        "REFUNDED",
+        "FAILED",
+      ],
+      "ORDER_STATUS_INVALID",
+    );
+    const provider = uuidFilter(query.provider, "PROVIDER_FILTER_INVALID");
+    const user = uuidFilter(query.user, "USER_FILTER_INVALID");
+    const service = uuidFilter(query.service, "SERVICE_FILTER_INVALID");
+    const search = optional(query.search ?? query.websiteOrderId);
+    const searchOrderId =
+      search && /^[0-9]+$/.test(search) && BigInt(search) > 100000n
+        ? BigInt(search) - 100000n
+        : null;
+    const providerOrderSearch = optional(query.providerOrderId),
       linkSearch = optional(query.link),
       customerSearch = optional(query.customer),
       serviceSearch = optional(query.serviceName),
-      customerRows = customerSearch
-        ? await this.db.user.findMany({
+      providerSearch = optional(query.providerName),
+      platformSearch = optional(query.platform),
+      categorySearch = optional(query.category);
+    const customerRows = customerSearch
+      ? await this.db.user.findMany({
+          where: {
+            OR: [
+              { username: { contains: customerSearch, mode: "insensitive" } },
+              { email: { contains: customerSearch, mode: "insensitive" } },
+            ],
+          },
+          select: { id: true },
+        })
+      : [];
+    const providerRows = providerSearch
+      ? await this.db.provider.findMany({
+          where: {
+            name: { contains: providerSearch, mode: "insensitive" },
+            deletedAt: null,
+          },
+          select: { id: true },
+        })
+      : [];
+    let categoryIds: string[] | undefined;
+    if (platformSearch || categorySearch) {
+      const platforms = platformSearch
+        ? await this.db.platform.findMany({
             where: {
               OR: [
-                { username: { contains: customerSearch, mode: "insensitive" } },
-                { email: { contains: customerSearch, mode: "insensitive" } },
+                {
+                  id: /^[0-9a-f-]{36}$/.test(platformSearch)
+                    ? platformSearch
+                    : undefined,
+                },
+                { name: { contains: platformSearch, mode: "insensitive" } },
+                { slug: { equals: platformSearch } },
               ],
             },
             select: { id: true },
           })
-        : [],
-      serviceRows = serviceSearch
+        : [];
+      const categories = await this.db.serviceCategory.findMany({
+        where: {
+          ...(categorySearch
+            ? {
+                OR: [
+                  {
+                    id: /^[0-9a-f-]{36}$/.test(categorySearch)
+                      ? categorySearch
+                      : undefined,
+                  },
+                  { name: { contains: categorySearch, mode: "insensitive" } },
+                  { slug: { equals: categorySearch } },
+                ],
+              }
+            : {}),
+          ...(platformSearch
+            ? { platformId: { in: platforms.map((x: any) => x.id) } }
+            : {}),
+        },
+        select: { id: true },
+      });
+      categoryIds = categories.map((x: any) => x.id);
+    }
+    const serviceRows =
+      serviceSearch || categoryIds
         ? await this.db.service.findMany({
-            where: { name: { contains: serviceSearch, mode: "insensitive" } },
+            where: {
+              ...(serviceSearch
+                ? {
+                    OR: [
+                      {
+                        name: { contains: serviceSearch, mode: "insensitive" },
+                      },
+                      ...(/^[0-9]+$/.test(serviceSearch)
+                        ? [{ serviceNumber: BigInt(serviceSearch) }]
+                        : []),
+                    ],
+                  }
+                : {}),
+              ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
+            },
             select: { id: true },
           })
-        : [],
-      where: any = {
-        ...(status ? { status } : {}),
-        ...(provider ? { providerId: provider } : {}),
-        ...(user ? { userId: user } : {}),
-        ...(service ? { serviceId: service } : {}),
-        ...(providerOrderSearch
-          ? { providerOrderId: { contains: providerOrderSearch } }
-          : {}),
-        ...(linkSearch
-          ? { link: { contains: linkSearch, mode: "insensitive" } }
-          : {}),
-        ...(customerSearch
-          ? { userId: { in: customerRows.map((row: any) => row.id) } }
-          : {}),
-        ...(serviceSearch
-          ? { serviceId: { in: serviceRows.map((row: any) => row.id) } }
-          : {}),
-        ...(optional(query.from) || optional(query.to)
-          ? {
-              createdAt: {
-                ...(optional(query.from)
-                  ? { gte: new Date(String(query.from)) }
-                  : {}),
-                ...(optional(query.to)
-                  ? { lte: new Date(String(query.to)) }
-                  : {}),
-              },
-            }
-          : {}),
-        ...(search
-          ? {
-              OR: [
-                ...(searchOrderId ? [{ id: { equals: searchOrderId } }] : []),
-                { publicId: { equals: search } },
-                { providerOrderId: { equals: search } },
-                { link: { contains: search } },
-              ],
-            }
-          : {}),
-      };
+        : [];
+    const where: any = {
+      ...(siteId ? { siteId } : {}),
+      ...(status ? { status } : {}),
+      ...(provider ? { providerId: provider } : {}),
+      ...(providerSearch
+        ? { providerId: { in: providerRows.map((x: any) => x.id) } }
+        : {}),
+      ...(user ? { userId: user } : {}),
+      ...(service ? { serviceId: service } : {}),
+      ...(serviceSearch || categoryIds
+        ? { serviceId: { in: serviceRows.map((x: any) => x.id) } }
+        : {}),
+      ...(providerOrderSearch
+        ? { providerOrderId: { contains: providerOrderSearch } }
+        : {}),
+      ...(linkSearch
+        ? { link: { contains: linkSearch, mode: "insensitive" } }
+        : {}),
+      ...(customerSearch
+        ? { userId: { in: customerRows.map((x: any) => x.id) } }
+        : {}),
+      ...(optional(query.from) || optional(query.to)
+        ? {
+            createdAt: {
+              ...(optional(query.from)
+                ? { gte: new Date(String(query.from)) }
+                : {}),
+              ...(optional(query.to)
+                ? { lte: new Date(String(query.to)) }
+                : {}),
+            },
+          }
+        : {}),
+      ...(search
+        ? {
+            OR: [
+              ...(searchOrderId ? [{ id: { equals: searchOrderId } }] : []),
+              { publicId: { equals: search } },
+              { providerOrderId: { equals: search } },
+              { link: { contains: search } },
+            ],
+          }
+        : {}),
+    };
+    return { where, service };
+  }
+
+  async orderFilterOptions(query: any) {
+    const search = optional(query.search),
+      kind = String(query.kind || "");
+    if (kind === "provider")
+      return this.db.provider.findMany({
+        where: {
+          deletedAt: null,
+          ...(search
+            ? { name: { contains: search, mode: "insensitive" } }
+            : {}),
+        },
+        select: { id: true, name: true, status: true },
+        orderBy: { name: "asc" },
+        take: 30,
+      });
+    if (kind === "service") {
+      const rows = await this.db.service.findMany({
+        where: {
+          deletedAt: null,
+          ...(search
+            ? {
+                OR: [
+                  { name: { contains: search, mode: "insensitive" } },
+                  ...(/^[0-9]+$/.test(search)
+                    ? [{ serviceNumber: BigInt(search) }]
+                    : []),
+                ],
+              }
+            : {}),
+        },
+        select: { id: true, serviceNumber: true, name: true, categoryId: true },
+        orderBy: { name: "asc" },
+        take: 30,
+      });
+      return rows.map((x: any) => ({
+        ...x,
+        serviceNumber: String(x.serviceNumber),
+      }));
+    }
+    return [];
+  }
+
+  async providerOrderIds(query: any, siteId?: string) {
+    const { where } = await this.orderWhere(query, siteId),
+      limit = Math.min(5000, Math.max(1, Number(query.limit) || 5000));
+    const rows = await this.db.order.findMany({
+      where: { ...where, providerOrderId: { not: null } },
+      select: { providerOrderId: true },
+      orderBy: { createdAt: "desc" },
+      take: limit + 1,
+    });
+    return {
+      ids: rows
+        .slice(0, limit)
+        .map((x: any) => x.providerOrderId)
+        .filter(Boolean),
+      truncated: rows.length > limit,
+      limit,
+    };
+  }
+
+  async orderServiceAnalytics(query: any, siteId?: string) {
+    const { where, service } = await this.orderWhere(query, siteId);
+    if (!service)
+      throw new AdminOperationError("SERVICE_REQUIRED", "Select one service");
+    const [meta, totals, statuses] = await Promise.all([
+      this.db.service.findUnique({
+        where: { id: service },
+        select: { id: true, serviceNumber: true, name: true },
+      }),
+      this.db.order.aggregate({
+        where,
+        _count: { _all: true },
+        _sum: {
+          quantity: true,
+          charge: true,
+          refundedAmount: true,
+          remains: true,
+        },
+      }),
+      this.db.order.groupBy({ by: ["status"], where, _count: { _all: true } }),
+    ]);
+    if (!meta)
+      throw new AdminOperationError("SERVICE_NOT_FOUND", "Service not found");
+    return {
+      service: { ...meta, serviceNumber: String(meta.serviceNumber) },
+      totalOrders: totals._count._all,
+      totalQuantity: totals._sum.quantity || 0,
+      totalCharge: String(totals._sum.charge || "0"),
+      totalRefunded: String(totals._sum.refundedAmount || "0"),
+      totalRemains: totals._sum.remains || 0,
+      statusCounts: Object.fromEntries(
+        statuses.map((x: any) => [x.status, x._count._all]),
+      ),
+    };
+  }
+
+  async orders(query: any, siteId?: string) {
+    const page = Math.max(1, Number(query.page) || 1),
+      limit = clamp(query.limit),
+      { where } = await this.orderWhere(query, siteId);
     const [total, items, statusRows] = await Promise.all([
       this.db.order.count({ where }),
       this.db.order.findMany({
@@ -2030,7 +2262,12 @@ export class AdminOperationsService {
           );
         throw error;
       }
-      await applySettlementTargetRefund(tx, order, refund.target, `Panel upstream Admin refund: ${reason}`);
+      await applySettlementTargetRefund(
+        tx,
+        order,
+        refund.target,
+        `Panel upstream Admin refund: ${reason}`,
+      );
       const full = moneyToUnits(refund.target) === moneyToUnits(order.charge),
         status = full ? "REFUNDED" : order.status;
       const updated = await tx.order.update({
@@ -2507,17 +2744,83 @@ export class AdminOperationsService {
           key.startsWith("theme") &&
           key !== "themeOptions" &&
           key !== "themeContent" &&
-          key !== "themeOverrides" && key !== "themeDraft"
+          key !== "themeOverrides" &&
+          key !== "themeDraft"
         )
           return themeIds.has(String(value));
         if (key === "themeOverrides" || key === "themeDraft") {
-          if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-          const candidate = key === "themeDraft" ? (value as any).overrides : value;
-          if (key === "themeDraft" && !themeIds.has(String((value as any).themeId))) return false;
-          if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
-          const groups:Record<string,Set<string>>={colors:new Set(["primary","secondary","accent","background","surface","text","muted","border","success","warning","danger"]),content:new Set(["brandTitle","tagline","heroTitle","heroSubtitle","primaryCta","secondaryCta","footerText"]),layout:new Set(["density","serviceVariant"]),typography:new Set(["font","baseSize"])};
-          if (!Object.keys(candidate).every(group=>groups[group])) return false;
-          return Object.entries(candidate).every(([group,fields]:any)=>fields&&typeof fields==="object"&&!Array.isArray(fields)&&Object.entries(fields).every(([name,field])=>groups[group]!.has(name)&&(group==="colors"?typeof field==="string"&&/^#[0-9a-f]{6}$/i.test(field):group==="layout"?(["compact","comfortable","spacious","cards","table","catalog"].includes(String(field))):group==="typography"?(["system","serif","display"].includes(String(field))||(name==="baseSize"&&Number(field)>=14&&Number(field)<=20)):typeof field==="string"&&field.length<=500)));
+          if (!value || typeof value !== "object" || Array.isArray(value))
+            return false;
+          const candidate =
+            key === "themeDraft" ? (value as any).overrides : value;
+          if (
+            key === "themeDraft" &&
+            !themeIds.has(String((value as any).themeId))
+          )
+            return false;
+          if (
+            !candidate ||
+            typeof candidate !== "object" ||
+            Array.isArray(candidate)
+          )
+            return false;
+          const groups: Record<string, Set<string>> = {
+            colors: new Set([
+              "primary",
+              "secondary",
+              "accent",
+              "background",
+              "surface",
+              "text",
+              "muted",
+              "border",
+              "success",
+              "warning",
+              "danger",
+            ]),
+            content: new Set([
+              "brandTitle",
+              "tagline",
+              "heroTitle",
+              "heroSubtitle",
+              "primaryCta",
+              "secondaryCta",
+              "footerText",
+            ]),
+            layout: new Set(["density", "serviceVariant"]),
+            typography: new Set(["font", "baseSize"]),
+          };
+          if (!Object.keys(candidate).every((group) => groups[group]))
+            return false;
+          return Object.entries(candidate).every(
+            ([group, fields]: any) =>
+              fields &&
+              typeof fields === "object" &&
+              !Array.isArray(fields) &&
+              Object.entries(fields).every(
+                ([name, field]) =>
+                  groups[group]!.has(name) &&
+                  (group === "colors"
+                    ? typeof field === "string" && /^#[0-9a-f]{6}$/i.test(field)
+                    : group === "layout"
+                      ? [
+                          "compact",
+                          "comfortable",
+                          "spacious",
+                          "cards",
+                          "table",
+                          "catalog",
+                        ].includes(String(field))
+                      : group === "typography"
+                        ? ["system", "serif", "display"].includes(
+                            String(field),
+                          ) ||
+                          (name === "baseSize" &&
+                            Number(field) >= 14 &&
+                            Number(field) <= 20)
+                        : typeof field === "string" && field.length <= 500),
+              ),
+          );
         }
         if (key === "themeOptions") {
           if (!value || typeof value !== "object" || Array.isArray(value))
@@ -2638,12 +2941,22 @@ export class AdminOperationsService {
       "themeOverrides",
     ];
     const rows = await this.db.setting.findMany({
-      where: { siteId: { in: siteId === ROOT_SITE_ID ? [ROOT_SITE_ID] : [ROOT_SITE_ID, siteId] }, group: { in: ["general", "branding"] }, key: { in: allowed }, encrypted: false },
+      where: {
+        siteId: {
+          in: siteId === ROOT_SITE_ID ? [ROOT_SITE_ID] : [ROOT_SITE_ID, siteId],
+        },
+        group: { in: ["general", "branding"] },
+        key: { in: allowed },
+        encrypted: false,
+      },
       select: { siteId: true, key: true, value: true },
       orderBy: { siteId: "asc" },
     });
-    const root=rows.filter((row:any)=>row.siteId===ROOT_SITE_ID),local=rows.filter((row:any)=>row.siteId===siteId);
-    return Object.fromEntries([...root,...local].map((row: any) => [row.key, row.value]));
+    const root = rows.filter((row: any) => row.siteId === ROOT_SITE_ID),
+      local = rows.filter((row: any) => row.siteId === siteId);
+    return Object.fromEntries(
+      [...root, ...local].map((row: any) => [row.key, row.value]),
+    );
   }
 
   async maintenance() {

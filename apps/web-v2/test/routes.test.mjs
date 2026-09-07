@@ -57,6 +57,7 @@ test("all customer routes and real modules are registered", () => {
   for (const route of [
     "dashboard",
     "orders/new",
+    "orders/bulk",
     "orders",
     "services",
     "wallet",
@@ -82,6 +83,27 @@ test("all customer routes and real modules are registered", () => {
     "auth/logout",
   ])
     assert.match(customer, new RegExp(endpoint.replaceAll("/", "\\/")));
+});
+test("mass order uses a four-step validated preview and the authoritative order path", () => {
+  for (const token of [
+    "Đặt hàng số lượng lớn",
+    "Phân tích & kiểm tra",
+    "bulk-preview",
+    "Number.isSafeInteger(quantity)",
+    "quantity<Number(service.min)",
+    "bulkBatchId",
+    "Kết quả từng dòng",
+  ])
+    assert.match(
+      customer,
+      new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
+  assert.match(customer, /api\/v1\/customer\/orders/);
+  assert.match(
+    customer,
+    /'idempotency-key':'bulk:'\+bulkBatchId\+':'\+row\.line/,
+  );
+  assert.doesNotMatch(customer, /api\/v1\/customer\/orders\/bulk/);
 });
 test("authenticated API client includes cookies, CSRF, timeout and normalized errors", () => {
   assert.match(client, /credentials:'include'/);
@@ -382,7 +404,10 @@ test("customer and conditional payment workflows are behavioral and secret-safe"
 
 test("payment editor has responsive provider-specific structure", () => {
   assert.match(adminOperations, /classList\.add\('payment-editor-modal'\)/);
-  assert.match(admin, /\.payment-editor-modal\{width:min\(900px,calc\(100vw - 32px\)\)/);
+  assert.match(
+    admin,
+    /\.payment-editor-modal\{width:min\(900px,calc\(100vw - 32px\)\)/,
+  );
   assert.match(adminOperations, /class="provider-choice"/);
   assert.match(adminOperations, /class="form-section ['"]\+kind\+['"]"/);
   assert.match(adminOperations, /bank-section/);
@@ -394,7 +419,10 @@ test("payment editor has responsive provider-specific structure", () => {
   assert.match(adminOperations, /input\(n,l,''\s*,false,['"]password['"]/);
   assert.doesNotMatch(adminOperations, /input\(n,l,configured\[n\]/);
   assert.match(admin, /input,select,button,\.admin-button\{min-height:44px\}/);
-  assert.match(admin, /\.payment-editor \.form-grid\{grid-template-columns:1fr\}/);
+  assert.match(
+    admin,
+    /\.payment-editor \.form-grid\{grid-template-columns:1fr\}/,
+  );
   assert.match(admin, /html,body\{max-width:100%;overflow-x:hidden\}/);
 });
 
@@ -472,12 +500,42 @@ test("task 24 customer operations use protected real endpoints", () => {
 
 test("required theme architecture, safe preview and enum status contract", async () => {
   const themes = await import("../dist/themes.js");
-  const required = ["DARK_LUXURY","MINIMAL_LIGHT","CYBER_NEON","SOFT_PASTEL","NATURE_GREEN","GLASSMORPHISM","BOLD_COMMERCE","DASHBOARD_FOCUSED","CREATIVE_AGENCY","PREMIUM_CORPORATE","JAPANESE_ZEN","BLACK_GOLD_ELITE","AI_FUTURISTIC","EDITORIAL_BRUTALIST","SOCIAL_CREATOR","OCEAN_PROFESSIONAL","AURORA_MODERN","EMERALD_BUSINESS","MIDNIGHT_SAAS","SOFT_BEIGE_PREMIUM"];
+  const required = [
+    "DARK_LUXURY",
+    "MINIMAL_LIGHT",
+    "CYBER_NEON",
+    "SOFT_PASTEL",
+    "NATURE_GREEN",
+    "GLASSMORPHISM",
+    "BOLD_COMMERCE",
+    "DASHBOARD_FOCUSED",
+    "CREATIVE_AGENCY",
+    "PREMIUM_CORPORATE",
+    "JAPANESE_ZEN",
+    "BLACK_GOLD_ELITE",
+    "AI_FUTURISTIC",
+    "EDITORIAL_BRUTALIST",
+    "SOCIAL_CREATOR",
+    "OCEAN_PROFESSIONAL",
+    "AURORA_MODERN",
+    "EMERALD_BUSINESS",
+    "MIDNIGHT_SAAS",
+    "SOFT_BEIGE_PREMIUM",
+  ];
   assert.deepEqual([...themes.themeIds], required);
-  assert.equal(new Set(themes.themePresets.map(x => x.name)).size, 20);
+  assert.equal(new Set(themes.themePresets.map((x) => x.name)).size, 20);
   for (const id of required) {
     const v = themes.themeStructure[id];
-    for (const key of ["navigationVariant","heroVariant","authVariant","sidebarVariant","dashboardVariant","serviceVariant","orderFormVariant","density"])
+    for (const key of [
+      "navigationVariant",
+      "heroVariant",
+      "authVariant",
+      "sidebarVariant",
+      "dashboardVariant",
+      "serviceVariant",
+      "orderFormVariant",
+      "density",
+    ])
       assert.equal(typeof v[key], "string");
   }
   const runtime = themes.runtimeThemeScript("http://api", "customer");
@@ -490,83 +548,391 @@ test("required theme architecture, safe preview and enum status contract", async
   assert.match(adminOperations, /newSaleRate/);
   assert.doesNotMatch(adminOperations, /key:'oldRate'|key:'newRate'/);
 });
-test('panel customer and admin routes are wired',()=>{for(const path of ['/panels','/panels/new','/panel-plans'])assert.match(customer,new RegExp(path.replace('/','\\/')));for(const path of ['/admin/panels','/admin/panel-plans','/admin/panel-subscriptions'])assert.match(admin,new RegExp(path.replaceAll('/','\\/'))) });
-test('same-origin API proxy is constrained to API paths and fixed config target',()=>{assert.match(main,/path\.startsWith\("\/api\/"\)/);assert.match(main,/new URL\(path\s*\+\s*url\.search, config\.apiUrl\)/);assert.doesNotMatch(main,/searchParams\.get\(["'](?:url|target)/)});
-test('visual theme builder routes render real landing auth and customer architectures',async()=>{const builder=await import('../dist/theme-builder.js');for(const [scope,token] of [['landing','hero-grid'],['auth','auth-card'],['customer','metric-grid']]){const html=builder.fullPageThemePreview('', 'OCEAN_PROFESSIONAL', scope);assert.match(html,new RegExp(token));assert.match(html,/data-theme="OCEAN_PROFESSIONAL"/);assert.doesNotMatch(html,/CustomerChào|AuthĐăng/)}});
-test('visual editor provides true device viewports, draft controls and safe structured bridge',async()=>{const {themeEditorPage}=await import('../dist/theme-builder.js'),html=themeEditorPage('BLACK_GOLD_ELITE');for(const token of ['1440','768px','390px','Lưu bản nháp','Áp dụng','Hoàn tác','Khôi phục mặc định','theme-draft','themeOverrides'])assert.match(html,new RegExp(token));assert.doesNotMatch(html,/contenteditable|eval\(/)});
-test('Soft Beige Premium has its own editorial architectures in every requested scope', async()=>{
-  const {themeStructure}=await import('../dist/themes.js');
-  assert.deepEqual(themeStructure.SOFT_BEIGE_PREMIUM,{
-    navigationVariant:'beige-boutique',heroVariant:'beige-editorial',authVariant:'beige-gallery',sidebarVariant:'beige-tailored',dashboardVariant:'beige-ledger',serviceVariant:'beige-showcase',orderFormVariant:'beige-concierge',density:'spacious'
+test("panel customer and admin routes are wired", () => {
+  for (const path of ["/panels", "/panels/new", "/panel-plans"])
+    assert.match(customer, new RegExp(path.replace("/", "\\/")));
+  for (const path of [
+    "/admin/panels",
+    "/admin/panel-plans",
+    "/admin/panel-subscriptions",
+  ])
+    assert.match(admin, new RegExp(path.replaceAll("/", "\\/")));
+});
+test("same-origin API proxy is constrained to API paths and fixed config target", () => {
+  assert.match(main, /path\.startsWith\("\/api\/"\)/);
+  assert.match(main, /new URL\(path\s*\+\s*url\.search, config\.apiUrl\)/);
+  assert.doesNotMatch(main, /searchParams\.get\(["'](?:url|target)/);
+});
+test("visual theme builder routes render real landing auth and customer architectures", async () => {
+  const builder = await import("../dist/theme-builder.js");
+  for (const [scope, token] of [
+    ["landing", "hero-grid"],
+    ["auth", "auth-card"],
+    ["customer", "metric-grid"],
+  ]) {
+    const html = builder.fullPageThemePreview("", "OCEAN_PROFESSIONAL", scope);
+    assert.match(html, new RegExp(token));
+    assert.match(html, /data-theme="OCEAN_PROFESSIONAL"/);
+    assert.doesNotMatch(html, /CustomerChào|AuthĐăng/);
+  }
+});
+test("visual editor provides true device viewports, draft controls and safe structured bridge", async () => {
+  const { themeEditorPage } = await import("../dist/theme-builder.js"),
+    html = themeEditorPage("BLACK_GOLD_ELITE");
+  for (const token of [
+    "1440",
+    "768px",
+    "390px",
+    "Lưu bản nháp",
+    "Áp dụng",
+    "Hoàn tác",
+    "Khôi phục mặc định",
+    "theme-draft",
+    "themeOverrides",
+  ])
+    assert.match(html, new RegExp(token));
+  assert.doesNotMatch(html, /contenteditable|eval\(/);
+});
+test("Soft Beige Premium has its own editorial architectures in every requested scope", async () => {
+  const { themeStructure } = await import("../dist/themes.js");
+  assert.deepEqual(themeStructure.SOFT_BEIGE_PREMIUM, {
+    navigationVariant: "beige-boutique",
+    heroVariant: "beige-editorial",
+    authVariant: "beige-gallery",
+    sidebarVariant: "beige-tailored",
+    dashboardVariant: "beige-ledger",
+    serviceVariant: "beige-showcase",
+    orderFormVariant: "beige-concierge",
+    density: "spacious",
   });
-  const {fullPageThemePreview,themeEditorPage}=await import('../dist/theme-builder.js');
-  const pages=['landing','auth','customer'].map(scope=>fullPageThemePreview('', 'SOFT_BEIGE_PREMIUM', scope));
-  for(const html of pages){
-    assert.match(html,/data-theme="SOFT_BEIGE_PREMIUM"/);
-    assert.match(html,/Soft Beige Premium is an authored editorial system/);
-    assert.doesNotMatch(html,/CustomerChào|AuthĐăng|TÃ|Ä‘/);
+  const { fullPageThemePreview, themeEditorPage } =
+    await import("../dist/theme-builder.js");
+  const pages = ["landing", "auth", "customer"].map((scope) =>
+    fullPageThemePreview("", "SOFT_BEIGE_PREMIUM", scope),
+  );
+  for (const html of pages) {
+    assert.match(html, /data-theme="SOFT_BEIGE_PREMIUM"/);
+    assert.match(html, /Soft Beige Premium is an authored editorial system/);
+    assert.doesNotMatch(html, /CustomerChào|AuthĐăng|TÃ|Ä‘/);
   }
-  assert.match(pages[0],/data-hero-variant="beige-editorial"/);
-  assert.match(pages[1],/data-auth-variant="beige-gallery"/);
-  assert.match(pages[2],/data-dashboard-variant="beige-ledger"/);
-  const editor=themeEditorPage('SOFT_BEIGE_PREMIUM');
-  for(const token of ['landing','auth','customer','desktop','tablet','mobile']) assert.match(editor,new RegExp(token));
+  assert.match(pages[0], /data-hero-variant="beige-editorial"/);
+  assert.match(pages[1], /data-auth-variant="beige-gallery"/);
+  assert.match(pages[2], /data-dashboard-variant="beige-ledger"/);
+  const editor = themeEditorPage("SOFT_BEIGE_PREMIUM");
+  for (const token of [
+    "landing",
+    "auth",
+    "customer",
+    "desktop",
+    "tablet",
+    "mobile",
+  ])
+    assert.match(editor, new RegExp(token));
 });
-test('four reference themes have independent three-scope architectures',async()=>{
-  const {themeStructure}=await import('../dist/themes.js');
-  const {fullPageThemePreview}=await import('../dist/theme-builder.js');
-  const expected={
-    JAPANESE_ZEN:['zen-pavilion','ink-landscape','shoji','quiet-rail','garden-ledger','zen-shelf','ritual-flow'],
-    DARK_LUXURY:['luxury-gallery','monument','noir-suite','gold-rail','executive-night','jewel-grid','private-desk'],
-    PREMIUM_CORPORATE:['corporate-bar','business-tower','trust-split','office-rail','kpi-board','solution-columns','proposal-flow'],
-    CYBER_NEON:['neon-command','hologram-stage','portal','circuit-rail','telemetry-bento','neon-modules','terminal-flow']
+test("four reference themes have independent three-scope architectures", async () => {
+  const { themeStructure } = await import("../dist/themes.js");
+  const { fullPageThemePreview } = await import("../dist/theme-builder.js");
+  const expected = {
+    JAPANESE_ZEN: [
+      "zen-pavilion",
+      "ink-landscape",
+      "shoji",
+      "quiet-rail",
+      "garden-ledger",
+      "zen-shelf",
+      "ritual-flow",
+    ],
+    DARK_LUXURY: [
+      "luxury-gallery",
+      "monument",
+      "noir-suite",
+      "gold-rail",
+      "executive-night",
+      "jewel-grid",
+      "private-desk",
+    ],
+    PREMIUM_CORPORATE: [
+      "corporate-bar",
+      "business-tower",
+      "trust-split",
+      "office-rail",
+      "kpi-board",
+      "solution-columns",
+      "proposal-flow",
+    ],
+    CYBER_NEON: [
+      "neon-command",
+      "hologram-stage",
+      "portal",
+      "circuit-rail",
+      "telemetry-bento",
+      "neon-modules",
+      "terminal-flow",
+    ],
   };
-  const signatures=new Set();
-  for(const [id,variants] of Object.entries(expected)){
-    const actual=Object.values(themeStructure[id]).slice(0,7);
-    assert.deepEqual(actual,variants); signatures.add(actual.join('|'));
-    for(const scope of ['landing','auth','customer']){
-      const html=fullPageThemePreview('',id,scope);
-      assert.match(html,new RegExp(`data-theme="${id}"`));
-      assert.doesNotMatch(html,/TÃ|Ä‘|CustomerChào|AuthĐăng/);
+  const signatures = new Set();
+  for (const [id, variants] of Object.entries(expected)) {
+    const actual = Object.values(themeStructure[id]).slice(0, 7);
+    assert.deepEqual(actual, variants);
+    signatures.add(actual.join("|"));
+    for (const scope of ["landing", "auth", "customer"]) {
+      const html = fullPageThemePreview("", id, scope);
+      assert.match(html, new RegExp(`data-theme="${id}"`));
+      assert.doesNotMatch(html, /TÃ|Ä‘|CustomerChào|AuthĐăng/);
     }
   }
-  signatures.add(Object.values(themeStructure.SOFT_BEIGE_PREMIUM).slice(0,7).join('|'));
-  assert.equal(signatures.size,5,'all four references and Soft Beige must have unique structures');
+  signatures.add(
+    Object.values(themeStructure.SOFT_BEIGE_PREMIUM).slice(0, 7).join("|"),
+  );
+  assert.equal(
+    signatures.size,
+    5,
+    "all four references and Soft Beige must have unique structures",
+  );
 });
-test('three new references render nine distinct and responsive interfaces',async()=>{
-  const {themeStructure}=await import('../dist/themes.js');
-  const {fullPageThemePreview,themeEditorPage}=await import('../dist/theme-builder.js');
-  const expected={
-    GLASSMORPHISM:['glass-orbit','prism-pedestal','crystal-suite','floating-dock','luminous-console','glass-carousel','floating-wizard'],
-    EMERALD_BUSINESS:['emerald-boardroom','growth-briefing','executive-access','enterprise-rail','growth-command','capability-matrix','approval-desk'],
-    SOCIAL_CREATOR:['creator-marquee','viral-collage','creator-studio','pop-ribbon','social-pulse','platform-stickers','boost-composer']
+test("three new references render nine distinct and responsive interfaces", async () => {
+  const { themeStructure } = await import("../dist/themes.js");
+  const { fullPageThemePreview, themeEditorPage } =
+    await import("../dist/theme-builder.js");
+  const expected = {
+    GLASSMORPHISM: [
+      "glass-orbit",
+      "prism-pedestal",
+      "crystal-suite",
+      "floating-dock",
+      "luminous-console",
+      "glass-carousel",
+      "floating-wizard",
+    ],
+    EMERALD_BUSINESS: [
+      "emerald-boardroom",
+      "growth-briefing",
+      "executive-access",
+      "enterprise-rail",
+      "growth-command",
+      "capability-matrix",
+      "approval-desk",
+    ],
+    SOCIAL_CREATOR: [
+      "creator-marquee",
+      "viral-collage",
+      "creator-studio",
+      "pop-ribbon",
+      "social-pulse",
+      "platform-stickers",
+      "boost-composer",
+    ],
   };
-  const firstFive=['SOFT_BEIGE_PREMIUM','JAPANESE_ZEN','DARK_LUXURY','PREMIUM_CORPORATE','CYBER_NEON'];
-  const signatures=new Set(firstFive.map(id=>Object.values(themeStructure[id]).slice(0,7).join('|')));
-  let interfaces=0;
-  for(const [id,variants] of Object.entries(expected)){
-    const actual=Object.values(themeStructure[id]).slice(0,7); assert.deepEqual(actual,variants); signatures.add(actual.join('|'));
-    for(const [scope,key,index] of [['landing','hero',1],['auth','auth',2],['customer','dashboard',4]]){
-      const html=fullPageThemePreview('',id,scope); interfaces++;
-      assert.match(html,new RegExp(`data-theme="${id}"`)); assert.match(html,new RegExp(`data-${key}-variant="${variants[index]}"`));
-      assert.match(html,/<meta name="viewport"/); assert.doesNotMatch(html,/TÃ|Ä‘|CustomerChào|AuthĐăng|overflow-x:\s*visible/);
+  const firstFive = [
+    "SOFT_BEIGE_PREMIUM",
+    "JAPANESE_ZEN",
+    "DARK_LUXURY",
+    "PREMIUM_CORPORATE",
+    "CYBER_NEON",
+  ];
+  const signatures = new Set(
+    firstFive.map((id) =>
+      Object.values(themeStructure[id]).slice(0, 7).join("|"),
+    ),
+  );
+  let interfaces = 0;
+  for (const [id, variants] of Object.entries(expected)) {
+    const actual = Object.values(themeStructure[id]).slice(0, 7);
+    assert.deepEqual(actual, variants);
+    signatures.add(actual.join("|"));
+    for (const [scope, key, index] of [
+      ["landing", "hero", 1],
+      ["auth", "auth", 2],
+      ["customer", "dashboard", 4],
+    ]) {
+      const html = fullPageThemePreview("", id, scope);
+      interfaces++;
+      assert.match(html, new RegExp(`data-theme="${id}"`));
+      assert.match(
+        html,
+        new RegExp(`data-${key}-variant="${variants[index]}"`),
+      );
+      assert.match(html, /<meta name="viewport"/);
+      assert.doesNotMatch(
+        html,
+        /TÃ|Ä‘|CustomerChào|AuthĐăng|overflow-x:\s*visible/,
+      );
     }
-    const editor=themeEditorPage(id); for(const token of ['landing','auth','customer','desktop','tablet','mobile','theme-draft'])assert.match(editor,new RegExp(token));
+    const editor = themeEditorPage(id);
+    for (const token of [
+      "landing",
+      "auth",
+      "customer",
+      "desktop",
+      "tablet",
+      "mobile",
+      "theme-draft",
+    ])
+      assert.match(editor, new RegExp(token));
   }
-  assert.equal(interfaces,9); assert.equal(signatures.size,8,'all three references and the completed first five must differ');
-  for(const copy of ['Kính pha lê · lớp nổi phát sáng','Emerald đậm · tăng trưởng doanh nghiệp','Creator pop · hồng cam tím năng lượng'])assert.ok(adminOperations.includes(copy));
-  for(const thumb of ['thumb-glass','thumb-business','thumb-creator'])assert.ok(admin.includes(thumb));
+  assert.equal(interfaces, 9);
+  assert.equal(
+    signatures.size,
+    8,
+    "all three references and the completed first five must differ",
+  );
+  for (const copy of [
+    "Kính pha lê · lớp nổi phát sáng",
+    "Emerald đậm · tăng trưởng doanh nghiệp",
+    "Creator pop · hồng cam tím năng lượng",
+  ])
+    assert.ok(adminOperations.includes(copy));
+  for (const thumb of ["thumb-glass", "thumb-business", "thumb-creator"])
+    assert.ok(admin.includes(thumb));
 });
-test('final reference pair completes exactly ten unique three-scope architectures',async()=>{
- const {themeStructure}=await import('../dist/themes.js'); const {fullPageThemePreview,themeEditorPage}=await import('../dist/theme-builder.js');
- const references=['SOFT_BEIGE_PREMIUM','JAPANESE_ZEN','DARK_LUXURY','PREMIUM_CORPORATE','CYBER_NEON','GLASSMORPHISM','EMERALD_BUSINESS','SOCIAL_CREATOR','EDITORIAL_BRUTALIST','AI_FUTURISTIC'];
- const expected={EDITORIAL_BRUTALIST:['brutal-masthead','concrete-spread','poster-access','block-rail','hard-ledger','manifesto-grid','ticket-desk'],AI_FUTURISTIC:['ai-command','neural-orbit','cognitive-gateway','agent-console','intelligence-grid','model-modules','prompt-pipeline']};
- for(const [id,variants] of Object.entries(expected)){
-  assert.deepEqual(Object.values(themeStructure[id]).slice(0,7),variants);
-  for(const [scope,key,index] of [['landing','hero',1],['auth','auth',2],['customer','dashboard',4]]){const html=fullPageThemePreview('',id,scope);assert.match(html,new RegExp(`data-theme="${id}"`));assert.match(html,new RegExp(`data-${key}-variant="${variants[index]}"`));assert.doesNotMatch(html,/TÃ|Ä‘|CustomerChào|AuthĐăng/)}
-  const editor=themeEditorPage(id);for(const token of ['landing','auth','customer','desktop','tablet','mobile','theme-draft'])assert.match(editor,new RegExp(token));
- }
- const signatures=new Set(references.map(id=>Object.values(themeStructure[id]).slice(0,7).join('|')));assert.equal(signatures.size,10);
- assert.ok(adminOperations.includes('Đen trắng · lime biên tập mạnh'));assert.ok(adminOperations.includes('Trí tuệ nhân tạo · bảng điều khiển tương lai'));assert.match(admin,/\.thumb-brutalist/);assert.match(admin,/\.thumb-stage/);
+test("final reference pair completes exactly ten unique three-scope architectures", async () => {
+  const { themeStructure } = await import("../dist/themes.js");
+  const { fullPageThemePreview, themeEditorPage } =
+    await import("../dist/theme-builder.js");
+  const references = [
+    "SOFT_BEIGE_PREMIUM",
+    "JAPANESE_ZEN",
+    "DARK_LUXURY",
+    "PREMIUM_CORPORATE",
+    "CYBER_NEON",
+    "GLASSMORPHISM",
+    "EMERALD_BUSINESS",
+    "SOCIAL_CREATOR",
+    "EDITORIAL_BRUTALIST",
+    "AI_FUTURISTIC",
+  ];
+  const expected = {
+    EDITORIAL_BRUTALIST: [
+      "brutal-masthead",
+      "concrete-spread",
+      "poster-access",
+      "block-rail",
+      "hard-ledger",
+      "manifesto-grid",
+      "ticket-desk",
+    ],
+    AI_FUTURISTIC: [
+      "ai-command",
+      "neural-orbit",
+      "cognitive-gateway",
+      "agent-console",
+      "intelligence-grid",
+      "model-modules",
+      "prompt-pipeline",
+    ],
+  };
+  for (const [id, variants] of Object.entries(expected)) {
+    assert.deepEqual(Object.values(themeStructure[id]).slice(0, 7), variants);
+    for (const [scope, key, index] of [
+      ["landing", "hero", 1],
+      ["auth", "auth", 2],
+      ["customer", "dashboard", 4],
+    ]) {
+      const html = fullPageThemePreview("", id, scope);
+      assert.match(html, new RegExp(`data-theme="${id}"`));
+      assert.match(
+        html,
+        new RegExp(`data-${key}-variant="${variants[index]}"`),
+      );
+      assert.doesNotMatch(html, /TÃ|Ä‘|CustomerChào|AuthĐăng/);
+    }
+    const editor = themeEditorPage(id);
+    for (const token of [
+      "landing",
+      "auth",
+      "customer",
+      "desktop",
+      "tablet",
+      "mobile",
+      "theme-draft",
+    ])
+      assert.match(editor, new RegExp(token));
+  }
+  const signatures = new Set(
+    references.map((id) =>
+      Object.values(themeStructure[id]).slice(0, 7).join("|"),
+    ),
+  );
+  assert.equal(signatures.size, 10);
+  assert.ok(adminOperations.includes("Đen trắng · lime biên tập mạnh"));
+  assert.ok(
+    adminOperations.includes("Trí tuệ nhân tạo · bảng điều khiển tương lai"),
+  );
+  assert.match(admin, /\.thumb-brutalist/);
+  assert.match(admin, /\.thumb-stage/);
+});
+
+test("reference themes have 10x3 rendered structural fingerprints shared with runtime", async () => {
+  const { referenceThemeCompositions, renderReferenceComposition } =
+    await import("../dist/themes.js");
+  const { fullPageThemePreview } = await import("../dist/theme-builder.js");
+  const ids = [
+    "SOFT_BEIGE_PREMIUM",
+    "JAPANESE_ZEN",
+    "DARK_LUXURY",
+    "PREMIUM_CORPORATE",
+    "CYBER_NEON",
+    "GLASSMORPHISM",
+    "EMERALD_BUSINESS",
+    "SOCIAL_CREATOR",
+    "EDITORIAL_BRUTALIST",
+    "AI_FUTURISTIC",
+  ];
+  for (const scope of ["landing", "auth", "customer"]) {
+    const fingerprints = new Set();
+    for (const id of ids) {
+      const expected = referenceThemeCompositions[id][scope];
+      const direct = renderReferenceComposition(
+        id,
+        scope,
+        "<button>safe</button>",
+      );
+      const html = fullPageThemePreview("", id, scope);
+      const hierarchy = [
+        ...html.matchAll(
+          /<(main|header|nav|section|article|aside|figure|footer) data-composition-layer="\d+">/g,
+        ),
+      ].map((x) => x[1]);
+      assert.deepEqual(hierarchy.slice(0, expected.length), expected);
+      assert.match(direct, /data-composition-layer="0"/);
+      fingerprints.add(hierarchy.slice(0, expected.length).join(">"));
+      assert.doesNotMatch(html, /demoDashboard|DỮ LIỆU XEM TRƯỚC|TÃ|Ä‘/);
+    }
+    assert.equal(
+      fingerprints.size,
+      10,
+      scope + " structures must be 10/10 unique",
+    );
+  }
+  assert.match(
+    await readFile(new URL("../dist/themes.js", import.meta.url), "utf8"),
+    /data-theme-runtime-root/,
+  );
+});
+
+test("admin forms and operational orders expose polished real contracts", () => {
+  for (const token of [
+    "resource-editor-modal",
+    "form-section-title",
+    "switch-input",
+    "compact-check",
+    "permissionSearch",
+    "image-preview",
+    "inline-error",
+  ])
+    assert.match(admin + adminOperations, new RegExp(token));
+  for (const token of [
+    "Website Order ID",
+    "Provider Order ID",
+    "Tìm dịch vụ",
+    "Tìm nhà cung cấp",
+    "Nền tảng",
+    "Danh mục",
+    "copyProviderIds",
+    "copyLinks",
+    "provider-ids",
+    "service-analytics",
+  ])
+    assert.match(admin, new RegExp(token));
+  assert.match(admin, /Đã sao chép.*mã đơn NCC/);
 });

@@ -700,8 +700,125 @@ test("runtime theme settings allow 20 presets and safe structured content", asyn
   assert.equal(writes.length, writesBeforeUnsafePayload);
 });
 test("structured theme overrides reject raw executable and unknown properties", async () => {
-  const writes:any[]=[];const db:any={$transaction:async(fn:any)=>fn({setting:{upsert:async(x:any)=>writes.push(x)},auditLog:{create:async()=>({})}})};const service=new AdminOperationsService(db,"0".repeat(64));
-  await assert.rejects(()=>service.updateSettings("admin",{themeOverrides:{colors:{primary:"javascript:alert(1)"}}}),/supported settings/);
-  await assert.rejects(()=>service.updateSettings("admin",{themeOverrides:{customCss:{body:"display:none"}}}),/supported settings/);
-  await service.updateSettings("admin",{themeDraft:{themeId:"OCEAN_PROFESSIONAL",overrides:{colors:{primary:"#087ea4"},layout:{density:"comfortable"}}}});assert.equal(writes.length,1);
+  const writes: any[] = [];
+  const db: any = {
+    $transaction: async (fn: any) =>
+      fn({
+        setting: { upsert: async (x: any) => writes.push(x) },
+        auditLog: { create: async () => ({}) },
+      }),
+  };
+  const service = new AdminOperationsService(db, "0".repeat(64));
+  await assert.rejects(
+    () =>
+      service.updateSettings("admin", {
+        themeOverrides: { colors: { primary: "javascript:alert(1)" } },
+      }),
+    /supported settings/,
+  );
+  await assert.rejects(
+    () =>
+      service.updateSettings("admin", {
+        themeOverrides: { customCss: { body: "display:none" } },
+      }),
+    /supported settings/,
+  );
+  await service.updateSettings("admin", {
+    themeDraft: {
+      themeId: "OCEAN_PROFESSIONAL",
+      overrides: {
+        colors: { primary: "#087ea4" },
+        layout: { density: "comfortable" },
+      },
+    },
+  });
+  assert.equal(writes.length, 1);
+});
+
+test("order analytics aggregates Decimal money and every status inside the active filter", async () => {
+  const seen: any[] = [];
+  const db: any = {
+    service: {
+      findMany: async () => [],
+      findUnique: async () => ({
+        id: "11111111-1111-1111-1111-111111111111",
+        serviceNumber: 1234n,
+        name: "Likes",
+      }),
+    },
+    user: { findMany: async () => [] },
+    provider: { findMany: async () => [] },
+    order: {
+      aggregate: async (args: any) => {
+        seen.push(args.where);
+        return {
+          _count: { _all: 3 },
+          _sum: {
+            quantity: 600,
+            charge: "12.34000000",
+            refundedAmount: "1.20000000",
+            remains: 40,
+          },
+        };
+      },
+      groupBy: async (args: any) => {
+        seen.push(args.where);
+        return [
+          { status: "COMPLETED", _count: { _all: 2 } },
+          { status: "PENDING", _count: { _all: 1 } },
+        ];
+      },
+    },
+  };
+  const service = new AdminOperationsService(db);
+  const result = await service.orderServiceAnalytics(
+    {
+      service: "11111111-1111-1111-1111-111111111111",
+      from: "2026-01-01",
+    },
+    "22222222-2222-2222-2222-222222222222",
+  );
+  assert.equal(result.service.serviceNumber, "1234");
+  assert.equal(result.totalCharge, "12.34000000");
+  assert.equal(result.totalRefunded, "1.20000000");
+  assert.deepEqual(result.statusCounts, { COMPLETED: 2, PENDING: 1 });
+  assert.equal(seen.length, 2);
+  assert.equal(
+    seen.every(
+      (where) =>
+        where.serviceId === "11111111-1111-1111-1111-111111111111" &&
+        where.siteId === "22222222-2222-2222-2222-222222222222" &&
+        where.createdAt.gte instanceof Date,
+    ),
+    true,
+  );
+});
+
+test("filtered provider ID export ignores blanks and reports safe truncation", async () => {
+  const db: any = {
+    user: { findMany: async () => [] },
+    service: { findMany: async () => [] },
+    provider: { findMany: async () => [] },
+    order: {
+      findMany: async (args: any) => {
+        assert.equal(args.take, 3);
+        assert.equal(args.where.status, "COMPLETED");
+        assert.deepEqual(args.where.providerOrderId, { not: null });
+        return [
+          { providerOrderId: "2521527" },
+          { providerOrderId: "2521526" },
+          { providerOrderId: "2521525" },
+        ];
+      },
+    },
+  };
+  const result = await new AdminOperationsService(db).providerOrderIds({
+    status: "COMPLETED",
+    limit: 2,
+  });
+  assert.deepEqual(result, {
+    ids: ["2521527", "2521526"],
+    truncated: true,
+    limit: 2,
+  });
 });
