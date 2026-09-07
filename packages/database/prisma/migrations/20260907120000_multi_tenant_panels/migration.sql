@@ -51,7 +51,17 @@ CREATE UNIQUE INDEX users_site_email_key ON users(site_id,email); CREATE UNIQUE 
 ALTER TABLE payment_methods DROP CONSTRAINT payment_methods_code_key; CREATE UNIQUE INDEX payment_methods_site_code_key ON payment_methods(site_id,code); CREATE INDEX payment_methods_site_active_sort_idx ON payment_methods(site_id,active,sort_order);
 ALTER TABLE coupons DROP CONSTRAINT coupons_code_key; CREATE UNIQUE INDEX coupons_site_code_key ON coupons(site_id,code); CREATE INDEX coupons_site_active_dates_idx ON coupons(site_id,active,starts_at,ends_at);
 ALTER TABLE price_groups DROP CONSTRAINT price_groups_code_key; ALTER TABLE price_groups DROP CONSTRAINT price_groups_name_key; CREATE UNIQUE INDEX price_groups_site_code_key ON price_groups(site_id,code); CREATE UNIQUE INDEX price_groups_site_name_key ON price_groups(site_id,name); CREATE INDEX price_groups_site_active_tier_idx ON price_groups(site_id,active,tier_order);
-CREATE INDEX orders_site_status_updated_idx ON orders(site_id,status,updated_at); CREATE INDEX orders_site_created_idx ON orders(site_id,created_at); CREATE INDEX deposits_site_status_created_idx ON deposits(site_id,status,created_at); CREATE INDEX tickets_site_status_updated_idx ON tickets(site_id,status,updated_at); ALTER TABLE settings DROP CONSTRAINT settings_group_key_key; CREATE UNIQUE INDEX settings_site_group_key_key ON settings(site_id,"group","key");
+CREATE INDEX orders_site_status_updated_idx ON orders(site_id,status,updated_at); CREATE INDEX orders_site_created_idx ON orders(site_id,created_at); CREATE INDEX deposits_site_status_created_idx ON deposits(site_id,status,created_at); CREATE INDEX tickets_site_status_updated_idx ON tickets(site_id,status,updated_at);
+-- The legacy object was created as a UNIQUE INDEX (despite its constraint-like name).
+-- Accept both historical names and an unlikely constraint variant so upgrades remain idempotent.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='settings'::regclass AND conname='settings_group_key_key') THEN
+    ALTER TABLE settings DROP CONSTRAINT settings_group_key_key;
+  END IF;
+  DROP INDEX IF EXISTS settings_group_key_unique;
+  DROP INDEX IF EXISTS settings_group_key_key;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS settings_site_group_key_key ON settings(site_id,"group","key");
 ALTER TABLE sites ADD CONSTRAINT sites_owner_fk FOREIGN KEY(owner_user_id) REFERENCES users(id) NOT VALID;
 
 CREATE TABLE panel_rental_plans (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),seller_site_id UUID NOT NULL REFERENCES sites(id),code VARCHAR(50) NOT NULL,name VARCHAR(120) NOT NULL,description TEXT,price DECIMAL(20,8) NOT NULL CHECK(price>=0),currency CHAR(3) NOT NULL,billing_days INTEGER NOT NULL CHECK(billing_days>0),max_direct_children INTEGER NOT NULL CHECK(max_direct_children>=0),max_depth INTEGER NOT NULL CHECK(max_depth>=1),allow_custom_domain BOOLEAN NOT NULL DEFAULT false,allow_panel_resale BOOLEAN NOT NULL DEFAULT false,allow_api BOOLEAN NOT NULL DEFAULT false,allow_themes BOOLEAN NOT NULL DEFAULT true,active BOOLEAN NOT NULL DEFAULT true,created_at TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(seller_site_id,code));

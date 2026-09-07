@@ -556,7 +556,7 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
-        return this.ok(response, await this.admin!.settings());
+        return this.ok(response, await this.admin!.settings(tenant.id));
       }
       if (
         request.method === "GET" &&
@@ -1334,6 +1334,7 @@ export class AuthHandler {
           await this.admin!.updateSettings(
             auth.user.id,
             await this.body(request),
+            tenant.id,
           ),
         );
       }
@@ -2050,7 +2051,7 @@ export class AuthHandler {
     response: ServerResponse,
     siteId: string,
   ): Promise<true> {
-    await this.rateLimit(request, "register");
+    await this.rateLimit(request, siteId, "register");
     const body = await this.body(request);
     const email = this.email(body.email);
     const username = this.username(body.username);
@@ -2088,7 +2089,7 @@ export class AuthHandler {
   ): Promise<true> {
     const body = await this.body(request);
     const email = this.email(body.email);
-    await this.rateLimit(request, email);
+    await this.rateLimit(request, siteId, email);
     const user = await this.store.findUserByEmail(email, siteId);
     const valid = user
       ? await verifyPassword(String(body.password ?? ""), user.passwordHash)
@@ -2096,6 +2097,7 @@ export class AuthHandler {
     const meta = this.meta(request);
     if (!user || !valid || user.status !== "ACTIVE") {
       await this.store.recordLogin({
+        siteId,
         ...(user ? { userId: user.id } : {}),
         email,
         success: false,
@@ -2110,6 +2112,7 @@ export class AuthHandler {
       );
     }
     await this.store.recordLogin({
+      siteId,
       userId: user.id,
       email,
       success: true,
@@ -2124,7 +2127,7 @@ export class AuthHandler {
   ): Promise<true> {
     const body = await this.body(request);
     const email = this.email(body.email);
-    await this.rateLimit(request, email);
+    await this.rateLimit(request, siteId, email);
     const user = await this.store.findUserByEmail(email, siteId);
     let developmentToken: string | undefined;
     if (user) {
@@ -2248,9 +2251,10 @@ export class AuthHandler {
     const parts = host.split(".");
     return parts.length >= 2 ? `; Domain=.${parts.slice(-2).join(".")}` : "";
   }
-  private async rateLimit(request: IncomingMessage, identity: string) {
+  private async rateLimit(request: IncomingMessage, siteId: string, identity: string) {
     const meta = this.meta(request);
     const failures = await this.store.countRecentFailures(
+      siteId,
       identity,
       meta.ipAddress,
       new Date(Date.now() - 15 * 60_000),
