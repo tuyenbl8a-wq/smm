@@ -18,7 +18,34 @@ CREATE UNIQUE INDEX site_domains_one_primary ON site_domains(site_id) WHERE is_p
 CREATE INDEX site_domains_site_status_idx ON site_domains(site_id,status);
 INSERT INTO site_domains(site_id,hostname,type,status,is_primary,verification_token,verified_at) VALUES ('00000000-0000-4000-8000-000000000001','dichvu1st.com','CUSTOM','VERIFIED',true,'root-domain',CURRENT_TIMESTAMP);
 
-DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['users','api_keys','wallets','wallet_transactions','payment_methods','deposits','services','orders','order_history','tickets','notifications','coupons','affiliates','referrals','affiliate_commissions','daily_report_snapshots','price_groups','price_group_history','audit_logs','login_history','settings'] LOOP EXECUTE format('ALTER TABLE %I ADD COLUMN site_id UUID',t); EXECUTE format('UPDATE %I SET site_id=$1 WHERE site_id IS NULL',t) USING '00000000-0000-4000-8000-000000000001'::uuid; EXECUTE format('ALTER TABLE %I ALTER COLUMN site_id SET NOT NULL',t); EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY(site_id) REFERENCES sites(id) NOT VALID',t,t||'_site_fk'); EXECUTE format('ALTER TABLE %I VALIDATE CONSTRAINT %I',t,t||'_site_fk'); END LOOP; END $$;
+-- A constant column default supplies the deterministic root tenant to existing rows as
+-- part of ALTER TABLE. This is deliberately DDL rather than an UPDATE: historical tables
+-- such as wallet_transactions have immutable-ledger UPDATE triggers. The temporary default
+-- is removed immediately so all future application writes must provide their resolved site.
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'users','api_keys','wallets','wallet_transactions','payment_methods','deposits',
+    'services','orders','order_history','tickets','notifications','coupons',
+    'affiliates','referrals','affiliate_commissions','daily_report_snapshots',
+    'price_groups','price_group_history','audit_logs','login_history','settings'
+  ] LOOP
+    EXECUTE format(
+      'ALTER TABLE %I ADD COLUMN site_id UUID NOT NULL DEFAULT %L::uuid',
+      t,
+      '00000000-0000-4000-8000-000000000001'
+    );
+    EXECUTE format('ALTER TABLE %I ALTER COLUMN site_id DROP DEFAULT', t);
+    EXECUTE format(
+      'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY(site_id) REFERENCES sites(id) NOT VALID',
+      t,
+      t || '_site_fk'
+    );
+    EXECUTE format('ALTER TABLE %I VALIDATE CONSTRAINT %I', t, t || '_site_fk');
+  END LOOP;
+END $$;
 ALTER TABLE users DROP CONSTRAINT users_email_key; ALTER TABLE users DROP CONSTRAINT users_username_key;
 CREATE UNIQUE INDEX users_site_email_key ON users(site_id,email); CREATE UNIQUE INDEX users_site_username_key ON users(site_id,username); CREATE INDEX users_site_status_created_idx ON users(site_id,status,created_at); CREATE INDEX users_site_number_idx ON users(site_id,user_number);
 ALTER TABLE payment_methods DROP CONSTRAINT payment_methods_code_key; CREATE UNIQUE INDEX payment_methods_site_code_key ON payment_methods(site_id,code); CREATE INDEX payment_methods_site_active_sort_idx ON payment_methods(site_id,active,sort_order);
