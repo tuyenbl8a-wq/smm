@@ -7,6 +7,34 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum SiteStatus {
+  ACTIVE
+  PENDING
+  SUSPENDED
+  EXPIRED
+  ARCHIVED
+}
+
+enum SiteDomainType {
+  SUBDOMAIN
+  CUSTOM
+}
+
+enum SiteDomainStatus {
+  PENDING
+  VERIFIED
+  DISABLED
+  REJECTED
+}
+
+enum PanelSubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  EXPIRED
+  CANCELED
+}
+
 enum UserStatus {
   PENDING
   ACTIVE
@@ -32,6 +60,9 @@ enum TransactionType {
   AFFILIATE
   BONUS
   ADJUSTMENT
+  PANEL_RENT
+  PANEL_RENEWAL
+  PANEL_RENT_REFUND
 }
 
 enum OrderStatus {
@@ -154,8 +185,9 @@ enum ProviderSyncStatus {
 model User {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userNumber BigInt @unique @default(autoincrement()) @map("user_number")
-  email String @unique @db.VarChar(320)
-  username String @unique @db.VarChar(64)
+  siteId String @map("site_id") @db.Uuid
+  email String @db.VarChar(320)
+  username String @db.VarChar(64)
   fullName String? @map("full_name") @db.VarChar(160)
   phone String? @db.VarChar(32)
   passwordHash String @map("password_hash") @db.VarChar(255)
@@ -170,6 +202,10 @@ model User {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([status, createdAt])
   @@index([status, priceGroupEvaluatedAt])
+  @@unique([siteId, email])
+  @@unique([siteId, username])
+  @@index([siteId, status, createdAt])
+  @@index([siteId, userNumber])
   @@map("users")
 }
 
@@ -258,6 +294,7 @@ model EmailVerificationToken {
 }
 model ApiKey {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   userId String @map("user_id") @db.Uuid
   keyPrefix String @map("key_prefix") @db.VarChar(16)
   keyHash String @unique @map("key_hash") @db.VarChar(128)
@@ -271,6 +308,7 @@ model ApiKey {
 }
 model Wallet {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   userId String @unique @map("user_id") @db.Uuid
   balance Decimal @default(0) @db.Decimal(20, 8)
   currency String @default("USD") @db.Char(3)
@@ -281,6 +319,7 @@ model Wallet {
 }
 model WalletTransaction {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   walletId String @map("wallet_id") @db.Uuid
   userId String @map("user_id") @db.Uuid
   type TransactionType
@@ -300,7 +339,8 @@ model WalletTransaction {
 }
 model PaymentMethod {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code String @unique @db.VarChar(50)
+  siteId String @map("site_id") @db.Uuid
+  code String @db.VarChar(50)
   name String @db.VarChar(120)
   providerType String @map("provider_type") @db.VarChar(50)
   configEncrypted String? @map("config_encrypted") @db.Text
@@ -320,10 +360,13 @@ model PaymentMethod {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([active, sortOrder])
+  @@unique([siteId, code])
+  @@index([siteId, active, sortOrder])
   @@map("payment_methods")
 }
 model Deposit {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   userId String @map("user_id") @db.Uuid
   paymentMethodId String @map("payment_method_id") @db.Uuid
   code String @unique @db.VarChar(32)
@@ -457,6 +500,7 @@ model ServiceCategory {
 model Service {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   serviceNumber BigInt @unique @default(autoincrement()) @map("service_number")
+  siteId String @map("site_id") @db.Uuid
   categoryId String @map("category_id") @db.Uuid
   name String @db.VarChar(255)
   source String @default("API") @db.VarChar(20)
@@ -555,6 +599,7 @@ model ProviderSyncLog {
 }
 model Order {
   id BigInt @id @default(autoincrement())
+  siteId String @map("site_id") @db.Uuid
   publicId String @unique @default(dbgenerated("gen_random_uuid()")) @map("public_id") @db.Uuid
   userId String @map("user_id") @db.Uuid
   serviceId String @map("service_id") @db.Uuid
@@ -587,10 +632,13 @@ model Order {
   @@index([status, updatedAt])
   @@index([manualOverride, status, updatedAt])
   @@index([serviceId, createdAt])
+  @@index([siteId, status, updatedAt])
+  @@index([siteId, createdAt])
   @@map("orders")
 }
 model OrderHistory {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   orderId BigInt @map("order_id")
   fromStatus OrderStatus? @map("from_status")
   toStatus OrderStatus @map("to_status")
@@ -652,6 +700,7 @@ model Cancellation {
 }
 model Ticket {
   id BigInt @id @default(autoincrement())
+  siteId String @map("site_id") @db.Uuid
   userId String @map("user_id") @db.Uuid
   assigneeId String? @map("assignee_id") @db.Uuid
   subject String @db.VarChar(255)
@@ -679,6 +728,7 @@ model TicketMessage {
 }
 model Notification {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   userId String @map("user_id") @db.Uuid
   channel NotificationChannel
   type String @db.VarChar(80)
@@ -697,7 +747,8 @@ model Notification {
 }
 model Coupon {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code String @unique @db.VarChar(50)
+  siteId String @map("site_id") @db.Uuid
+  code String @db.VarChar(50)
   type DiscountType
   value Decimal @db.Decimal(20, 8)
   minAmount Decimal? @map("min_amount") @db.Decimal(20, 8)
@@ -710,6 +761,8 @@ model Coupon {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([active, startsAt, endsAt])
+  @@unique([siteId, code])
+  @@index([siteId, active, startsAt, endsAt])
   @@map("coupons")
 }
 model CouponUsage {
@@ -726,6 +779,7 @@ model CouponUsage {
 }
 model Affiliate {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   userId String @unique @map("user_id") @db.Uuid
   code String @unique @db.VarChar(32)
   commissionRate Decimal @map("commission_rate") @db.Decimal(9, 6)
@@ -736,6 +790,7 @@ model Affiliate {
 }
 model Referral {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   affiliateId String @map("affiliate_id") @db.Uuid
   referrerId String @map("referrer_id") @db.Uuid
   referredUserId String @unique @map("referred_user_id") @db.Uuid
@@ -747,6 +802,7 @@ model Referral {
 }
 model AffiliateCommission {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   affiliateId String @map("affiliate_id") @db.Uuid
   referralId String @map("referral_id") @db.Uuid
   referenceId String @map("reference_id") @db.VarChar(128)
@@ -761,6 +817,7 @@ model AffiliateCommission {
 }
 model DailyReportSnapshot {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   date DateTime @db.Date
   timezone String @db.VarChar(64)
   revenue Decimal @default(0) @db.Decimal(20, 8)
@@ -780,8 +837,9 @@ model DailyReportSnapshot {
 }
 model PriceGroup {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name String @unique @db.VarChar(100)
-  code String @unique @db.VarChar(50)
+  siteId String @map("site_id") @db.Uuid
+  name String @db.VarChar(100)
+  code String @db.VarChar(50)
   active Boolean @default(true)
   defaultMarkupPercent Decimal @default(0) @map("default_markup_percent") @db.Decimal(9, 6)
   defaultFixedProfit Decimal @default(0) @map("default_fixed_profit") @db.Decimal(20, 8)
@@ -796,11 +854,15 @@ model PriceGroup {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@index([active, tierOrder])
+  @@unique([siteId, code])
+  @@unique([siteId, name])
+  @@index([siteId, active, tierOrder])
   @@map("price_groups")
 }
 
 model PriceGroupHistory {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   userId String @map("user_id") @db.Uuid
   oldPriceGroupId String? @map("old_price_group_id") @db.Uuid
   oldPriceGroupCode String? @map("old_price_group_code") @db.VarChar(50)
@@ -878,6 +940,7 @@ model PriceAlert {
 }
 model AuditLog {
   id BigInt @id @default(autoincrement())
+  siteId String @map("site_id") @db.Uuid
   actorId String? @map("actor_id") @db.Uuid
   action String @db.VarChar(100)
   resource String @db.VarChar(100)
@@ -894,6 +957,7 @@ model AuditLog {
 }
 model LoginHistory {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   userId String? @map("user_id") @db.Uuid
   email String @db.VarChar(320)
   success Boolean
@@ -908,13 +972,14 @@ model LoginHistory {
 }
 model Setting {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   group String @db.VarChar(80)
   key String @db.VarChar(120)
   value Json
   encrypted Boolean @default(false)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-  @@unique([group, key])
+  @@unique([siteId, group, key])
   @@map("settings")
 }
 model CronJobLog {
@@ -986,3 +1051,121 @@ model Attachment {
   @@index([ticketId, createdAt])
   @@map("attachments")
 }
+
+model Site {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteNumber   BigInt     @unique @default(autoincrement()) @map("site_number")
+  parentSiteId String?    @map("parent_site_id") @db.Uuid
+  ownerUserId  String?    @map("owner_user_id") @db.Uuid
+  name         String     @db.VarChar(160)
+  slug         String     @unique @db.VarChar(80)
+  status       SiteStatus @default(PENDING)
+  depth        Int
+  deletedAt    DateTime?  @map("deleted_at") @db.Timestamptz(3)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([parentSiteId, status])
+  @@index([ownerUserId, status])
+  @@index([status, createdAt])
+  @@map("sites")
+}
+
+model SiteDomain {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId            String           @map("site_id") @db.Uuid
+  hostname          String           @unique @db.VarChar(253)
+  type              SiteDomainType
+  status            SiteDomainStatus @default(PENDING)
+  isPrimary         Boolean          @default(false) @map("is_primary")
+  verificationToken String           @map("verification_token") @db.VarChar(128)
+  verifiedAt        DateTime?        @map("verified_at") @db.Timestamptz(3)
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([siteId, status])
+  @@map("site_domains")
+}
+
+model PanelRentalPlan {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sellerSiteId      String   @map("seller_site_id") @db.Uuid
+  code              String   @db.VarChar(50)
+  name              String   @db.VarChar(120)
+  description       String?  @db.Text
+  price             Decimal  @db.Decimal(20, 8)
+  currency          String   @db.Char(3)
+  billingDays       Int      @map("billing_days")
+  maxDirectChildren Int      @map("max_direct_children")
+  maxDepth          Int      @map("max_depth")
+  allowCustomDomain Boolean  @default(false) @map("allow_custom_domain")
+  allowPanelResale  Boolean  @default(false) @map("allow_panel_resale")
+  allowApi          Boolean  @default(false) @map("allow_api")
+  allowThemes       Boolean  @default(true) @map("allow_themes")
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([sellerSiteId, code])
+  @@index([sellerSiteId, active])
+  @@map("panel_rental_plans")
+}
+
+model PanelSubscription {
+  id           String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId       String                  @map("site_id") @db.Uuid
+  sellerSiteId String                  @map("seller_site_id") @db.Uuid
+  planId       String                  @map("plan_id") @db.Uuid
+  renterUserId String                  @map("renter_user_id") @db.Uuid
+  status       PanelSubscriptionStatus @default(ACTIVE)
+  startedAt    DateTime                @map("started_at") @db.Timestamptz(3)
+  expiresAt    DateTime                @map("expires_at") @db.Timestamptz(3)
+  graceUntil   DateTime                @map("grace_until") @db.Timestamptz(3)
+  autoRenew    Boolean                 @default(false) @map("auto_renew")
+  createdAt    DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([siteId, status])
+  @@index([sellerSiteId, status])
+  @@index([status, expiresAt])
+  @@map("panel_subscriptions")
+}
+
+model SiteServiceRule {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId        String      @map("site_id") @db.Uuid
+  serviceId     String      @map("service_id") @db.Uuid
+  active        Boolean     @default(true)
+  pricingMode   PricingMode @map("pricing_mode")
+  fixedRate     Decimal?    @map("fixed_rate") @db.Decimal(20, 8)
+  markupPercent Decimal?    @map("markup_percent") @db.Decimal(9, 6)
+  fixedProfit   Decimal?    @map("fixed_profit") @db.Decimal(20, 8)
+  minProfit     Decimal     @default(0) @map("min_profit") @db.Decimal(20, 8)
+  minOverride   Int?        @map("min_override")
+  maxOverride   Int?        @map("max_override")
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([siteId, serviceId])
+  @@index([siteId, active])
+  @@map("site_service_rules")
+}
+
+model OrderSiteSettlement {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId        BigInt   @map("order_id")
+  childSiteId    String   @map("child_site_id") @db.Uuid
+  parentSiteId   String   @map("parent_site_id") @db.Uuid
+  payerUserId    String   @map("payer_user_id") @db.Uuid
+  upstreamRate   Decimal  @map("upstream_rate") @db.Decimal(20, 8)
+  upstreamCharge Decimal  @map("upstream_charge") @db.Decimal(20, 8)
+  refundedAmount Decimal  @default(0) @map("refunded_amount") @db.Decimal(20, 8)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([orderId, childSiteId])
+  @@index([parentSiteId, createdAt])
+  @@index([payerUserId, createdAt])
+  @@map("order_site_settlements")
+}
+

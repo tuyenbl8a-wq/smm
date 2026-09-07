@@ -1,5 +1,6 @@
 import { PricingResolver } from "../catalog/resolver.js";
 import { PromotionService } from "../promotion/service.js";
+import { SiteSettlementService } from "./site-settlement.js";
 export class OrderError extends Error {
   constructor(
     readonly code: string,
@@ -24,9 +25,11 @@ export const orderAmount = (rate: unknown, quantity: number) =>
 export class OrderService {
   private readonly promotions: PromotionService;
   private readonly pricing: PricingResolver;
+  private readonly settlements: SiteSettlementService;
   constructor(private readonly db: any) {
     this.promotions = new PromotionService(db);
     this.pricing = new PricingResolver(db);
+    this.settlements = new SiteSettlementService(db);
   }
   async create(userId: string, input: any, key: string) {
     if (!/^[A-Za-z0-9:_-]{12,128}$/.test(key))
@@ -65,6 +68,12 @@ export class OrderService {
             "QUANTITY_OUT_OF_RANGE",
             `Quantity must be ${service.min}-${service.max}`,
           );
+        const user = tx.user ? await tx.user.findUnique({ where: { id: userId }, select: { siteId: true } }) : null;
+        const siteId = user?.siteId;
+        if (tx.site && !user) throw new OrderError("USER_NOT_FOUND", "User not found");
+        const currentSite = siteId && tx.site ? await tx.site.findUnique({ where: { id: siteId } }) : null;
+        if (siteId && (!currentSite || currentSite.status !== "ACTIVE")) throw new OrderError("PANEL_SUSPENDED", "Panel is unavailable");
+        const edges = siteId && tx.siteServiceRule ? await this.settlements.quote(tx, siteId, service, quantity) : [];
         const resolved = await this.pricing.resolveCustomerPrice(
           userId,
           serviceId,
@@ -97,8 +106,14 @@ export class OrderService {
           ),
           discountAmount = text(units(originalCharge) - units(charge)),
           profit = text(units(charge) - units(providerCost));
+        const required = siteId ? [{ userId, siteId, amount: charge }, ...edges.map((edge) => ({ userId: edge.payerUserId, siteId: edge.parentSiteId, amount: edge.upstreamCharge }))] : [];
+        for (const item of required) {
+          const locked = await tx.$queryRawUnsafe(`SELECT "balance" FROM "wallets" WHERE "user_id"=$1::uuid AND "site_id"=$2::uuid FOR UPDATE`, item.userId, item.siteId);
+          if (!locked[0] || units(locked[0].balance) < units(item.amount)) throw new OrderError(item.userId === userId ? "INSUFFICIENT_BALANCE" : "PANEL_UPSTREAM_BALANCE_LOW", "Required wallet balance is insufficient");
+        }
         const order = await tx.order.create({
           data: {
+            ...(siteId ? { siteId } : {}),
             userId,
             serviceId,
             providerId: manual ? null : provider.id,
@@ -141,6 +156,7 @@ export class OrderService {
           throw new OrderError("INSUFFICIENT_BALANCE", "Insufficient balance");
         await tx.walletTransaction.create({
           data: {
+            ...(siteId ? { siteId } : {}),
             walletId: rows[0].id,
             userId,
             type: "ORDER",
@@ -152,8 +168,10 @@ export class OrderService {
             description: "Order charge",
           },
         });
+        await this.settlements.debitAndSnapshot(tx, order, edges);
         await tx.orderHistory.create({
           data: {
+            ...(siteId ? { siteId } : {}),
             orderId: order.id,
             toStatus: "PENDING",
             details: { source: "customer" },

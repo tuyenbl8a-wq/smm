@@ -9,6 +9,7 @@ import type { BinanceWebhookProcessor } from "./payment/binance.js";
 import type { DistributedRateLimiter } from "./reseller/rate-limit.js";
 import type { CassoWebhook } from "./payment/casso.js";
 import { sendJson, stringifyJson } from "./http/json.js";
+import type { TenantResolver, TenantSite } from "./tenant/context.js";
 
 async function readBody(request: any, limit = 1_048_576): Promise<string> {
   const chunks: any[] = [];
@@ -38,9 +39,19 @@ export function createApiServer(
   limiter?: DistributedRateLimiter,
   casso?: CassoWebhook,
   maintenance?: () => Promise<{ enabled: boolean; message: string }>,
+  tenants?: TenantResolver,
 ): Server {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", config.apiUrl).pathname;
+    let tenant: TenantSite | undefined;
+    if (tenants && path !== "/health" && path !== "/health/ready") {
+      try { tenant = await tenants.resolve(request); } catch {
+        response.statusCode = 421;
+        response.setHeader("content-type", "application/json");
+        response.end(stringifyJson({ success: false, error: { code: "TENANT_NOT_FOUND", message: "Unknown or unverified hostname" } }));
+        return;
+      }
+    }
     const origin =
       typeof request.headers.origin === "string"
         ? request.headers.origin
@@ -142,6 +153,7 @@ export function createApiServer(
             : Object.fromEntries(new URLSearchParams(raw));
         const rawKey = String(input.key ?? request.headers["x-api-key"] ?? ""),
           identity = await reseller.authenticate(rawKey);
+        if (tenant && identity.siteId !== tenant.id) throw Object.assign(new Error("API key is not valid for this hostname"), { code: "TENANT_MISMATCH" });
         if (limiter) {
           const result = await limiter.consume(
             `${identity.id}:${request.socket.remoteAddress ?? "unknown"}`,
@@ -182,7 +194,7 @@ export function createApiServer(
         return;
       }
     }
-    if (auth && (await auth.handle(request, response, path))) return;
+    if (auth && (await auth.handle(request, response, path, tenant))) return;
     if (request.method === "GET" && path === "/health/ready") {
       const [database, redis] = await Promise.all([
         probeTcp(endpointFromUrl(config.databaseUrl), config.healthTimeoutMs),

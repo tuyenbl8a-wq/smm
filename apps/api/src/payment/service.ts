@@ -69,7 +69,7 @@ export class DepositService {
     const [whole, fraction = ""] = raw.split(".");
     return BigInt(whole!) * 1000000n + BigInt(fraction.padEnd(6, "0"));
   }
-  async create(userId: string, input: any) {
+  async create(userId: string, input: any, siteId?: string) {
     const amount = normalizeAmount(input.amount),
       paymentMethodId = String(input.paymentMethodId),
       dayStart = new Date();
@@ -80,9 +80,10 @@ export class DepositService {
           `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
           `payment-limit:${paymentMethodId}:${dayStart.toISOString().slice(0, 10)}`,
         );
-      const method = await tx.paymentMethod.findUnique({
-        where: { id: paymentMethodId },
-      });
+      const user = siteId && tx.user ? await tx.user.findUnique({ where: { id: userId }, select: { siteId: true } }) : null;
+      const tenantId = siteId ?? user?.siteId;
+      if (siteId && (!user || user.siteId !== siteId)) throw new PaymentError("TENANT_MISMATCH", "User does not belong to this site");
+      const method = tenantId ? await tx.paymentMethod.findFirst({ where: { id: paymentMethodId, siteId: tenantId } }) : await tx.paymentMethod.findUnique({ where: { id: paymentMethodId } });
       if (!method || !method.active)
         throw new PaymentError(
           "METHOD_UNAVAILABLE",
@@ -134,6 +135,7 @@ export class DepositService {
         code = `NAP${randomBytes(6).toString("hex").toUpperCase()}`,
         deposit = await tx.deposit.create({
           data: {
+            ...(tenantId ? { siteId: tenantId } : {}),
             userId,
             paymentMethodId: method.id,
             code,
@@ -175,8 +177,8 @@ export class DepositService {
       throw error;
     }
   }
-  async detail(userId: string, id: string) {
-    let x = await this.db.deposit.findFirst({ where: { id, userId } });
+  async detail(userId: string, id: string, siteId?: string) {
+    let x = await this.db.deposit.findFirst({ where: { id, userId, ...(siteId ? { siteId } : {}) } });
     if (!x) throw new PaymentError("DEPOSIT_NOT_FOUND", "Deposit not found");
     if (x.status === "PENDING" && x.expiresAt <= new Date()) {
       await this.db.deposit.updateMany({
@@ -188,7 +190,7 @@ export class DepositService {
         },
         data: { status: "EXPIRED" },
       });
-      x = await this.db.deposit.findFirst({ where: { id, userId } });
+      x = await this.db.deposit.findFirst({ where: { id, userId, ...(siteId ? { siteId } : {}) } });
     }
     const paymentMethod = await this.db.paymentMethod.findUnique({
       where: { id: x.paymentMethodId },
@@ -230,9 +232,9 @@ export class DepositService {
         : null,
     };
   }
-  async methods() {
+  async methods(siteId?: string) {
     return this.db.paymentMethod.findMany({
-      where: { active: true },
+      where: { active: true, ...(siteId ? { siteId } : {}) },
       select: {
         id: true,
         code: true,
@@ -249,9 +251,9 @@ export class DepositService {
       },
     });
   }
-  async history(userId: string) {
+  async history(userId: string, siteId?: string) {
     return this.db.deposit.findMany({
-      where: { userId },
+      where: { userId, ...(siteId ? { siteId } : {}) },
       orderBy: { createdAt: "desc" },
       take: 100,
     });

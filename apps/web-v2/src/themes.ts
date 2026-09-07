@@ -101,10 +101,10 @@ const themeDefinitions = [
   [
     "BLACK_GOLD_ELITE",
     "Black Gold Elite",
-    "Tạp chí thanh lịch, màu ngà",
-    "editorial",
-    "#503f35",
-    "#fbf7ef",
+    "Đen obsidian, vàng kim độc quyền",
+    "gold",
+    "#d6ad55",
+    "#050505",
     "serif",
   ],
   [
@@ -119,65 +119,65 @@ const themeDefinitions = [
   [
     "EDITORIAL_BRUTALIST",
     "Editorial Brutalist",
-    "SaaS sạch, indigo sắc nét",
-    "saas",
-    "#635bff",
-    "#f8f9ff",
-    "sans",
+    "Tạp chí tương phản, đường nét brutalist",
+    "editorial",
+    "#111111",
+    "#f4efe4",
+    "serif",
   ],
   [
     "SOCIAL_CREATOR",
     "Social Creator",
-    "Navy kỹ thuật, cyan chính xác",
-    "tech",
-    "#00a8c6",
-    "#071a25",
-    "sans",
-  ],
-  [
-    "OCEAN_PROFESSIONAL",
-    "Ocean Professional",
-    "Trẻ trung, màu pop năng lượng",
+    "Creator pop, hồng tím giàu năng lượng",
     "creator",
-    "#ff3d8d",
+    "#f43f8f",
     "#fff5fb",
     "display",
   ],
   [
+    "OCEAN_PROFESSIONAL",
+    "Ocean Professional",
+    "Xanh đại dương chuyên nghiệp, tin cậy",
+    "ocean",
+    "#087ea4",
+    "#f1f9fc",
+    "sans",
+  ],
+  [
     "AURORA_MODERN",
     "Aurora Modern",
-    "Đen obsidian, vàng kim premium",
-    "gold",
-    "#d6a84b",
-    "#050505",
-    "serif",
+    "Cực quang hiện đại trên nền đêm sâu",
+    "aurora",
+    "#8b5cf6",
+    "#07111f",
+    "sans",
   ],
   [
     "EMERALD_BUSINESS",
     "Emerald Business",
-    "Xanh tài chính, rõ ràng và an tâm",
-    "fintech",
-    "#0874e8",
-    "#f2f8ff",
+    "Emerald doanh nghiệp, vững vàng và rõ ràng",
+    "emerald",
+    "#087f5b",
+    "#f1faf6",
     "sans",
   ],
   [
     "MIDNIGHT_SAAS",
     "Midnight SaaS",
-    "Marketplace sạch, teal linh hoạt",
-    "market",
-    "#059b8a",
-    "#f5fbfa",
+    "SaaS midnight, indigo và cyan sắc nét",
+    "saas",
+    "#818cf8",
+    "#080d1a",
     "sans",
   ],
   [
     "SOFT_BEIGE_PREMIUM",
     "Soft Beige Premium",
-    "Cam nổi bật, CTA hiệu suất cao",
-    "conversion",
-    "#f06424",
-    "#fff8f3",
-    "display",
+    "Beige mềm mại, thanh lịch cao cấp",
+    "beige",
+    "#9a6b4f",
+    "#f7f0e5",
+    "serif",
   ],
 ] as const;
 
@@ -195,27 +195,7 @@ export const themePresets = themeDefinitions.map(
 export const themeIds = themeDefinitions.map((theme) => theme[0]);
 export type ThemeId = (typeof themeIds)[number];
 
-export const themeStructure = Object.fromEntries(
-  themeIds.map((id, index) => {
-    const navigationVariant = ["centered", "split", "rail", "compact"][index % 4];
-    const heroVariant = ["platform-stage", "split-art", "dashboard-first", "editorial", "service-grid"][index % 5];
-    const authVariant = ["split", "card", "immersive", "minimal"][index % 4];
-    const sidebarVariant = ["fixed", "floating", "topbar", "compact"][index % 4];
-    const dashboardVariant = ["metrics-row", "bento", "chart-first", "activity-first", "wallet-first"][index % 5];
-    const serviceVariant = ["cards", "table", "platform-rail", "catalog"][index % 4];
-    const orderFormVariant = ["guided", "split-summary", "compact", "stepper"][index % 4];
-    return [id, {
-      navigationVariant,
-      heroVariant,
-      authVariant,
-      sidebarVariant,
-      dashboardVariant,
-      serviceVariant,
-      orderFormVariant,
-      density: ["compact", "comfortable", "spacious"][index % 3],
-    }];
-  }),
-) as Record<ThemeId, {
+type ThemeStructure = {
   navigationVariant: string;
   heroVariant: string;
   authVariant: string;
@@ -224,7 +204,14 @@ export const themeStructure = Object.fromEntries(
   serviceVariant: string;
   orderFormVariant: string;
   density: string;
-}>;
+};
+const structure = (navigationVariant:string,heroVariant:string,authVariant:string,sidebarVariant:string,dashboardVariant:string,serviceVariant:string,orderFormVariant:string,density:string):ThemeStructure => ({navigationVariant,heroVariant,authVariant,sidebarVariant,dashboardVariant,serviceVariant,orderFormVariant,density});
+/** Deliberately authored structures: variants are semantic, not index-generated. */
+export const themeStructure: Record<ThemeId, ThemeStructure> = {
+  DARK_LUXURY:structure("centered","editorial","card","floating","wallet-first","cards","split-summary","spacious"), MINIMAL_LIGHT:structure("split","split-art","minimal","fixed","metrics-row","table","guided","comfortable"), CYBER_NEON:structure("rail","platform-stage","immersive","compact","bento","cards","stepper","compact"), SOFT_PASTEL:structure("centered","split-art","card","floating","activity-first","cards","guided","spacious"), NATURE_GREEN:structure("split","service-grid","split","fixed","metrics-row","catalog","split-summary","spacious"), GLASSMORPHISM:structure("compact","platform-stage","immersive","floating","bento","cards","stepper","comfortable"), BOLD_COMMERCE:structure("rail","service-grid","card","compact","wallet-first","catalog","guided","compact"), DASHBOARD_FOCUSED:structure("split","dashboard-first","minimal","fixed","chart-first","table","compact","compact"), CREATIVE_AGENCY:structure("centered","editorial","immersive","topbar","activity-first","cards","stepper","spacious"), PREMIUM_CORPORATE:structure("split","split-art","split","fixed","metrics-row","table","split-summary","comfortable"), JAPANESE_ZEN:structure("centered","editorial","minimal","compact","wallet-first","catalog","guided","spacious"), BLACK_GOLD_ELITE:structure("rail","editorial","card","floating","wallet-first","cards","split-summary","spacious"), AI_FUTURISTIC:structure("compact","platform-stage","immersive","topbar","chart-first","cards","stepper","comfortable"), EDITORIAL_BRUTALIST:structure("rail","editorial","minimal","compact","activity-first","table","compact","compact"), SOCIAL_CREATOR:structure("centered","split-art","card","floating","bento","cards","guided","comfortable"), OCEAN_PROFESSIONAL:structure("split","service-grid","split","fixed","metrics-row","table","split-summary","comfortable"), AURORA_MODERN:structure("compact","platform-stage","immersive","floating","chart-first","cards","stepper","spacious"), EMERALD_BUSINESS:structure("split","dashboard-first","card","fixed","metrics-row","catalog","guided","comfortable"), MIDNIGHT_SAAS:structure("rail","dashboard-first","immersive","compact","bento","table","compact","compact"), SOFT_BEIGE_PREMIUM:structure("centered","split-art","card","floating","wallet-first","cards","split-summary","spacious")
+};
+
+export const legacyThemeAliases: Record<string, ThemeId> = {BOLD_ECOMMERCE:"BOLD_COMMERCE",ZEN_JAPAN:"JAPANESE_ZEN",BLACK_GOLD:"BLACK_GOLD_ELITE",FUTURE_AI:"AI_FUTURISTIC",EDITORIAL:"EDITORIAL_BRUTALIST",CREATOR_POP:"SOCIAL_CREATOR",OCEAN_TECH:"OCEAN_PROFESSIONAL",FINTECH:"EMERALD_BUSINESS",SAAS_DARK:"MIDNIGHT_SAAS",BEIGE:"SOFT_BEIGE_PREMIUM"};
 
 const dark = new Set([
   "DARK_LUXURY",
@@ -305,7 +292,7 @@ export const runtimeThemeScript = (
   api: string,
   scope: "public" | "auth" | "customer",
 ) =>
-  `(()=>{const allowed=new Set(${JSON.stringify(themeIds)}),scope=${JSON.stringify(scope)},fallback='DARK_LUXURY';fetch(${JSON.stringify(api)}+'/api/v1/public/settings',{credentials:'include'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const s=j.data||{},key='theme'+scope[0].toUpperCase()+scope.slice(1),id=s.themeMode==='SEPARATE'?s[key]:s.themeGlobal;const selected=allowed.has(id)?id:fallback,variants=${JSON.stringify(themeStructure)}[selected];document.documentElement.dataset.theme=selected;Object.entries(variants).forEach(([key,value])=>document.documentElement.dataset[key]=value);const o=s.themeOptions||{};if(['compact','comfortable'].includes(o.density))document.documentElement.dataset.density=o.density;if(['small','medium','large'].includes(o.radius))document.documentElement.dataset.radius=o.radius;const c=s.themeContent||{},apply=()=>{document.querySelectorAll('[data-theme-content]').forEach(el=>{const v=c[el.dataset.themeContent];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-list]').forEach((el,i)=>{const v=c.featureBullets?.[i];if(typeof v==='string'&&el.textContent!==v)el.textContent=v})};apply();new MutationObserver(apply).observe(document.body,{childList:true,subtree:true})}).catch(()=>{document.documentElement.dataset.theme=fallback})})();`;
+  `(()=>{const allowed=new Set(${JSON.stringify(themeIds)}),aliases=${JSON.stringify(legacyThemeAliases)},structures=${JSON.stringify(themeStructure)},scope=${JSON.stringify(scope)},fallback='DARK_LUXURY',setTheme=id=>{const normalized=aliases[id]||id,selected=allowed.has(normalized)?normalized:fallback;document.documentElement.dataset.theme=selected;const variants=structures[selected];Object.entries(variants).forEach(([key,value])=>document.documentElement.dataset[key]=value);return selected},safeUrl=value=>{if(typeof value!=='string')return null;try{const url=new URL(value,location.origin);return url.protocol==='http:'||url.protocol==='https:'?url.href:null}catch{return null}};setTheme(fallback);fetch(${JSON.stringify(api)}+'/api/v1/public/settings',{credentials:'include'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const s=j.data||{},key='theme'+scope[0].toUpperCase()+scope.slice(1),id=s.themeMode==='SEPARATE'?s[key]:s.themeGlobal;setTheme(id);const o=s.themeOptions||{};if(['compact','comfortable','spacious'].includes(o.density))document.documentElement.dataset.density=o.density;if(['small','medium','large'].includes(o.radius))document.documentElement.dataset.radius=o.radius;const overrides=s.themeOverrides||{},colorKeys=new Set(['primary','secondary','accent','background','surface','text','muted','border','success','warning','danger']);Object.entries(overrides.colors||{}).forEach(([key,value])=>{if(colorKeys.has(key)&&typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))document.documentElement.style.setProperty('--theme-'+key,value)});const c={...(s.themeContent||{}),...(overrides.content||{})},apply=()=>{document.querySelectorAll('[data-theme-content]').forEach(el=>{const v=c[el.dataset.themeContent];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-list]').forEach((el,i)=>{const v=c.featureBullets?.[i];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-href]').forEach(el=>{const href=safeUrl(c[el.dataset.themeHref]);if(href)el.setAttribute('href',href);else el.removeAttribute('href')})};apply();new MutationObserver(apply).observe(document.body,{childList:true,subtree:true})}).catch(()=>setTheme(fallback))})();`;
 
 export const themeStyles = `${declarations}
 :root{--theme-bg:#090a0c;--theme-surface:#111827;--theme-border:#f5c97855;--theme-text:#f8fafc;--theme-muted:#a9b4c6;--theme-primary:#f5c978;--theme-secondary:#8f7350;--theme-radius:12px;--theme-shadow:0 18px 46px #0005;--theme-font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
@@ -315,8 +302,8 @@ html[data-theme] body{background:var(--theme-bg);color:var(--theme-text);font-fa
 :root[data-navigation-variant="centered"] .nav{justify-content:center}:root[data-navigation-variant="split"] .nav nav{margin-left:auto}:root[data-navigation-variant="rail"] .header{border-left:5px solid var(--theme-primary)}:root[data-navigation-variant="compact"] .header{margin:12px;border-radius:var(--theme-radius)}
 :root[data-hero-variant="split-art"] .hero-grid{grid-template-columns:1fr 1fr}:root[data-hero-variant="dashboard-first"] .hero-visual{order:-1}:root[data-hero-variant="editorial"] .hero h1{font-size:clamp(3rem,8vw,7rem);max-width:11ch}:root[data-hero-variant="service-grid"] .hero-grid{grid-template-columns:2fr 3fr}
 :root[data-auth-variant="split"] .auth-shell{grid-template-columns:1fr 1fr}:root[data-auth-variant="card"] .auth-card{max-width:520px;margin:auto}:root[data-auth-variant="immersive"] .auth-shell{min-height:100vh;background:radial-gradient(circle,var(--theme-primary)22,transparent 55%)}:root[data-auth-variant="minimal"] .auth-aside{display:none}
-:root[data-sidebar-variant="floating"] .sidebar{margin:14px;border-radius:var(--theme-radius)}:root[data-sidebar-variant="topbar"] .customer-shell{grid-template-columns:1fr}:root[data-sidebar-variant="topbar"] .sidebar{position:relative;width:auto}:root[data-sidebar-variant="compact"] .sidebar{width:210px}
-:root[data-dashboard-variant="bento"] .metrics{grid-template-columns:2fr 1fr 1fr}:root[data-dashboard-variant="chart-first"] .chart-panel{order:-1}:root[data-dashboard-variant="activity-first"] .activity-panel{order:-1}:root[data-dashboard-variant="wallet-first"] .wallet-card{grid-column:span 2}
-:root[data-service-variant="cards"] .service-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}:root[data-service-variant="platform-rail"] .platform-filter{position:sticky;top:80px}:root[data-order-form-variant="split-summary"] .order-layout{grid-template-columns:3fr 2fr}:root[data-order-form-variant="stepper"] .order-form{counter-reset:step}:root[data-order-form-variant="stepper"] .order-form label:before{counter-increment:step;content:counter(step) ". ";color:var(--theme-primary)}
+:root[data-sidebar-variant="floating"] .sidebar{margin:14px;border-radius:var(--theme-radius)}:root[data-sidebar-variant="topbar"] .customer{grid-template-columns:1fr}:root[data-sidebar-variant="topbar"] .sidebar{position:relative;width:auto}:root[data-sidebar-variant="compact"] .sidebar{width:210px}
+:root[data-dashboard-variant="bento"] .metric-grid{grid-template-columns:2fr 1fr 1fr}:root[data-dashboard-variant="chart-first"] .chart-panel{order:-1}:root[data-dashboard-variant="activity-first"] .activity-panel{order:-1}:root[data-dashboard-variant="wallet-first"] .wallet-card{grid-column:span 2}
+:root[data-service-variant="cards"] .service-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}:root[data-service-variant="platform-rail"] .platform-filter{position:sticky;top:80px}:root[data-service-variant="table"] .service-grid{grid-template-columns:1fr}:root[data-service-variant="catalog"] .service-grid{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}:root[data-order-form-variant="split-summary"] .order-layout{grid-template-columns:3fr 2fr}:root[data-order-form-variant="compact"] .order-layout{gap:12px}:root[data-order-form-variant="stepper"] .order-layout{counter-reset:step}:root[data-order-form-variant="stepper"] .order-layout label:before{counter-increment:step;content:counter(step) ". ";color:var(--theme-primary)}
 :root[data-density="spacious"]{--theme-density:1.16}:root[data-density="compact"] .panel,:root[data-density="compact"] .card{padding:14px}:root[data-density="spacious"] .panel,:root[data-density="spacious"] .card{padding:28px}@media(max-width:760px){:root[data-navigation-variant] .header nav{display:none}:root[data-auth-variant] .auth-shell,:root[data-hero-variant] .hero-grid,:root[data-order-form-variant] .order-layout{grid-template-columns:1fr}:root[data-sidebar-variant] .sidebar{position:fixed}}
 `;

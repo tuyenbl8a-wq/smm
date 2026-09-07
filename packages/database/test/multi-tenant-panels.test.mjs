@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
+const schema=readFileSync(new URL('../prisma/schema.prisma',import.meta.url),'utf8'),migration=readFileSync(new URL('../prisma/migrations/20260907120000_multi_tenant_panels/migration.sql',import.meta.url),'utf8');
+test('tenant foundation and settlement snapshots exist',()=>{for(const model of ['Site','SiteDomain','PanelRentalPlan','PanelSubscription','SiteServiceRule','OrderSiteSettlement'])assert.match(schema,new RegExp(`model ${model} \\{`));assert.match(schema,/@@unique\(\[siteId, email\]\)/);assert.match(schema,/@@unique\(\[orderId, childSiteId\]\)/)});
+test('migration backfills deterministic root without rewriting identifiers',()=>{assert.match(migration,/00000000-0000-4000-8000-000000000001/);assert.match(migration,/UPDATE %I SET site_id/);assert.doesNotMatch(migration,/\b(TRUNCATE|DROP TABLE|DELETE FROM users)\b/i)});

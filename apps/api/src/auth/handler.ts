@@ -21,6 +21,9 @@ import { PaymentSettingsService } from "../payment/settings.js";
 import { stringifyJson } from "../http/json.js";
 import { PromotionError, PromotionService } from "../promotion/service.js";
 import { endpointFromUrl, probeTcp } from "@smm/health";
+import type { TenantSite } from "../tenant/context.js";
+import type { PanelManagementService } from "../tenant/panel-service.js";
+import { ROOT_SITE_ID } from "../tenant/context.js";
 import {
   csrfValue,
   hashPassword,
@@ -89,11 +92,13 @@ export class AuthHandler {
     private readonly paymentSettings?: PaymentSettingsService,
     private readonly storage?: AttachmentStorage,
     private readonly promotions?: PromotionService,
+    private readonly panels?: PanelManagementService,
   ) {}
   async handle(
     request: IncomingMessage,
     response: ServerResponse,
     path: string,
+    tenant: TenantSite = { id: ROOT_SITE_ID, siteNumber: 100000n, parentSiteId: null, status: "ACTIVE", depth: 0 },
   ): Promise<boolean> {
     if (
       path !== "/api/v1/public/catalog" &&
@@ -127,18 +132,18 @@ export class AuthHandler {
       }
       if (request.method === "GET" && path === "/api/v1/public/settings") {
         if (!this.admin) throw new Error("Settings service unavailable");
-        return this.ok(response, await this.admin.publicSettings());
+        return this.ok(response, await this.admin.publicSettings(tenant.id));
       }
       if (authPaths.has(path)) this.checkBurst(request, path);
       if (request.method === "POST" && path === "/api/v1/auth/register")
-        return await this.register(request, response);
+        return await this.register(request, response, tenant.id);
       if (request.method === "POST" && path === "/api/v1/auth/login")
-        return await this.login(request, response);
+        return await this.login(request, response, tenant.id);
       if (request.method === "POST" && path === "/api/v1/auth/forgot-password")
-        return await this.forgot(request, response);
+        return await this.forgot(request, response, tenant.id);
       if (request.method === "POST" && path === "/api/v1/auth/reset-password")
-        return await this.reset(request, response);
-      const auth = await this.authenticate(request);
+        return await this.reset(request, response, tenant.id);
+      const auth = await this.authenticate(request, tenant.id);
       if (!auth)
         return this.error(
           response,
@@ -160,6 +165,15 @@ export class AuthHandler {
             maintenance.message,
           );
       }
+      if (this.panels && path.startsWith("/api/v1/admin/panel")) {
+        if (!auth.access.roles.includes("SUPER_ADMIN")) return this.error(response, 403, "PERMISSION_DENIED", "Permission denied");
+        const url=new URL(request.url??path,this.config.apiUrl);
+        if(request.method==="GET"&&path==="/api/v1/admin/panels")return this.ok(response,{items:await this.panels.adminPanels(url.searchParams)});
+        if(request.method==="GET"&&path==="/api/v1/admin/panel-plans")return this.ok(response,{items:await this.panels.adminPlans()});
+        if(request.method==="GET"&&path==="/api/v1/admin/panel-subscriptions")return this.ok(response,{items:await this.panels.adminSubscriptions()});
+        if(request.method==="POST"&&path==="/api/v1/admin/panel-plans"){this.csrf(request,auth.rawToken);return this.ok(response,await this.panels.savePlan(tenant.id,await this.body(request)),201)}
+        const plan=/^\/api\/v1\/admin\/panel-plans\/([0-9a-f-]{36})$/.exec(path);if(plan&&request.method==="PATCH"){this.csrf(request,auth.rawToken);return this.ok(response,await this.panels.savePlan(tenant.id,await this.body(request),plan[1]))}
+      }
       if (request.method === "GET" && path === "/api/v1/me")
         return this.ok(response, {
           user: this.publicUser(auth.user),
@@ -169,6 +183,27 @@ export class AuthHandler {
         return this.ok(response, {
           sessions: await this.store.listSessions(auth.user.id),
         });
+      if (this.panels && request.method === "GET" && path === "/api/v1/customer/panel-plans")
+        return this.ok(response, { items: await this.panels.plans(tenant.id) });
+      if (this.panels && request.method === "GET" && path === "/api/v1/customer/panels")
+        return this.ok(response, { items: await this.panels.panels(tenant.id, auth.user.id) });
+      if (this.panels && request.method === "POST" && path === "/api/v1/customer/panels") {
+        this.csrf(request, auth.rawToken);
+        return this.ok(response, await this.panels.rent(tenant.id, auth.user.id, await this.body(request), String(this.header(request, "idempotency-key") ?? "")), 201);
+      }
+      const panelRoute = /^\/api\/v1\/customer\/panels\/(\d+)(?:\/(renew|branding|domains))?(?:\/([^/]+)(?:\/(verify|primary))?)?$/.exec(path);
+      if (this.panels && panelRoute) {
+        const [, number, action, domainId, domainAction] = panelRoute;
+        if (request.method === "GET" && !action) return this.ok(response, await this.panels.owned(tenant.id, auth.user.id, number!));
+        if (request.method === "GET" && action === "domains") return this.ok(response, { items: await this.panels.domains(tenant.id, auth.user.id, number!) });
+        this.csrf(request, auth.rawToken);
+        if (request.method === "POST" && action === "renew") return this.ok(response, await this.panels.renew(tenant.id, auth.user.id, number!, String(this.header(request, "idempotency-key") ?? "")));
+        if (request.method === "PATCH" && action === "branding") return this.ok(response, await this.panels.branding(tenant.id, auth.user.id, number!, await this.body(request)));
+        if (request.method === "POST" && action === "domains" && !domainId) { const body=await this.body(request); return this.ok(response, await this.panels.addDomain(tenant.id, auth.user.id, number!, body.hostname), 201); }
+        if (request.method === "POST" && action === "domains" && domainId && domainAction === "verify") return this.ok(response, await this.panels.verifyDomain(tenant.id, auth.user.id, number!, domainId));
+        if (request.method === "POST" && action === "domains" && domainId && domainAction === "primary") return this.ok(response, await this.panels.primaryDomain(tenant.id, auth.user.id, number!, domainId));
+        if (request.method === "DELETE" && action === "domains" && domainId) return this.ok(response, await this.panels.removeDomain(tenant.id, auth.user.id, number!, domainId));
+      }
       if (request.method === "GET" && path === "/api/v1/customer/wallet") {
         if (!this.wallet) throw new Error("Wallet service unavailable");
         return this.ok(response, await this.wallet.summary(auth.user.id));
@@ -181,7 +216,7 @@ export class AuthHandler {
         );
       }
       if (request.method === "GET" && path === "/api/v1/customer/settings")
-        return this.ok(response, await this.admin!.publicSettings());
+        return this.ok(response, await this.admin!.publicSettings(tenant.id));
       if (request.method === "GET" && path === "/api/v1/customer/catalog") {
         if (!this.catalog) throw new Error("Catalog service unavailable");
         const url = new URL(request.url ?? path, this.config.apiUrl);
@@ -271,20 +306,20 @@ export class AuthHandler {
           await this.orders!.detail(auth.user.id, orderDetail[1]!),
         );
       if (request.method === "GET" && path === "/api/v1/customer/api-keys")
-        return this.ok(response, await this.reseller!.list(auth.user.id));
+        return this.ok(response, await this.reseller!.list(auth.user.id, tenant.id));
       if (
         request.method === "GET" &&
         path === "/api/v1/customer/payment-methods"
       )
-        return this.ok(response, await this.deposits!.methods());
+        return this.ok(response, await this.deposits!.methods(tenant.id));
       if (request.method === "GET" && path === "/api/v1/customer/deposits")
-        return this.ok(response, await this.deposits!.history(auth.user.id));
+        return this.ok(response, await this.deposits!.history(auth.user.id, tenant.id));
       const depositDetail =
         /^\/api\/v1\/customer\/deposits\/([0-9a-f-]{36})$/.exec(path);
       if (request.method === "GET" && depositDetail)
         return this.ok(
           response,
-          await this.deposits!.detail(auth.user.id, depositDetail[1]!),
+          await this.deposits!.detail(auth.user.id, depositDetail[1]!, tenant.id),
         );
       if (request.method === "GET" && path === "/api/v1/customer/tickets")
         return this.ok(response, await this.support!.list(auth.user.id));
@@ -1392,18 +1427,18 @@ export class AuthHandler {
         );
       }
       if (request.method === "POST" && path === "/api/v1/customer/api-keys")
-        return this.ok(response, await this.reseller!.generate(auth.user.id));
+        return this.ok(response, await this.reseller!.generate(auth.user.id, tenant.id));
       const keyDisable =
         /^\/api\/v1\/customer\/api-keys\/([0-9a-f-]{36})\/disable$/.exec(path);
       if (request.method === "POST" && keyDisable)
         return this.ok(
           response,
-          await this.reseller!.disable(auth.user.id, keyDisable[1]!),
+          await this.reseller!.disable(auth.user.id, keyDisable[1]!, tenant.id),
         );
       if (request.method === "POST" && path === "/api/v1/customer/deposits")
         return this.ok(
           response,
-          await this.deposits!.create(auth.user.id, await this.body(request)),
+          await this.deposits!.create(auth.user.id, await this.body(request), tenant.id),
         );
       if (
         request.method === "POST" &&
@@ -2013,15 +2048,16 @@ export class AuthHandler {
   private async register(
     request: IncomingMessage,
     response: ServerResponse,
+    siteId: string,
   ): Promise<true> {
     await this.rateLimit(request, "register");
     const body = await this.body(request);
     const email = this.email(body.email);
     const username = this.username(body.username);
     const password = this.password(body.password);
-    if (await this.store.findUserByEmail(email))
+    if (await this.store.findUserByEmail(email, siteId))
       throw new InputError("EMAIL_IN_USE", "Email is already registered");
-    if (await this.store.findUserByUsername(username))
+    if (await this.store.findUserByUsername(username, siteId))
       throw new InputError("USERNAME_IN_USE", "Username is already registered");
     let user: AuthUser;
     try {
@@ -2030,6 +2066,7 @@ export class AuthHandler {
         username,
         passwordHash: await hashPassword(password),
         referralCode: opaqueToken(9).toUpperCase(),
+        siteId,
         ...(body.referralCode
           ? { referredByCode: String(body.referralCode).trim().toUpperCase() }
           : {}),
@@ -2047,11 +2084,12 @@ export class AuthHandler {
   private async login(
     request: IncomingMessage,
     response: ServerResponse,
+    siteId: string,
   ): Promise<true> {
     const body = await this.body(request);
     const email = this.email(body.email);
     await this.rateLimit(request, email);
-    const user = await this.store.findUserByEmail(email);
+    const user = await this.store.findUserByEmail(email, siteId);
     const valid = user
       ? await verifyPassword(String(body.password ?? ""), user.passwordHash)
       : false;
@@ -2082,11 +2120,12 @@ export class AuthHandler {
   private async forgot(
     request: IncomingMessage,
     response: ServerResponse,
+    siteId: string,
   ): Promise<true> {
     const body = await this.body(request);
     const email = this.email(body.email);
     await this.rateLimit(request, email);
-    const user = await this.store.findUserByEmail(email);
+    const user = await this.store.findUserByEmail(email, siteId);
     let developmentToken: string | undefined;
     if (user) {
       const token = opaqueToken();
@@ -2105,12 +2144,13 @@ export class AuthHandler {
   private async reset(
     request: IncomingMessage,
     response: ServerResponse,
+    siteId: string,
   ): Promise<true> {
     const body = await this.body(request);
     const token = String(body.token ?? "");
     const password = this.password(body.password);
     const record = token
-      ? await this.store.claimPasswordReset(tokenHash(token))
+      ? await this.store.claimPasswordReset(tokenHash(token), siteId)
       : null;
     if (!record)
       throw new InputError(
@@ -2149,14 +2189,14 @@ export class AuthHandler {
     await this.store.revokeOtherSessions(user.id, sessionId);
     return this.ok(response, { changed: true });
   }
-  private async authenticate(request: IncomingMessage) {
+  private async authenticate(request: IncomingMessage, siteId: string) {
     const rawToken = this.cookie(request, "smm_session");
     if (!rawToken) return null;
     const session = await this.store.findSession(tokenHash(rawToken));
     if (!session || session.revokedAt || session.expiresAt <= new Date())
       return null;
     const user = await this.store.findUserById(session.userId);
-    if (!user || user.status !== "ACTIVE") return null;
+    if (!user || user.status !== "ACTIVE" || (user.siteId && user.siteId !== siteId)) return null;
     return {
       rawToken,
       session,
@@ -2246,6 +2286,9 @@ export class AuthHandler {
       ...(ipAddress ? { ipAddress } : {}),
       ...(userAgent ? { userAgent: userAgent.slice(0, 512) } : {}),
     };
+  }
+  private csrf(request: IncomingMessage, rawToken: string) {
+    if (!verifyCsrf(this.header(request, "x-csrf-token") ?? "", rawToken, this.config.sessionSecret)) throw new InputError("CSRF_INVALID", "Invalid CSRF token");
   }
   private async body(
     request: IncomingMessage,

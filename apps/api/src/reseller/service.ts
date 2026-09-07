@@ -17,9 +17,9 @@ export class ResellerService {
     private orders: OrderService,
     private lifecycle?: OrderLifecycleService,
   ) {}
-  async list(userId: string) {
+  async list(userId: string, siteId?: string) {
     return this.db.apiKey.findMany({
-      where: { userId },
+      where: { userId, ...(siteId ? { siteId } : {}) },
       select: {
         id: true,
         keyPrefix: true,
@@ -30,23 +30,23 @@ export class ResellerService {
       },
     });
   }
-  async disable(userId: string, id: string) {
+  async disable(userId: string, id: string, siteId?: string) {
     const x = await this.db.apiKey.updateMany({
-      where: { id, userId },
+      where: { id, userId, ...(siteId ? { siteId } : {}) },
       data: { active: false },
     });
     if (!x.count) throw new ResellerError("KEY_NOT_FOUND", "API key not found");
     return { disabled: true };
   }
-  async generate(userId: string) {
+  async generate(userId: string, siteId?: string) {
     const raw = `smm_${randomBytes(32).toString("base64url")}`,
       keyHash = hash(raw);
     await this.db.apiKey.updateMany({
-      where: { userId },
+      where: { userId, ...(siteId ? { siteId } : {}) },
       data: { active: false },
     });
     await this.db.apiKey.create({
-      data: { userId, keyPrefix: raw.slice(0, 12), keyHash },
+      data: { userId, ...(siteId ? { siteId } : {}), keyPrefix: raw.slice(0, 12), keyHash },
     });
     return { key: raw, prefix: raw.slice(0, 12) };
   }
@@ -67,14 +67,14 @@ export class ResellerService {
       action = String(input.action);
     if (action === "balance") {
       const w = await this.db.wallet.findUnique({
-        where: { userId: key.userId },
+        where: { userId: key.userId, siteId: key.siteId },
       });
       return { balance: String(w.balance), currency: w.currency };
     }
     if (action === "services") {
       const user = await this.db.user.findUnique({
         where: { id: key.userId },
-        select: { priceGroupId: true },
+        select: { priceGroupId: true, siteId: true },
       });
       const [services, group, rules] = await Promise.all([
         this.db.service.findMany({
@@ -149,6 +149,7 @@ export class ResellerService {
           where: {
             id: { in: ids.map((id) => BigInt(id)) },
             userId: key.userId,
+            siteId: key.siteId,
           },
         });
         return Object.fromEntries(
@@ -164,7 +165,7 @@ export class ResellerService {
         );
       }
       const o = await this.db.order.findFirst({
-        where: { id: BigInt(input.order), userId: key.userId },
+        where: { id: BigInt(input.order), userId: key.userId, siteId: key.siteId },
       });
       if (!o) throw new ResellerError("ORDER_NOT_FOUND", "Order not found");
       return {
@@ -178,7 +179,7 @@ export class ResellerService {
       if (!this.lifecycle)
         throw new ResellerError("ACTION_UNAVAILABLE", "Lifecycle unavailable");
       const order = await this.db.order.findFirst({
-        where: { id: BigInt(input.order), userId: key.userId },
+        where: { id: BigInt(input.order), userId: key.userId, siteId: key.siteId },
       });
       if (!order) throw new ResellerError("ORDER_NOT_FOUND", "Order not found");
       const request = await this.lifecycle.request(

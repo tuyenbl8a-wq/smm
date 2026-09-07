@@ -3,10 +3,23 @@ import { loadConfig } from "@smm/config";
 import { authPage, landingPage } from "./page.js";
 import { customerPage } from "./customer.js";
 import { adminPage, isAdminRoute } from "./admin.js";
+import { themeEditorPage, themePreviewPage } from "./theme-builder.js";
 const config = loadConfig(process.env, 3001);
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", config.appUrl),
     path = url.pathname;
+  if (path.startsWith("/api/")) {
+    const chunks: Uint8Array[] = []; let size = 0;
+    try { for await (const chunk of request as any) { size += chunk.length; if (size > 1_048_576) throw new Error("PAYLOAD_TOO_LARGE"); chunks.push(chunk); } } catch { response.statusCode=413; response.end("Payload too large"); return; }
+    const headers: Record<string,string> = { host: String(request.headers.host ?? "") };
+    for (const name of ["content-type","cookie","x-csrf-token","idempotency-key","accept"]) { const value=request.headers[name]; if(typeof value==="string")headers[name]=value; }
+    try {
+      const upstream=await fetch(new URL(path+url.search, config.apiUrl),{method:request.method ?? "GET",headers,body:["GET","HEAD"].includes(request.method??"GET")?undefined:Buffer.concat(chunks),redirect:"manual",signal:AbortSignal.timeout(15_000)});
+      response.statusCode=upstream.status; for(const name of ["content-type","cache-control","location","retry-after"]) {const value=upstream.headers.get(name);if(value)response.setHeader(name,value)}
+      const cookies=(upstream.headers as any).getSetCookie?.()??[];if(cookies.length)response.setHeader("set-cookie",cookies);
+      response.end(Buffer.from(await upstream.arrayBuffer())); return;
+    } catch { response.statusCode=502; response.end("API upstream unavailable"); return; }
+  }
   if (path === "/health") {
     response.setHeader("content-type", "application/json");
     response.end(
@@ -19,16 +32,16 @@ const server = createServer((request, response) => {
     return;
   }
   const pages: Record<string, () => string> = {
-    "/": () => landingPage(config.apiUrl.origin),
-    "/services": () => landingPage(config.apiUrl.origin),
-    "/pricing": () => landingPage(config.apiUrl.origin),
-    "/help": () => landingPage(config.apiUrl.origin),
-    "/login": () => authPage(config.apiUrl.origin, "login"),
-    "/register": () => authPage(config.apiUrl.origin, "register"),
-    "/forgot-password": () => authPage(config.apiUrl.origin, "forgot"),
+    "/": () => landingPage(""),
+    "/services": () => landingPage(""),
+    "/pricing": () => landingPage(""),
+    "/help": () => landingPage(""),
+    "/login": () => authPage("", "login"),
+    "/register": () => authPage("", "register"),
+    "/forgot-password": () => authPage("", "forgot"),
     "/reset-password": () =>
       authPage(
-        config.apiUrl.origin,
+        "",
         "reset",
         url.searchParams.get("token") ?? "",
       ),
@@ -43,23 +56,32 @@ const server = createServer((request, response) => {
     path === "/deposit" ||
     /^\/deposit\/[0-9a-f-]{36}$/.test(path) ||
     path === "/transactions" ||
+    path === "/panels" ||
+    path === "/panels/new" ||
+    path === "/panel-plans" ||
+    /^\/panels\/\d+$/.test(path) ||
     path === "/affiliate" ||
     path === "/api" ||
     path === "/support" ||
     /^\/support\/\d+$/.test(path) ||
     path === "/notifications" ||
     path === "/account";
-  const render = isAdminRoute(path)
-    ? () => adminPage(config.apiUrl.origin, path)
+  const editorMatch=/^\/admin\/themes\/([A-Z0-9_]+)\/editor$/.exec(path);
+  const render = path === "/admin/theme-preview"
+    ? () => themePreviewPage("", url)
+    : editorMatch
+      ? () => themeEditorPage(editorMatch[1] ?? null)
+      : isAdminRoute(path)
+    ? () => adminPage("", path)
     : customerRoute
-      ? () => customerPage(config.apiUrl.origin, path)
+      ? () => customerPage("", path)
       : pages[path];
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("referrer-policy", "strict-origin-when-cross-origin");
   response.setHeader(
     "content-security-policy",
-    `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src https: data:; connect-src ${config.apiUrl.origin}; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
+    `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src https: data:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors ${path === "/admin/theme-preview" ? "'self'" : "'none'"}`,
   );
   if (!render) {
     response.statusCode = 404;

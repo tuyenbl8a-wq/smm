@@ -2030,6 +2030,7 @@ export class AdminOperationsService {
           );
         throw error;
       }
+      await applySettlementTargetRefund(tx, order, refund.target, `Panel upstream Admin refund: ${reason}`);
       const full = moneyToUnits(refund.target) === moneyToUnits(order.charge),
         status = full ? "REFUNDED" : order.status;
       const updated = await tx.order.update({
@@ -2473,6 +2474,8 @@ export class AdminOperationsService {
         "themeCustomer",
         "themeOptions",
         "themeContent",
+        "themeOverrides",
+        "themeDraft",
       ]),
       themeIds = new Set([
         "DARK_LUXURY",
@@ -2503,9 +2506,19 @@ export class AdminOperationsService {
         if (
           key.startsWith("theme") &&
           key !== "themeOptions" &&
-          key !== "themeContent"
+          key !== "themeContent" &&
+          key !== "themeOverrides" && key !== "themeDraft"
         )
           return themeIds.has(String(value));
+        if (key === "themeOverrides" || key === "themeDraft") {
+          if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+          const candidate = key === "themeDraft" ? (value as any).overrides : value;
+          if (key === "themeDraft" && !themeIds.has(String((value as any).themeId))) return false;
+          if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+          const groups:Record<string,Set<string>>={colors:new Set(["primary","secondary","accent","background","surface","text","muted","border","success","warning","danger"]),content:new Set(["brandTitle","tagline","heroTitle","heroSubtitle","primaryCta","secondaryCta","footerText"]),layout:new Set(["density","serviceVariant"]),typography:new Set(["font","baseSize"])};
+          if (!Object.keys(candidate).every(group=>groups[group])) return false;
+          return Object.entries(candidate).every(([group,fields]:any)=>fields&&typeof fields==="object"&&!Array.isArray(fields)&&Object.entries(fields).every(([name,field])=>groups[group]!.has(name)&&(group==="colors"?typeof field==="string"&&/^#[0-9a-f]{6}$/i.test(field):group==="layout"?(["compact","comfortable","spacious","cards","table","catalog"].includes(String(field))):group==="typography"?(["system","serif","display"].includes(String(field))||(name==="baseSize"&&Number(field)>=14&&Number(field)<=20)):typeof field==="string"&&field.length<=500)));
+        }
         if (key === "themeOptions") {
           if (!value || typeof value !== "object" || Array.isArray(value))
             return false;
@@ -2579,9 +2592,9 @@ export class AdminOperationsService {
     return this.db.$transaction(async (tx: any) => {
       for (const [key, value] of entries)
         await tx.setting.upsert({
-          where: { group_key: { group: "general", key } },
+          where: { siteId_group_key: { siteId: ROOT_SITE_ID, group: "general", key } },
           update: { value, encrypted: false },
-          create: { group: "general", key, value, encrypted: false },
+          create: { siteId: ROOT_SITE_ID, group: "general", key, value, encrypted: false },
         });
       await tx.auditLog.create({
         data: {
@@ -2595,7 +2608,7 @@ export class AdminOperationsService {
     });
   }
 
-  async publicSettings() {
+  async publicSettings(siteId = ROOT_SITE_ID) {
     const allowed = [
       "siteName",
       "defaultLanguage",
@@ -2621,12 +2634,15 @@ export class AdminOperationsService {
       "themeCustomer",
       "themeOptions",
       "themeContent",
+      "themeOverrides",
     ];
     const rows = await this.db.setting.findMany({
-      where: { group: "general", key: { in: allowed }, encrypted: false },
-      select: { key: true, value: true },
+      where: { siteId: { in: siteId === ROOT_SITE_ID ? [ROOT_SITE_ID] : [ROOT_SITE_ID, siteId] }, group: { in: ["general", "branding"] }, key: { in: allowed }, encrypted: false },
+      select: { siteId: true, key: true, value: true },
+      orderBy: { siteId: "asc" },
     });
-    return Object.fromEntries(rows.map((row: any) => [row.key, row.value]));
+    const root=rows.filter((row:any)=>row.siteId===ROOT_SITE_ID),local=rows.filter((row:any)=>row.siteId===siteId);
+    return Object.fromEntries([...root,...local].map((row: any) => [row.key, row.value]));
   }
 
   async maintenance() {
@@ -2652,6 +2668,7 @@ export class AdminOperationsService {
 }
 import {
   applyOrderTargetRefund,
+  applySettlementTargetRefund,
   DailySnapshotService,
   moneyFromUnits,
   moneyToUnits,
@@ -2659,3 +2676,4 @@ import {
 } from "@smm/database";
 import { ProviderError, StandardSmmAdapter } from "../provider/adapter.js";
 import { decryptSecret } from "../provider/crypto.js";
+import { ROOT_SITE_ID } from "../tenant/context.js";

@@ -9,6 +9,7 @@ import { smtpConfig, SmtpTransport } from "./smtp.js";
 import { ReportSnapshotWorker } from "./report-snapshot.js";
 import { PaymentReconciliationWorker } from "./payment-reconcile.js";
 import { PriceGroupUpgradeWorker } from "./price-group-upgrade.js";
+import { PanelExpiryWorker } from "./panel-expiry.js";
 const config = loadConfig(process.env, 4100);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -26,6 +27,9 @@ const smtp = smtpConfig(process.env),
 const lifecycleWorker = new LifecycleWorker(prisma, config.encryptionKey);
 const reportWorker = new ReportSnapshotWorker(prisma);
 const priceGroupWorker = new PriceGroupUpgradeWorker(prisma);
+const panelExpiryWorker = new PanelExpiryWorker(prisma);
+const panelExpiryPoll = setInterval(() => void panelExpiryWorker.once().catch((error:any) => console.error(JSON.stringify({level:"error",service:"worker",event:"panel_expiry_failed",message:error?.message??"unknown"}))), 5 * 60 * 1000);
+void panelExpiryWorker.once().catch(() => undefined);
 const binanceModule = await dynamicImport(
     new URL("../../api/dist/payment/binance.js", import.meta.url).href,
   ),
@@ -188,6 +192,7 @@ function shutdown(): void {
   clearInterval(reportPoll);
   clearInterval(paymentPoll);
   clearInterval(priceGroupPoll);
+  clearInterval(panelExpiryPoll);
   void prisma.$disconnect();
   server.close((error) => {
     if (error) {
