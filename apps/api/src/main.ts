@@ -74,7 +74,7 @@ const server = createApiServer(
     resellerService,
     new DepositService(prisma, () => paymentSettings.publicBank(), {
       BINANCE: binanceProvider,
-    }),
+    }, (id) => paymentSettings.publicRecipient(id)),
     new SupportService(prisma),
     adminOperations,
     paymentSettings,
