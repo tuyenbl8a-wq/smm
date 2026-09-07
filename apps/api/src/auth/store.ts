@@ -5,6 +5,7 @@ export interface AuthUser {
   passwordHash: string;
   status: string;
   emailVerifiedAt: Date | null;
+  siteId?: string;
 }
 export interface AuthSession {
   id: string;
@@ -70,8 +71,8 @@ export interface AdminDashboard {
   }>;
 }
 export interface AuthStore {
-  findUserByEmail(email: string): Promise<AuthUser | null>;
-  findUserByUsername(username: string): Promise<AuthUser | null>;
+  findUserByEmail(email: string, siteId?: string): Promise<AuthUser | null>;
+  findUserByUsername(username: string, siteId?: string): Promise<AuthUser | null>;
   findUserById(id: string): Promise<AuthUser | null>;
   createUser(input: {
     email: string;
@@ -79,6 +80,7 @@ export interface AuthStore {
     passwordHash: string;
     referralCode: string;
     referredByCode?: string;
+    siteId?: string;
   }): Promise<AuthUser>;
   updatePassword(userId: string, passwordHash: string): Promise<void>;
   createSession(input: {
@@ -107,6 +109,7 @@ export interface AuthStore {
   ): Promise<void>;
   claimPasswordReset(
     tokenHash: string,
+    siteId?: string,
   ): Promise<{ id: string; userId: string } | null>;
   rolesAndPermissions(
     userId: string,
@@ -129,11 +132,11 @@ export interface AuthStore {
 }
 export class PrismaAuthStore implements AuthStore {
   constructor(private readonly db: any) {}
-  findUserByEmail(email: string) {
-    return this.db.user.findUnique({ where: { email } });
+  findUserByEmail(email: string, siteId?: string) {
+    return siteId ? this.db.user.findUnique({ where: { siteId_email: { siteId, email } } }) : this.db.user.findFirst({ where: { email } });
   }
-  findUserByUsername(username: string) {
-    return this.db.user.findUnique({ where: { username } });
+  findUserByUsername(username: string, siteId?: string) {
+    return siteId ? this.db.user.findUnique({ where: { siteId_username: { siteId, username } } }) : this.db.user.findFirst({ where: { username } });
   }
   findUserById(id: string) {
     return this.db.user.findUnique({ where: { id } });
@@ -144,16 +147,17 @@ export class PrismaAuthStore implements AuthStore {
     passwordHash: string;
     referralCode: string;
     referredByCode?: string;
+    siteId?: string;
   }) {
     return this.db.$transaction(async (tx: any) => {
       const role = await tx.role.findUniqueOrThrow({ where: { code: "USER" } });
       const group =
-        (await tx.priceGroup.findUnique({ where: { code: "CUSTOMER" } })) ??
-        (await tx.priceGroup.findUniqueOrThrow({ where: { code: "NORMAL" } }));
+        (await tx.priceGroup.findUnique({ where: input.siteId ? { siteId_code: { siteId: input.siteId, code: "CUSTOMER" } } : { code: "CUSTOMER" } })) ??
+        (await tx.priceGroup.findUniqueOrThrow({ where: input.siteId ? { siteId_code: { siteId: input.siteId, code: "NORMAL" } } : { code: "NORMAL" } }));
       const { referredByCode, ...userInput } = input;
       const referrer = referredByCode
         ? await tx.user.findUnique({
-            where: { referralCode: referredByCode.trim().toUpperCase() },
+            where: { referralCode: referredByCode.trim().toUpperCase(), ...(input.siteId ? { siteId: input.siteId } : {}) },
           })
         : null;
       if (referredByCode && !referrer) throw new Error("REFERRAL_CODE_INVALID");
@@ -161,10 +165,11 @@ export class PrismaAuthStore implements AuthStore {
         data: { ...userInput, status: "ACTIVE", priceGroupId: group.id },
       });
       await tx.userRole.create({ data: { userId: user.id, roleId: role.id } });
-      await tx.wallet.create({ data: { userId: user.id, currency: "USD" } });
+      await tx.wallet.create({ data: { userId: user.id, ...(input.siteId ? { siteId: input.siteId } : {}), currency: "USD" } });
       await tx.affiliate.create({
         data: {
           userId: user.id,
+          ...(input.siteId ? { siteId: input.siteId } : {}),
           code: user.referralCode,
           commissionRate: "10.000000",
         },
@@ -174,6 +179,7 @@ export class PrismaAuthStore implements AuthStore {
           where: { userId: referrer.id },
           create: {
             userId: referrer.id,
+            ...(input.siteId ? { siteId: input.siteId } : {}),
             code: referrer.referralCode,
             commissionRate: "10.000000",
           },
@@ -181,6 +187,7 @@ export class PrismaAuthStore implements AuthStore {
         });
         await tx.referral.create({
           data: {
+            ...(input.siteId ? { siteId: input.siteId } : {}),
             affiliateId: affiliate.id,
             referrerId: referrer.id,
             referredUserId: user.id,
@@ -236,13 +243,13 @@ export class PrismaAuthStore implements AuthStore {
       .create({ data: { userId, tokenHash, expiresAt } })
       .then(() => undefined);
   }
-  claimPasswordReset(tokenHash: string) {
+  claimPasswordReset(tokenHash: string, siteId?: string) {
     return this.db.$transaction(async (tx: any) => {
       const record = await tx.passwordResetToken.findUnique({
         where: { tokenHash },
       });
-      if (!record || record.usedAt || record.expiresAt <= new Date())
-        return null;
+      if (!record || record.usedAt || record.expiresAt <= new Date()) return null;
+      if (siteId && !(await tx.user.findFirst({ where: { id: record.userId, siteId } }))) return null;
       const claimed = await tx.passwordResetToken.updateMany({
         where: { id: record.id, usedAt: null, expiresAt: { gt: new Date() } },
         data: { usedAt: new Date() },

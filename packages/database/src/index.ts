@@ -190,3 +190,21 @@ export class DailySnapshotService {
     });
   }
 }
+
+/** Refund every contractual panel edge using the immutable order-time snapshot. */
+export async function applySettlementTargetRefund(tx:any,order:any,orderTargetValue:unknown,description:string):Promise<void>{
+  const orderTarget=moneyToUnits(orderTargetValue),charge=moneyToUnits(order.charge);
+  if(orderTarget>charge)throw new Error("REFUND_EXCEEDS_CHARGE");
+  if (!tx.orderSiteSettlement) return;
+  const settlements=await tx.orderSiteSettlement.findMany({where:{orderId:order.id}});
+  for(const settlement of settlements){
+    const edgeCharge=moneyToUnits(settlement.upstreamCharge),target=charge===0n?0n:(edgeCharge*orderTarget)/charge,existing=moneyToUnits(settlement.refundedAmount);
+    if(target<existing)throw new Error("REFUND_BELOW_EXISTING");
+    if(target===existing)continue;
+    const amount=moneyFromUnits(target-existing),targetText=moneyFromUnits(target);
+    const rows=await tx.$queryRawUnsafe(`UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid AND "site_id"=$3::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,amount,settlement.payerUserId,settlement.parentSiteId);
+    if(!rows?.[0])throw new Error("WALLET_NOT_FOUND");
+    await tx.walletTransaction.create({data:{siteId:settlement.parentSiteId,walletId:rows[0].id,userId:settlement.payerUserId,type:"REFUND",amount,balanceBefore:rows[0].before,balanceAfter:rows[0].after,referenceId:order.publicId,idempotencyKey:`settlement-refund:${order.publicId}:${settlement.childSiteId}:to:${targetText}`,description}});
+    await tx.orderSiteSettlement.update({where:{id:settlement.id},data:{refundedAmount:targetText}});
+  }
+}

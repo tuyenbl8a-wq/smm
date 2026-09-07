@@ -699,3 +699,9 @@ test("runtime theme settings allow 20 presets and safe structured content", asyn
   );
   assert.equal(writes.length, writesBeforeUnsafePayload);
 });
+test("structured theme overrides reject raw executable and unknown properties", async () => {
+  const writes:any[]=[];const db:any={$transaction:async(fn:any)=>fn({setting:{upsert:async(x:any)=>writes.push(x)},auditLog:{create:async()=>({})}})};const service=new AdminOperationsService(db,"0".repeat(64));
+  await assert.rejects(()=>service.updateSettings("admin",{themeOverrides:{colors:{primary:"javascript:alert(1)"}}}),/supported settings/);
+  await assert.rejects(()=>service.updateSettings("admin",{themeOverrides:{customCss:{body:"display:none"}}}),/supported settings/);
+  await service.updateSettings("admin",{themeDraft:{themeId:"OCEAN_PROFESSIONAL",overrides:{colors:{primary:"#087ea4"},layout:{density:"comfortable"}}}});assert.equal(writes.length,1);
+});

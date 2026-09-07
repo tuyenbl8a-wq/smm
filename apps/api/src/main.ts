@@ -23,6 +23,8 @@ import { PaymentSettingsService } from "./payment/settings.js";
 import { LocalStorage } from "./storage/local.js";
 import { S3Storage } from "./storage/s3.js";
 import { PromotionService } from "./promotion/service.js";
+import { TenantResolver } from "./tenant/context.js";
+import { PanelService, PanelManagementService } from "./tenant/panel-service.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -30,6 +32,8 @@ const dynamicImport = new Function("specifier", "return import(specifier)") as (
 const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
 const orderService = new OrderService(prisma);
+const panelService = new PanelService(prisma);
+const panelManagement = new PanelManagementService(prisma, panelService);
 const lifecycleService = new OrderLifecycleService(prisma);
 const resellerService = new ResellerService(
   prisma,
@@ -80,6 +84,7 @@ const server = createApiServer(
     paymentSettings,
     attachmentStorage,
     new PromotionService(prisma),
+    panelManagement,
   ),
   resellerService,
   new VietQrWebhook(prisma, process.env.VIETQR_WEBHOOK_SECRET ?? ""),
@@ -89,6 +94,7 @@ const server = createApiServer(
     paymentSettings.webhookToken(process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? ""),
   ),
   () => adminOperations.maintenance(),
+  new TenantResolver(prisma, new Set([config.appUrl.hostname, config.apiUrl.hostname, "dichvu1st.com", "www.dichvu1st.com"])),
 );
 server.listen(config.port, config.host, () => {
   console.log(

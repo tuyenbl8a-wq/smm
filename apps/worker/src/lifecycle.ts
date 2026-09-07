@@ -1,6 +1,7 @@
 import { createDecipheriv, createHash } from "node:crypto";
 import {
   applyOrderTargetRefund,
+  applySettlementTargetRefund,
   moneyToUnits,
   partialRefundTarget,
 } from "@smm/database";
@@ -128,6 +129,7 @@ export class LifecycleWorker {
             : calculated,
           "Partial order refund",
         );
+        await applySettlementTargetRefund(tx, current, refund.target, "Panel upstream worker refund");
         await tx.order.update({
           where: { id: current.id },
           data: {

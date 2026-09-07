@@ -1,5 +1,6 @@
 import {
   applyOrderTargetRefund,
+  applySettlementTargetRefund,
   moneyToUnits,
   partialRefundTarget,
 } from "@smm/database";
@@ -63,6 +64,7 @@ export class OrderLifecycleService {
             : calculated,
           "Partial order refund",
         );
+        await applySettlementTargetRefund(tx, order, refund.target, "Panel upstream partial refund");
         await tx.order.update({
           where: { id: orderId },
           data: {

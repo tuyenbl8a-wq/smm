@@ -87,9 +87,11 @@ const migration = readdirSync(migrationRoot, { withFileTypes: true })
   )
   .join("\n");
 for (const table of schema.matchAll(/@@map\("([^"]+)"\)/g)) {
-  if (!migration.includes(`CREATE TABLE "${table[1]}"`))
-    throw new Error(`Initial migration does not create ${table[1]}`);
+  const quoted = `CREATE TABLE "${table[1]}"`;
+  const unquoted = new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${table[1]}(?:\\s|\\()`, "i");
+  if (!migration.includes(quoted) && !unquoted.test(migration))
+    throw new Error(`Migration history does not create ${table[1]}`);
 }
 if (!migration.includes("FOREIGN KEY"))
   throw new Error("Initial migration must enforce foreign keys");
-console.log("Validated initial migration table and foreign-key coverage.");
+console.log("Validated migration-history table and foreign-key coverage.");
