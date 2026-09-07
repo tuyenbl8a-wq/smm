@@ -57,6 +57,7 @@ test("all customer routes and real modules are registered", () => {
   for (const route of [
     "dashboard",
     "orders/new",
+    "orders/bulk",
     "orders",
     "services",
     "wallet",
@@ -101,6 +102,13 @@ test("create order validates quantity and preserves one logical idempotency key"
   assert.match(customer, /btn\.disabled=true/);
   assert.match(customer, /coupons\/preview/);
   assert.match(customer, /Backend sẽ xác nhận giá/);
+});
+test("bulk order previews valid rows and reuses the protected order endpoint", () => {
+  for (const token of ["service_id | link | quantity", "bulk-parse", "bulk-preview", "Tổng số dòng", "Không hợp lệ", "Tổng tiền dự kiến", "Xác nhận đặt"])
+    assert.match(customer, new RegExp(token.replaceAll("|", "\\|")));
+  assert.match(customer, /Number\.isSafeInteger/);
+  assert.match(customer, /api\.post\('\/api\/v1\/customer\/orders'/);
+  assert.match(customer, /'idempotency-key':key/);
 });
 test("orders support filters, pagination, selection and copy short IDs only", () => {
   for (const token of [
