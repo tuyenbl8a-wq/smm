@@ -178,3 +178,29 @@ test("provider sync upserts stable external identities without duplicates", asyn
 
   assert.equal(rows.size, 1);
 });
+test("provider create/update strictly validate scheduling and preserve blank secrets", async () => {
+  const key = "01234567890123456789012345678901";
+  let stored: any = { id: "p1", name: "P", status: "ACTIVE", apiKeyEncrypted: encryptSecret("existing-secret", key) };
+  const audits: any[] = [];
+  const tx: any = {
+    provider: {
+      create: async ({ data }: any) => (stored = { id: "p1", ...data }),
+      update: async ({ data }: any) => (stored = { ...stored, ...data }),
+    },
+    auditLog: { create: async ({ data }: any) => (audits.push(data), data) },
+  };
+  const db: any = { provider: { findUnique: async () => stored }, $transaction: async (fn: any) => fn(tx) };
+  for (const interval of [5, 10, 15, 30, 60]) {
+    const result = await new ProviderService(db, key).create("admin", { name: "Provider", apiUrl: "https://provider.test", apiKey: "secret-key", autoSyncEnabled: false, syncIntervalMinutes: interval });
+    assert.deepEqual(result, { id: "p1", name: "Provider" });
+    assert.equal(JSON.stringify(result).includes("apiKey"), false);
+  }
+  for (const interval of [0, -1, 1.5, NaN, Infinity, 6, 20, "5", "anything"])
+    await assert.rejects(() => new ProviderService(db, key).create("admin", { name: "Provider", apiUrl: "https://provider.test", apiKey: "secret-key", autoSyncEnabled: false, syncIntervalMinutes: interval }));
+  await assert.rejects(() => new ProviderService(db, key).update("admin", "p1", { autoSyncEnabled: "false" }));
+  const encrypted = stored.apiKeyEncrypted;
+  const result = await new ProviderService(db, key).update("admin", "p1", { apiKey: "", syncIntervalMinutes: 30 });
+  assert.equal(stored.apiKeyEncrypted, encrypted);
+  assert.equal(JSON.stringify(result).includes("apiKey"), false);
+  assert.equal(JSON.stringify(audits).includes("existing-secret"), false);
+});

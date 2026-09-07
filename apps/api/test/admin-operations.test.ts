@@ -656,7 +656,7 @@ test("runtime theme settings allow 20 presets and safe structured content", asyn
   });
   const result = await service.updateSettings("admin", {
     themeMode: "SEPARATE",
-    themePublic: "ZEN_JAPAN",
+    themePublic: "JAPANESE_ZEN",
     themeAuth: "CYBER_NEON",
     themeCustomer: "DASHBOARD_FOCUSED",
     themeContent: {
@@ -685,4 +685,17 @@ test("runtime theme settings allow 20 presets and safe structured content", asyn
     () => service.updateSettings("admin", { themeGlobal: "UNSAFE_THEME" }),
     (error: AdminOperationError) => error.code === "SETTING_INVALID",
   );
+  const writesBeforeUnsafePayload = writes.length;
+  await assert.rejects(
+    () =>
+      service.updateSettings("admin", {
+        themeMode: "GLOBAL",
+        themeContent: {
+          heroTitle: "Nội dung hợp lệ",
+          primaryCtaUrl: "javascript:alert(1)",
+        },
+      }),
+    (error: AdminOperationError) => error.code === "SETTING_INVALID",
+  );
+  assert.equal(writes.length, writesBeforeUnsafePayload);
 });

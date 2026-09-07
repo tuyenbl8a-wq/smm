@@ -241,7 +241,7 @@ test("admin security recursively redacts nested secrets and allowlists settings"
   assert.match(adminOperations, /value\.map\(x=>redact/);
   assert.match(
     adminOperations,
-    /password\|token\|secret\|credential\|authorization\|encrypted\|api\.\?key\|session/,
+    /password\|token\|secret\|credential\|authorization\|encrypted\|keyhash\|cookie/,
   );
   assert.match(adminOperations, /siteName:'Tên website'/);
   assert.match(adminOperations, /apiKey:'',active/);
@@ -450,4 +450,25 @@ test("task 24 customer operations use protected real endpoints", () => {
     "Nhật ký Admin",
   ])
     assert.match(adminOperations, new RegExp(label));
+});
+
+test("required theme architecture, safe preview and enum status contract", async () => {
+  const themes = await import("../dist/themes.js");
+  const required = ["DARK_LUXURY","MINIMAL_LIGHT","CYBER_NEON","SOFT_PASTEL","NATURE_GREEN","GLASSMORPHISM","BOLD_COMMERCE","DASHBOARD_FOCUSED","CREATIVE_AGENCY","PREMIUM_CORPORATE","JAPANESE_ZEN","BLACK_GOLD_ELITE","AI_FUTURISTIC","EDITORIAL_BRUTALIST","SOCIAL_CREATOR","OCEAN_PROFESSIONAL","AURORA_MODERN","EMERALD_BUSINESS","MIDNIGHT_SAAS","SOFT_BEIGE_PREMIUM"];
+  assert.deepEqual([...themes.themeIds], required);
+  assert.equal(new Set(themes.themePresets.map(x => x.name)).size, 20);
+  for (const id of required) {
+    const v = themes.themeStructure[id];
+    for (const key of ["navigationVariant","heroVariant","authVariant","sidebarVariant","dashboardVariant","serviceVariant","orderFormVariant","density"])
+      assert.equal(typeof v[key], "string");
+  }
+  const runtime = themes.runtimeThemeScript("http://api", "customer");
+  assert.match(runtime, /Object\.entries\(variants\)/);
+  assert.match(adminOperations, /data-device=.*desktop/);
+  assert.match(adminOperations, /data-device=.*tablet/);
+  assert.match(adminOperations, /if\(a==='preview'\)/);
+  assert.match(adminOperations, /if\(a==='apply'/);
+  assert.match(adminOperations, /oldSaleRate/);
+  assert.match(adminOperations, /newSaleRate/);
+  assert.doesNotMatch(adminOperations, /key:'oldRate'|key:'newRate'/);
 });

@@ -60,6 +60,27 @@ const upgradeMode = (value: unknown) => {
     );
   return result;
 };
+const pricingModes = new Set([
+  "FIXED",
+  "COST_PLUS_PERCENT",
+  "COST_PLUS_FIXED",
+  "COST_PLUS_PERCENT_AND_FIXED",
+]);
+const safetyActions = new Set([
+  "AUTO_RAISE",
+  "REQUIRE_REVIEW",
+  "DISABLE_SERVICE",
+]);
+const enumInput = (value: unknown, allowed: Set<string>, code: string) => {
+  const result = String(value ?? "");
+  if (!allowed.has(result)) throw new CatalogError(code, `Invalid ${code}`);
+  return result;
+};
+const booleanInput = (value: unknown, field: string) => {
+  if (typeof value !== "boolean")
+    throw new CatalogError("BOOLEAN_INVALID", `${field} must be a boolean`);
+  return value;
+};
 
 export class CatalogService {
   private readonly bulk: BulkPricingService;
@@ -672,6 +693,44 @@ export class CatalogService {
       }
       const data: any = {
         source: requestedSource,
+        ...(input.pricingMode !== undefined
+          ? {
+              pricingMode: enumInput(
+                input.pricingMode,
+                pricingModes,
+                "PRICING_MODE_INVALID",
+              ),
+            }
+          : {}),
+        ...(input.defaultMarkupPercent !== undefined
+          ? { defaultMarkupPercent: decimalInput(input.defaultMarkupPercent, true) }
+          : {}),
+        ...(input.defaultFixedProfit !== undefined
+          ? { defaultFixedProfit: decimalInput(input.defaultFixedProfit, true) }
+          : {}),
+        ...(input.defaultMinProfit !== undefined
+          ? { defaultMinProfit: decimalInput(input.defaultMinProfit, true) }
+          : {}),
+        ...(input.autoDecrease !== undefined
+          ? { autoDecrease: booleanInput(input.autoDecrease, "autoDecrease") }
+          : {}),
+        ...(input.safetyAction !== undefined
+          ? {
+              safetyAction: enumInput(
+                input.safetyAction,
+                safetyActions,
+                "SAFETY_ACTION_INVALID",
+              ),
+            }
+          : {}),
+        ...(input.maxAutomaticIncreasePercent !== undefined
+          ? {
+              maxAutomaticIncreasePercent: decimalInput(
+                input.maxAutomaticIncreasePercent,
+                true,
+              ),
+            }
+          : {}),
         ...(input.categoryId !== undefined
           ? { categoryId: String(input.categoryId) }
           : {}),

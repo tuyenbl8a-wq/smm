@@ -178,10 +178,17 @@ export class AdminOperationsService {
     const groupIds = rows
       .map((row: any) => row.priceGroupId)
       .filter((id: any): id is string => Boolean(id));
-    const groups = groupIds.length
+    const groups = this.db.priceGroup?.findMany
       ? await this.db.priceGroup.findMany({
-          where: { id: { in: groupIds } },
+          where: {
+            active: true,
+            OR: [
+              { id: { in: groupIds } },
+              { code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] } },
+            ],
+          },
           select: { id: true, code: true, name: true },
+          orderBy: { tierOrder: "asc" },
         })
       : [];
     const ids = rows.map((row: any) => row.id),
@@ -248,6 +255,9 @@ export class AdminOperationsService {
           lastLogins.find((entry: any) => entry.userId === row.id)?.createdAt ??
           null,
       })),
+      priceGroups: groups.filter((group: any) =>
+        ["CUSTOMER", "AGENT", "DISTRIBUTOR"].includes(group.code),
+      ),
       page,
       limit,
       total,
@@ -370,9 +380,40 @@ export class AdminOperationsService {
           })
         : [],
     ]);
+    const [safeDeposits, safeTickets, safeSessions, safeApiKeys] =
+      await Promise.all([
+        this.db.deposit.findMany({
+          where: { userId: id },
+          orderBy: { createdAt: "desc" },
+          take: 50,
+          select: { id: true, code: true, paymentMethodId: true, grossAmount: true, netAmount: true, creditedAmount: true, status: true, externalTransactionId: true, createdAt: true, paidAt: true },
+        }),
+        this.db.ticket.findMany({
+          where: { userId: id },
+          orderBy: { updatedAt: "desc" },
+          take: 50,
+          select: { id: true, subject: true, priority: true, status: true, createdAt: true, updatedAt: true },
+        }),
+        this.db.session.findMany({
+          where: { userId: id },
+          orderBy: { createdAt: "desc" },
+          take: 50,
+          select: { id: true, userAgent: true, ipAddress: true, createdAt: true, expiresAt: true, revokedAt: true },
+        }),
+        this.db.apiKey.findMany({
+          where: { userId: id },
+          orderBy: { createdAt: "desc" },
+          take: 50,
+          select: { id: true, keyPrefix: true, active: true, rateLimit: true, lastUsedAt: true, createdAt: true },
+        }),
+      ]);
     return {
       ...user,
       userNumber: String(user.userNumber),
+      deposits: safeDeposits.map((row: any) => ({ ...row, grossAmount: String(row.grossAmount), netAmount: String(row.netAmount), creditedAmount: String(row.creditedAmount) })),
+      support: safeTickets.map((row: any) => ({ ...row, id: String(row.id) })),
+      sessions: safeSessions,
+      apiKeys: safeApiKeys,
       roles,
       wallet: wallet
         ? { balance: String(wallet.balance), currency: wallet.currency }
@@ -2397,20 +2438,20 @@ export class AdminOperationsService {
         "SOFT_PASTEL",
         "NATURE_GREEN",
         "GLASSMORPHISM",
-        "BOLD_ECOMMERCE",
+        "BOLD_COMMERCE",
         "DASHBOARD_FOCUSED",
         "CREATIVE_AGENCY",
         "PREMIUM_CORPORATE",
-        "ZEN_JAPAN",
-        "EDITORIAL_IVORY",
-        "FUTURE_AI",
-        "SAAS_ULTRA",
-        "TECH_ENTERPRISE",
-        "CREATOR_POP",
-        "BLACK_GOLD",
-        "TRUST_FINTECH",
-        "CLEAN_MARKET",
-        "CONVERSION_ORANGE",
+        "JAPANESE_ZEN",
+        "BLACK_GOLD_ELITE",
+        "AI_FUTURISTIC",
+        "EDITORIAL_BRUTALIST",
+        "SOCIAL_CREATOR",
+        "OCEAN_PROFESSIONAL",
+        "AURORA_MODERN",
+        "EMERALD_BUSINESS",
+        "MIDNIGHT_SAAS",
+        "SOFT_BEIGE_PREMIUM",
       ]),
       entries = Object.entries(input).filter(([key, value]) => {
         if (!allowed.has(key)) return false;
@@ -2448,7 +2489,9 @@ export class AdminOperationsService {
             "heroTitle",
             "heroSubtitle",
             "primaryCta",
+            "primaryCtaUrl",
             "secondaryCta",
+            "secondaryCtaUrl",
             "statsText",
             "footerText",
             "supportSummary",
@@ -2463,6 +2506,15 @@ export class AdminOperationsService {
                   (item) => typeof item === "string" && item.length <= 160,
                 )
               );
+            if (name === "primaryCtaUrl" || name === "secondaryCtaUrl") {
+              if (typeof field !== "string" || field.length > 2048)
+                return false;
+              try {
+                return ["http:", "https:"].includes(new URL(field).protocol);
+              } catch {
+                return false;
+              }
+            }
             return (
               textKeys.has(name) &&
               typeof field === "string" &&
@@ -2476,7 +2528,10 @@ export class AdminOperationsService {
           typeof value === "number"
         );
       });
-    if (!entries.length)
+    const supportedCount = Object.keys(input).filter((key) =>
+      allowed.has(key),
+    ).length;
+    if (!entries.length || entries.length !== supportedCount)
       throw new AdminOperationError("SETTING_INVALID", "No supported settings");
     return this.db.$transaction(async (tx: any) => {
       for (const [key, value] of entries)
