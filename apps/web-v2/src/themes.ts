@@ -205,13 +205,312 @@ type ThemeStructure = {
   orderFormVariant: string;
   density: string;
 };
-const structure = (navigationVariant:string,heroVariant:string,authVariant:string,sidebarVariant:string,dashboardVariant:string,serviceVariant:string,orderFormVariant:string,density:string):ThemeStructure => ({navigationVariant,heroVariant,authVariant,sidebarVariant,dashboardVariant,serviceVariant,orderFormVariant,density});
+const structure = (
+  navigationVariant: string,
+  heroVariant: string,
+  authVariant: string,
+  sidebarVariant: string,
+  dashboardVariant: string,
+  serviceVariant: string,
+  orderFormVariant: string,
+  density: string,
+): ThemeStructure => ({
+  navigationVariant,
+  heroVariant,
+  authVariant,
+  sidebarVariant,
+  dashboardVariant,
+  serviceVariant,
+  orderFormVariant,
+  density,
+});
 /** Deliberately authored structures: variants are semantic, not index-generated. */
 export const themeStructure: Record<ThemeId, ThemeStructure> = {
-  DARK_LUXURY:structure("luxury-gallery","monument","noir-suite","gold-rail","executive-night","jewel-grid","private-desk","spacious"), MINIMAL_LIGHT:structure("split","split-art","minimal","fixed","metrics-row","table","guided","comfortable"), CYBER_NEON:structure("neon-command","hologram-stage","portal","circuit-rail","telemetry-bento","neon-modules","terminal-flow","compact"), SOFT_PASTEL:structure("centered","split-art","card","floating","activity-first","cards","guided","spacious"), NATURE_GREEN:structure("split","service-grid","split","fixed","metrics-row","catalog","split-summary","spacious"), GLASSMORPHISM:structure("glass-orbit","prism-pedestal","crystal-suite","floating-dock","luminous-console","glass-carousel","floating-wizard","spacious"), BOLD_COMMERCE:structure("rail","service-grid","card","compact","wallet-first","catalog","guided","compact"), DASHBOARD_FOCUSED:structure("split","dashboard-first","minimal","fixed","chart-first","table","compact","compact"), CREATIVE_AGENCY:structure("centered","editorial","immersive","topbar","activity-first","cards","stepper","spacious"), PREMIUM_CORPORATE:structure("corporate-bar","business-tower","trust-split","office-rail","kpi-board","solution-columns","proposal-flow","comfortable"), JAPANESE_ZEN:structure("zen-pavilion","ink-landscape","shoji","quiet-rail","garden-ledger","zen-shelf","ritual-flow","spacious"), BLACK_GOLD_ELITE:structure("rail","editorial","card","floating","wallet-first","cards","split-summary","spacious"), AI_FUTURISTIC:structure("ai-command","neural-orbit","cognitive-gateway","agent-console","intelligence-grid","model-modules","prompt-pipeline","compact"), EDITORIAL_BRUTALIST:structure("brutal-masthead","concrete-spread","poster-access","block-rail","hard-ledger","manifesto-grid","ticket-desk","compact"), SOCIAL_CREATOR:structure("creator-marquee","viral-collage","creator-studio","pop-ribbon","social-pulse","platform-stickers","boost-composer","comfortable"), OCEAN_PROFESSIONAL:structure("split","service-grid","split","fixed","metrics-row","table","split-summary","comfortable"), AURORA_MODERN:structure("compact","platform-stage","immersive","floating","chart-first","cards","stepper","spacious"), EMERALD_BUSINESS:structure("emerald-boardroom","growth-briefing","executive-access","enterprise-rail","growth-command","capability-matrix","approval-desk","comfortable"), MIDNIGHT_SAAS:structure("rail","dashboard-first","immersive","compact","bento","table","compact","compact"), SOFT_BEIGE_PREMIUM:structure("beige-boutique","beige-editorial","beige-gallery","beige-tailored","beige-ledger","beige-showcase","beige-concierge","spacious")
+  DARK_LUXURY: structure(
+    "luxury-gallery",
+    "monument",
+    "noir-suite",
+    "gold-rail",
+    "executive-night",
+    "jewel-grid",
+    "private-desk",
+    "spacious",
+  ),
+  MINIMAL_LIGHT: structure(
+    "split",
+    "split-art",
+    "minimal",
+    "fixed",
+    "metrics-row",
+    "table",
+    "guided",
+    "comfortable",
+  ),
+  CYBER_NEON: structure(
+    "neon-command",
+    "hologram-stage",
+    "portal",
+    "circuit-rail",
+    "telemetry-bento",
+    "neon-modules",
+    "terminal-flow",
+    "compact",
+  ),
+  SOFT_PASTEL: structure(
+    "centered",
+    "split-art",
+    "card",
+    "floating",
+    "activity-first",
+    "cards",
+    "guided",
+    "spacious",
+  ),
+  NATURE_GREEN: structure(
+    "split",
+    "service-grid",
+    "split",
+    "fixed",
+    "metrics-row",
+    "catalog",
+    "split-summary",
+    "spacious",
+  ),
+  GLASSMORPHISM: structure(
+    "glass-orbit",
+    "prism-pedestal",
+    "crystal-suite",
+    "floating-dock",
+    "luminous-console",
+    "glass-carousel",
+    "floating-wizard",
+    "spacious",
+  ),
+  BOLD_COMMERCE: structure(
+    "rail",
+    "service-grid",
+    "card",
+    "compact",
+    "wallet-first",
+    "catalog",
+    "guided",
+    "compact",
+  ),
+  DASHBOARD_FOCUSED: structure(
+    "split",
+    "dashboard-first",
+    "minimal",
+    "fixed",
+    "chart-first",
+    "table",
+    "compact",
+    "compact",
+  ),
+  CREATIVE_AGENCY: structure(
+    "centered",
+    "editorial",
+    "immersive",
+    "topbar",
+    "activity-first",
+    "cards",
+    "stepper",
+    "spacious",
+  ),
+  PREMIUM_CORPORATE: structure(
+    "corporate-bar",
+    "business-tower",
+    "trust-split",
+    "office-rail",
+    "kpi-board",
+    "solution-columns",
+    "proposal-flow",
+    "comfortable",
+  ),
+  JAPANESE_ZEN: structure(
+    "zen-pavilion",
+    "ink-landscape",
+    "shoji",
+    "quiet-rail",
+    "garden-ledger",
+    "zen-shelf",
+    "ritual-flow",
+    "spacious",
+  ),
+  BLACK_GOLD_ELITE: structure(
+    "rail",
+    "editorial",
+    "card",
+    "floating",
+    "wallet-first",
+    "cards",
+    "split-summary",
+    "spacious",
+  ),
+  AI_FUTURISTIC: structure(
+    "ai-command",
+    "neural-orbit",
+    "cognitive-gateway",
+    "agent-console",
+    "intelligence-grid",
+    "model-modules",
+    "prompt-pipeline",
+    "compact",
+  ),
+  EDITORIAL_BRUTALIST: structure(
+    "brutal-masthead",
+    "concrete-spread",
+    "poster-access",
+    "block-rail",
+    "hard-ledger",
+    "manifesto-grid",
+    "ticket-desk",
+    "compact",
+  ),
+  SOCIAL_CREATOR: structure(
+    "creator-marquee",
+    "viral-collage",
+    "creator-studio",
+    "pop-ribbon",
+    "social-pulse",
+    "platform-stickers",
+    "boost-composer",
+    "comfortable",
+  ),
+  OCEAN_PROFESSIONAL: structure(
+    "split",
+    "service-grid",
+    "split",
+    "fixed",
+    "metrics-row",
+    "table",
+    "split-summary",
+    "comfortable",
+  ),
+  AURORA_MODERN: structure(
+    "compact",
+    "platform-stage",
+    "immersive",
+    "floating",
+    "chart-first",
+    "cards",
+    "stepper",
+    "spacious",
+  ),
+  EMERALD_BUSINESS: structure(
+    "emerald-boardroom",
+    "growth-briefing",
+    "executive-access",
+    "enterprise-rail",
+    "growth-command",
+    "capability-matrix",
+    "approval-desk",
+    "comfortable",
+  ),
+  MIDNIGHT_SAAS: structure(
+    "rail",
+    "dashboard-first",
+    "immersive",
+    "compact",
+    "bento",
+    "table",
+    "compact",
+    "compact",
+  ),
+  SOFT_BEIGE_PREMIUM: structure(
+    "beige-boutique",
+    "beige-editorial",
+    "beige-gallery",
+    "beige-tailored",
+    "beige-ledger",
+    "beige-showcase",
+    "beige-concierge",
+    "spacious",
+  ),
 };
 
-export const legacyThemeAliases: Record<string, ThemeId> = {BOLD_ECOMMERCE:"BOLD_COMMERCE",ZEN_JAPAN:"JAPANESE_ZEN",BLACK_GOLD:"BLACK_GOLD_ELITE",FUTURE_AI:"AI_FUTURISTIC",EDITORIAL:"EDITORIAL_BRUTALIST",CREATOR_POP:"SOCIAL_CREATOR",OCEAN_TECH:"OCEAN_PROFESSIONAL",FINTECH:"EMERALD_BUSINESS",SAAS_DARK:"MIDNIGHT_SAAS",BEIGE:"SOFT_BEIGE_PREMIUM"};
+export const legacyThemeAliases: Record<string, ThemeId> = {
+  BOLD_ECOMMERCE: "BOLD_COMMERCE",
+  ZEN_JAPAN: "JAPANESE_ZEN",
+  BLACK_GOLD: "BLACK_GOLD_ELITE",
+  FUTURE_AI: "AI_FUTURISTIC",
+  EDITORIAL: "EDITORIAL_BRUTALIST",
+  CREATOR_POP: "SOCIAL_CREATOR",
+  OCEAN_TECH: "OCEAN_PROFESSIONAL",
+  FINTECH: "EMERALD_BUSINESS",
+  SAAS_DARK: "MIDNIGHT_SAAS",
+  BEIGE: "SOFT_BEIGE_PREMIUM",
+};
+
+export type ThemeCompositionScope = "landing" | "auth" | "customer";
+type Composition = Record<ThemeCompositionScope, string[]>;
+/** Authored element hierarchies shared by runtime and preview; these are not CSS variant labels. */
+export const referenceThemeCompositions: Partial<Record<ThemeId, Composition>> =
+  {
+    SOFT_BEIGE_PREMIUM: {
+      landing: ["main", "article", "section"],
+      auth: ["main", "aside", "article", "section"],
+      customer: ["main", "section", "article", "section"],
+    },
+    JAPANESE_ZEN: {
+      landing: ["main", "section", "aside", "section"],
+      auth: ["main", "article", "section", "aside"],
+      customer: ["main", "aside", "section", "article"],
+    },
+    DARK_LUXURY: {
+      landing: ["main", "header", "article", "footer"],
+      auth: ["main", "section", "article", "footer"],
+      customer: ["main", "header", "section", "aside"],
+    },
+    PREMIUM_CORPORATE: {
+      landing: ["main", "nav", "section", "article"],
+      auth: ["main", "header", "section", "article", "footer"],
+      customer: ["main", "nav", "article", "aside"],
+    },
+    CYBER_NEON: {
+      landing: ["main", "aside", "section", "nav", "article"],
+      auth: ["main", "nav", "article", "section"],
+      customer: ["main", "aside", "article", "footer"],
+    },
+    GLASSMORPHISM: {
+      landing: ["main", "section", "figure", "article"],
+      auth: ["main", "figure", "section", "article"],
+      customer: ["main", "section", "figure", "aside"],
+    },
+    EMERALD_BUSINESS: {
+      landing: ["main", "header", "section", "aside", "footer"],
+      auth: ["main", "aside", "section", "footer"],
+      customer: ["main", "nav", "section", "footer"],
+    },
+    SOCIAL_CREATOR: {
+      landing: ["main", "article", "aside", "figure"],
+      auth: ["main", "section", "aside", "figure"],
+      customer: ["main", "header", "article", "figure"],
+    },
+    EDITORIAL_BRUTALIST: {
+      landing: ["main", "nav", "article", "section", "footer"],
+      auth: ["main", "header", "article", "aside"],
+      customer: ["main", "nav", "aside", "article", "footer"],
+    },
+    AI_FUTURISTIC: {
+      landing: ["main", "header", "nav", "section", "aside"],
+      auth: ["main", "nav", "section", "aside", "footer"],
+      customer: ["main", "header", "aside", "section", "footer"],
+    },
+  };
+export function renderReferenceComposition(
+  theme: ThemeId,
+  scope: ThemeCompositionScope,
+  inner: string,
+) {
+  const tags = referenceThemeCompositions[theme]?.[scope];
+  return tags
+    ? tags.reduceRight(
+        (content, tag, index) =>
+          `<${tag} data-composition-layer="${index}">${content}</${tag}>`,
+        inner,
+      )
+    : inner;
+}
 
 const dark = new Set([
   "DARK_LUXURY",
@@ -292,7 +591,7 @@ export const runtimeThemeScript = (
   api: string,
   scope: "public" | "auth" | "customer",
 ) =>
-  `(()=>{const allowed=new Set(${JSON.stringify(themeIds)}),aliases=${JSON.stringify(legacyThemeAliases)},structures=${JSON.stringify(themeStructure)},scope=${JSON.stringify(scope)},fallback='DARK_LUXURY',setTheme=id=>{const normalized=aliases[id]||id,selected=allowed.has(normalized)?normalized:fallback;document.documentElement.dataset.theme=selected;const variants=structures[selected];Object.entries(variants).forEach(([key,value])=>document.documentElement.dataset[key]=value);return selected},safeUrl=value=>{if(typeof value!=='string')return null;try{const url=new URL(value,location.origin);return url.protocol==='http:'||url.protocol==='https:'?url.href:null}catch{return null}};setTheme(fallback);fetch(${JSON.stringify(api)}+'/api/v1/public/settings',{credentials:'include'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const s=j.data||{},key='theme'+scope[0].toUpperCase()+scope.slice(1),id=s.themeMode==='SEPARATE'?s[key]:s.themeGlobal;setTheme(id);const o=s.themeOptions||{};if(['compact','comfortable','spacious'].includes(o.density))document.documentElement.dataset.density=o.density;if(['small','medium','large'].includes(o.radius))document.documentElement.dataset.radius=o.radius;const overrides=s.themeOverrides||{},colorKeys=new Set(['primary','secondary','accent','background','surface','text','muted','border','success','warning','danger']);Object.entries(overrides.colors||{}).forEach(([key,value])=>{if(colorKeys.has(key)&&typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))document.documentElement.style.setProperty('--theme-'+key,value)});const c={...(s.themeContent||{}),...(overrides.content||{})},apply=()=>{document.querySelectorAll('[data-theme-content]').forEach(el=>{const v=c[el.dataset.themeContent];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-list]').forEach((el,i)=>{const v=c.featureBullets?.[i];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-href]').forEach(el=>{const href=safeUrl(c[el.dataset.themeHref]);if(href)el.setAttribute('href',href);else el.removeAttribute('href')})};apply();new MutationObserver(apply).observe(document.body,{childList:true,subtree:true})}).catch(()=>setTheme(fallback))})();`;
+  `(()=>{const allowed=new Set(${JSON.stringify(themeIds)}),aliases=${JSON.stringify(legacyThemeAliases)},structures=${JSON.stringify(themeStructure)},compositions=${JSON.stringify(referenceThemeCompositions)},scope=${JSON.stringify(scope)},compositionScope=scope==='public'?'landing':scope,fallback='DARK_LUXURY',compose=theme=>{const old=document.querySelector('[data-theme-runtime-root]');if(old){const original=old.querySelector('[data-original-content]');old.replaceWith(...original.children)}const tags=compositions[theme]?.[compositionScope];if(!tags)return;const original=document.createElement('div');original.dataset.originalContent='';while(document.body.firstChild)original.append(document.body.firstChild);let node=original;[...tags].reverse().forEach((tag,index)=>{const wrapper=document.createElement(tag);wrapper.dataset.compositionLayer=String(tags.length-index-1);wrapper.append(node);node=wrapper});node.dataset.themeRuntimeRoot='';document.body.append(node)},setTheme=id=>{const normalized=aliases[id]||id,selected=allowed.has(normalized)?normalized:fallback;document.documentElement.dataset.theme=selected;const variants=structures[selected];Object.entries(variants).forEach(([key,value])=>document.documentElement.dataset[key]=value);compose(selected);return selected},safeUrl=value=>{if(typeof value!=='string')return null;try{const url=new URL(value,location.origin);return url.protocol==='http:'||url.protocol==='https:'?url.href:null}catch{return null}};setTheme(fallback);fetch(${JSON.stringify(api)}+'/api/v1/public/settings',{credentials:'include'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const s=j.data||{},key='theme'+scope[0].toUpperCase()+scope.slice(1),id=s.themeMode==='SEPARATE'?s[key]:s.themeGlobal;setTheme(id);const o=s.themeOptions||{};if(['compact','comfortable','spacious'].includes(o.density))document.documentElement.dataset.density=o.density;if(['small','medium','large'].includes(o.radius))document.documentElement.dataset.radius=o.radius;const overrides=s.themeOverrides||{},colorKeys=new Set(['primary','secondary','accent','background','surface','text','muted','border','success','warning','danger']);Object.entries(overrides.colors||{}).forEach(([key,value])=>{if(colorKeys.has(key)&&typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))document.documentElement.style.setProperty('--theme-'+key,value)});const c={...(s.themeContent||{}),...(overrides.content||{})},apply=()=>{document.querySelectorAll('[data-theme-content]').forEach(el=>{const v=c[el.dataset.themeContent];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-list]').forEach((el,i)=>{const v=c.featureBullets?.[i];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-href]').forEach(el=>{const href=safeUrl(c[el.dataset.themeHref]);if(href)el.setAttribute('href',href);else el.removeAttribute('href')})};apply();new MutationObserver(apply).observe(document.body,{childList:true,subtree:true})}).catch(()=>setTheme(fallback))})();`;
 
 export const themeStyles = `${declarations}
 :root{--theme-bg:#090a0c;--theme-surface:#111827;--theme-border:#f5c97855;--theme-text:#f8fafc;--theme-muted:#a9b4c6;--theme-primary:#f5c978;--theme-secondary:#8f7350;--theme-radius:12px;--theme-shadow:0 18px 46px #0005;--theme-font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}

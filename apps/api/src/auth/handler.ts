@@ -98,7 +98,13 @@ export class AuthHandler {
     request: IncomingMessage,
     response: ServerResponse,
     path: string,
-    tenant: TenantSite = { id: ROOT_SITE_ID, siteNumber: 100000n, parentSiteId: null, status: "ACTIVE", depth: 0 },
+    tenant: TenantSite = {
+      id: ROOT_SITE_ID,
+      siteNumber: 100000n,
+      parentSiteId: null,
+      status: "ACTIVE",
+      depth: 0,
+    },
   ): Promise<boolean> {
     if (
       path !== "/api/v1/public/catalog" &&
@@ -166,13 +172,49 @@ export class AuthHandler {
           );
       }
       if (this.panels && path.startsWith("/api/v1/admin/panel")) {
-        if (!auth.access.roles.includes("SUPER_ADMIN")) return this.error(response, 403, "PERMISSION_DENIED", "Permission denied");
-        const url=new URL(request.url??path,this.config.apiUrl);
-        if(request.method==="GET"&&path==="/api/v1/admin/panels")return this.ok(response,{items:await this.panels.adminPanels(url.searchParams)});
-        if(request.method==="GET"&&path==="/api/v1/admin/panel-plans")return this.ok(response,{items:await this.panels.adminPlans()});
-        if(request.method==="GET"&&path==="/api/v1/admin/panel-subscriptions")return this.ok(response,{items:await this.panels.adminSubscriptions()});
-        if(request.method==="POST"&&path==="/api/v1/admin/panel-plans"){this.csrf(request,auth.rawToken);return this.ok(response,await this.panels.savePlan(tenant.id,await this.body(request)),201)}
-        const plan=/^\/api\/v1\/admin\/panel-plans\/([0-9a-f-]{36})$/.exec(path);if(plan&&request.method==="PATCH"){this.csrf(request,auth.rawToken);return this.ok(response,await this.panels.savePlan(tenant.id,await this.body(request),plan[1]))}
+        if (!auth.access.roles.includes("SUPER_ADMIN"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        if (request.method === "GET" && path === "/api/v1/admin/panels")
+          return this.ok(response, {
+            items: await this.panels.adminPanels(url.searchParams),
+          });
+        if (request.method === "GET" && path === "/api/v1/admin/panel-plans")
+          return this.ok(response, { items: await this.panels.adminPlans() });
+        if (
+          request.method === "GET" &&
+          path === "/api/v1/admin/panel-subscriptions"
+        )
+          return this.ok(response, {
+            items: await this.panels.adminSubscriptions(),
+          });
+        if (request.method === "POST" && path === "/api/v1/admin/panel-plans") {
+          this.csrf(request, auth.rawToken);
+          return this.ok(
+            response,
+            await this.panels.savePlan(tenant.id, await this.body(request)),
+            201,
+          );
+        }
+        const plan = /^\/api\/v1\/admin\/panel-plans\/([0-9a-f-]{36})$/.exec(
+          path,
+        );
+        if (plan && request.method === "PATCH") {
+          this.csrf(request, auth.rawToken);
+          return this.ok(
+            response,
+            await this.panels.savePlan(
+              tenant.id,
+              await this.body(request),
+              plan[1],
+            ),
+          );
+        }
       }
       if (request.method === "GET" && path === "/api/v1/me")
         return this.ok(response, {
@@ -183,26 +225,126 @@ export class AuthHandler {
         return this.ok(response, {
           sessions: await this.store.listSessions(auth.user.id),
         });
-      if (this.panels && request.method === "GET" && path === "/api/v1/customer/panel-plans")
+      if (
+        this.panels &&
+        request.method === "GET" &&
+        path === "/api/v1/customer/panel-plans"
+      )
         return this.ok(response, { items: await this.panels.plans(tenant.id) });
-      if (this.panels && request.method === "GET" && path === "/api/v1/customer/panels")
-        return this.ok(response, { items: await this.panels.panels(tenant.id, auth.user.id) });
-      if (this.panels && request.method === "POST" && path === "/api/v1/customer/panels") {
+      if (
+        this.panels &&
+        request.method === "GET" &&
+        path === "/api/v1/customer/panels"
+      )
+        return this.ok(response, {
+          items: await this.panels.panels(tenant.id, auth.user.id),
+        });
+      if (
+        this.panels &&
+        request.method === "POST" &&
+        path === "/api/v1/customer/panels"
+      ) {
         this.csrf(request, auth.rawToken);
-        return this.ok(response, await this.panels.rent(tenant.id, auth.user.id, await this.body(request), String(this.header(request, "idempotency-key") ?? "")), 201);
+        return this.ok(
+          response,
+          await this.panels.rent(
+            tenant.id,
+            auth.user.id,
+            await this.body(request),
+            String(this.header(request, "idempotency-key") ?? ""),
+          ),
+          201,
+        );
       }
-      const panelRoute = /^\/api\/v1\/customer\/panels\/(\d+)(?:\/(renew|branding|domains))?(?:\/([^/]+)(?:\/(verify|primary))?)?$/.exec(path);
+      const panelRoute =
+        /^\/api\/v1\/customer\/panels\/(\d+)(?:\/(renew|branding|domains))?(?:\/([^/]+)(?:\/(verify|primary))?)?$/.exec(
+          path,
+        );
       if (this.panels && panelRoute) {
         const [, number, action, domainId, domainAction] = panelRoute;
-        if (request.method === "GET" && !action) return this.ok(response, await this.panels.owned(tenant.id, auth.user.id, number!));
-        if (request.method === "GET" && action === "domains") return this.ok(response, { items: await this.panels.domains(tenant.id, auth.user.id, number!) });
+        if (request.method === "GET" && !action)
+          return this.ok(
+            response,
+            await this.panels.owned(tenant.id, auth.user.id, number!),
+          );
+        if (request.method === "GET" && action === "domains")
+          return this.ok(response, {
+            items: await this.panels.domains(tenant.id, auth.user.id, number!),
+          });
         this.csrf(request, auth.rawToken);
-        if (request.method === "POST" && action === "renew") return this.ok(response, await this.panels.renew(tenant.id, auth.user.id, number!, String(this.header(request, "idempotency-key") ?? "")));
-        if (request.method === "PATCH" && action === "branding") return this.ok(response, await this.panels.branding(tenant.id, auth.user.id, number!, await this.body(request)));
-        if (request.method === "POST" && action === "domains" && !domainId) { const body=await this.body(request); return this.ok(response, await this.panels.addDomain(tenant.id, auth.user.id, number!, body.hostname), 201); }
-        if (request.method === "POST" && action === "domains" && domainId && domainAction === "verify") return this.ok(response, await this.panels.verifyDomain(tenant.id, auth.user.id, number!, domainId));
-        if (request.method === "POST" && action === "domains" && domainId && domainAction === "primary") return this.ok(response, await this.panels.primaryDomain(tenant.id, auth.user.id, number!, domainId));
-        if (request.method === "DELETE" && action === "domains" && domainId) return this.ok(response, await this.panels.removeDomain(tenant.id, auth.user.id, number!, domainId));
+        if (request.method === "POST" && action === "renew")
+          return this.ok(
+            response,
+            await this.panels.renew(
+              tenant.id,
+              auth.user.id,
+              number!,
+              String(this.header(request, "idempotency-key") ?? ""),
+            ),
+          );
+        if (request.method === "PATCH" && action === "branding")
+          return this.ok(
+            response,
+            await this.panels.branding(
+              tenant.id,
+              auth.user.id,
+              number!,
+              await this.body(request),
+            ),
+          );
+        if (request.method === "POST" && action === "domains" && !domainId) {
+          const body = await this.body(request);
+          return this.ok(
+            response,
+            await this.panels.addDomain(
+              tenant.id,
+              auth.user.id,
+              number!,
+              body.hostname,
+            ),
+            201,
+          );
+        }
+        if (
+          request.method === "POST" &&
+          action === "domains" &&
+          domainId &&
+          domainAction === "verify"
+        )
+          return this.ok(
+            response,
+            await this.panels.verifyDomain(
+              tenant.id,
+              auth.user.id,
+              number!,
+              domainId,
+            ),
+          );
+        if (
+          request.method === "POST" &&
+          action === "domains" &&
+          domainId &&
+          domainAction === "primary"
+        )
+          return this.ok(
+            response,
+            await this.panels.primaryDomain(
+              tenant.id,
+              auth.user.id,
+              number!,
+              domainId,
+            ),
+          );
+        if (request.method === "DELETE" && action === "domains" && domainId)
+          return this.ok(
+            response,
+            await this.panels.removeDomain(
+              tenant.id,
+              auth.user.id,
+              number!,
+              domainId,
+            ),
+          );
       }
       if (request.method === "GET" && path === "/api/v1/customer/wallet") {
         if (!this.wallet) throw new Error("Wallet service unavailable");
@@ -306,20 +448,30 @@ export class AuthHandler {
           await this.orders!.detail(auth.user.id, orderDetail[1]!),
         );
       if (request.method === "GET" && path === "/api/v1/customer/api-keys")
-        return this.ok(response, await this.reseller!.list(auth.user.id, tenant.id));
+        return this.ok(
+          response,
+          await this.reseller!.list(auth.user.id, tenant.id),
+        );
       if (
         request.method === "GET" &&
         path === "/api/v1/customer/payment-methods"
       )
         return this.ok(response, await this.deposits!.methods(tenant.id));
       if (request.method === "GET" && path === "/api/v1/customer/deposits")
-        return this.ok(response, await this.deposits!.history(auth.user.id, tenant.id));
+        return this.ok(
+          response,
+          await this.deposits!.history(auth.user.id, tenant.id),
+        );
       const depositDetail =
         /^\/api\/v1\/customer\/deposits\/([0-9a-f-]{36})$/.exec(path);
       if (request.method === "GET" && depositDetail)
         return this.ok(
           response,
-          await this.deposits!.detail(auth.user.id, depositDetail[1]!, tenant.id),
+          await this.deposits!.detail(
+            auth.user.id,
+            depositDetail[1]!,
+            tenant.id,
+          ),
         );
       if (request.method === "GET" && path === "/api/v1/customer/tickets")
         return this.ok(response, await this.support!.list(auth.user.id));
@@ -433,6 +585,65 @@ export class AuthHandler {
           );
         return this.ok(response, await this.admin!.orderProviders());
       }
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/admin/orders/filter-options"
+      ) {
+        if (!canAccessAdmin(auth.access, "orders.view"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.orderFilterOptions(
+            Object.fromEntries(url.searchParams),
+          ),
+        );
+      }
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/admin/orders/provider-ids"
+      ) {
+        if (!canAccessAdmin(auth.access, "orders.view"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.providerOrderIds(
+            Object.fromEntries(url.searchParams),
+            auth.access.roles.includes("SUPER_ADMIN") ? undefined : tenant.id,
+          ),
+        );
+      }
+      if (
+        request.method === "GET" &&
+        path === "/api/v1/admin/orders/service-analytics"
+      ) {
+        if (!canAccessAdmin(auth.access, "orders.view"))
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(
+          response,
+          await this.admin!.orderServiceAnalytics(
+            Object.fromEntries(url.searchParams),
+            auth.access.roles.includes("SUPER_ADMIN") ? undefined : tenant.id,
+          ),
+        );
+      }
       if (request.method === "GET" && path === "/api/v1/admin/orders") {
         if (!canAccessAdmin(auth.access, "orders.view"))
           return this.error(
@@ -444,7 +655,10 @@ export class AuthHandler {
         const url = new URL(request.url ?? path, this.config.apiUrl);
         return this.ok(
           response,
-          await this.admin!.orders(Object.fromEntries(url.searchParams)),
+          await this.admin!.orders(
+            Object.fromEntries(url.searchParams),
+            auth.access.roles.includes("SUPER_ADMIN") ? undefined : tenant.id,
+          ),
         );
       }
       const adminOrder =
@@ -696,14 +910,22 @@ export class AuthHandler {
         /^\/api\/v1\/admin\/deposits\/([0-9a-f-]{36})\/action$/.exec(path);
       if (request.method === "POST" && depositOperation) {
         if (!canAccessAdmin(auth.access, "payments.manage"))
-          return this.error(response, 403, "PERMISSION_DENIED", "Permission denied");
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
         const body = await this.body(request);
-        return this.ok(response, await this.deposits!.adminOperate(
-          auth.user.id,
-          depositOperation[1]!,
-          body.action,
-          body.reason,
-        ));
+        return this.ok(
+          response,
+          await this.deposits!.adminOperate(
+            auth.user.id,
+            depositOperation[1]!,
+            body.action,
+            body.reason,
+          ),
+        );
       }
       const adminTicket = /^\/api\/v1\/admin\/tickets\/(\d+)$/.exec(path);
       if (request.method === "GET" && adminTicket) {
@@ -970,10 +1192,18 @@ export class AuthHandler {
         );
       if (request.method === "GET" && path === "/api/v1/admin/transactions") {
         if (!canAccessAdmin(auth.access, "payments.view"))
-          return this.error(response, 403, "PERMISSION_DENIED", "Permission denied");
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
         if (!this.admin) throw new Error("Admin operations unavailable");
         const url = new URL(request.url ?? path, this.config.apiUrl);
-        return this.ok(response, await this.admin.transactions(Object.fromEntries(url.searchParams)));
+        return this.ok(
+          response,
+          await this.admin.transactions(Object.fromEntries(url.searchParams)),
+        );
       }
       if (request.method === "GET" && adminWallet) {
         if (
@@ -1428,7 +1658,10 @@ export class AuthHandler {
         );
       }
       if (request.method === "POST" && path === "/api/v1/customer/api-keys")
-        return this.ok(response, await this.reseller!.generate(auth.user.id, tenant.id));
+        return this.ok(
+          response,
+          await this.reseller!.generate(auth.user.id, tenant.id),
+        );
       const keyDisable =
         /^\/api\/v1\/customer\/api-keys\/([0-9a-f-]{36})\/disable$/.exec(path);
       if (request.method === "POST" && keyDisable)
@@ -1439,7 +1672,11 @@ export class AuthHandler {
       if (request.method === "POST" && path === "/api/v1/customer/deposits")
         return this.ok(
           response,
-          await this.deposits!.create(auth.user.id, await this.body(request), tenant.id),
+          await this.deposits!.create(
+            auth.user.id,
+            await this.body(request),
+            tenant.id,
+          ),
         );
       if (
         request.method === "POST" &&
@@ -2199,7 +2436,12 @@ export class AuthHandler {
     if (!session || session.revokedAt || session.expiresAt <= new Date())
       return null;
     const user = await this.store.findUserById(session.userId);
-    if (!user || user.status !== "ACTIVE" || (user.siteId && user.siteId !== siteId)) return null;
+    if (
+      !user ||
+      user.status !== "ACTIVE" ||
+      (user.siteId && user.siteId !== siteId)
+    )
+      return null;
     return {
       rawToken,
       session,
@@ -2251,7 +2493,11 @@ export class AuthHandler {
     const parts = host.split(".");
     return parts.length >= 2 ? `; Domain=.${parts.slice(-2).join(".")}` : "";
   }
-  private async rateLimit(request: IncomingMessage, siteId: string, identity: string) {
+  private async rateLimit(
+    request: IncomingMessage,
+    siteId: string,
+    identity: string,
+  ) {
     const meta = this.meta(request);
     const failures = await this.store.countRecentFailures(
       siteId,
@@ -2292,7 +2538,14 @@ export class AuthHandler {
     };
   }
   private csrf(request: IncomingMessage, rawToken: string) {
-    if (!verifyCsrf(this.header(request, "x-csrf-token") ?? "", rawToken, this.config.sessionSecret)) throw new InputError("CSRF_INVALID", "Invalid CSRF token");
+    if (
+      !verifyCsrf(
+        this.header(request, "x-csrf-token") ?? "",
+        rawToken,
+        this.config.sessionSecret,
+      )
+    )
+      throw new InputError("CSRF_INVALID", "Invalid CSRF token");
   }
   private async body(
     request: IncomingMessage,

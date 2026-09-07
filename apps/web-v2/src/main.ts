@@ -62,6 +62,7 @@ const server = createServer(async (request, response) => {
     path === "/dashboard" ||
     path === "/orders" ||
     path === "/orders/new" ||
+    path === "/orders/bulk" ||
     /^\/orders\/(?:[0-9]{6,}|[0-9a-f-]{36})$/.test(path) ||
     path === "/services" ||
     path === "/wallet" ||
