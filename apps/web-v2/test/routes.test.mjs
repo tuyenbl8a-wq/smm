@@ -494,3 +494,67 @@ test('panel customer and admin routes are wired',()=>{for(const path of ['/panel
 test('same-origin API proxy is constrained to API paths and fixed config target',()=>{assert.match(main,/path\.startsWith\("\/api\/"\)/);assert.match(main,/new URL\(path\s*\+\s*url\.search, config\.apiUrl\)/);assert.doesNotMatch(main,/searchParams\.get\(["'](?:url|target)/)});
 test('visual theme builder routes render real landing auth and customer architectures',async()=>{const builder=await import('../dist/theme-builder.js');for(const [scope,token] of [['landing','hero-grid'],['auth','auth-card'],['customer','metric-grid']]){const html=builder.fullPageThemePreview('', 'OCEAN_PROFESSIONAL', scope);assert.match(html,new RegExp(token));assert.match(html,/data-theme="OCEAN_PROFESSIONAL"/);assert.doesNotMatch(html,/CustomerChào|AuthĐăng/)}});
 test('visual editor provides true device viewports, draft controls and safe structured bridge',async()=>{const {themeEditorPage}=await import('../dist/theme-builder.js'),html=themeEditorPage('BLACK_GOLD_ELITE');for(const token of ['1440','768px','390px','Lưu bản nháp','Áp dụng','Hoàn tác','Khôi phục mặc định','theme-draft','themeOverrides'])assert.match(html,new RegExp(token));assert.doesNotMatch(html,/contenteditable|eval\(/)});
+test('Soft Beige Premium has its own editorial architectures in every requested scope', async()=>{
+  const {themeStructure}=await import('../dist/themes.js');
+  assert.deepEqual(themeStructure.SOFT_BEIGE_PREMIUM,{
+    navigationVariant:'beige-boutique',heroVariant:'beige-editorial',authVariant:'beige-gallery',sidebarVariant:'beige-tailored',dashboardVariant:'beige-ledger',serviceVariant:'beige-showcase',orderFormVariant:'beige-concierge',density:'spacious'
+  });
+  const {fullPageThemePreview,themeEditorPage}=await import('../dist/theme-builder.js');
+  const pages=['landing','auth','customer'].map(scope=>fullPageThemePreview('', 'SOFT_BEIGE_PREMIUM', scope));
+  for(const html of pages){
+    assert.match(html,/data-theme="SOFT_BEIGE_PREMIUM"/);
+    assert.match(html,/Soft Beige Premium is an authored editorial system/);
+    assert.doesNotMatch(html,/CustomerChào|AuthĐăng|TÃ|Ä‘/);
+  }
+  assert.match(pages[0],/data-hero-variant="beige-editorial"/);
+  assert.match(pages[1],/data-auth-variant="beige-gallery"/);
+  assert.match(pages[2],/data-dashboard-variant="beige-ledger"/);
+  const editor=themeEditorPage('SOFT_BEIGE_PREMIUM');
+  for(const token of ['landing','auth','customer','desktop','tablet','mobile']) assert.match(editor,new RegExp(token));
+});
+test('four reference themes have independent three-scope architectures',async()=>{
+  const {themeStructure}=await import('../dist/themes.js');
+  const {fullPageThemePreview}=await import('../dist/theme-builder.js');
+  const expected={
+    JAPANESE_ZEN:['zen-pavilion','ink-landscape','shoji','quiet-rail','garden-ledger','zen-shelf','ritual-flow'],
+    DARK_LUXURY:['luxury-gallery','monument','noir-suite','gold-rail','executive-night','jewel-grid','private-desk'],
+    PREMIUM_CORPORATE:['corporate-bar','business-tower','trust-split','office-rail','kpi-board','solution-columns','proposal-flow'],
+    CYBER_NEON:['neon-command','hologram-stage','portal','circuit-rail','telemetry-bento','neon-modules','terminal-flow']
+  };
+  const signatures=new Set();
+  for(const [id,variants] of Object.entries(expected)){
+    const actual=Object.values(themeStructure[id]).slice(0,7);
+    assert.deepEqual(actual,variants); signatures.add(actual.join('|'));
+    for(const scope of ['landing','auth','customer']){
+      const html=fullPageThemePreview('',id,scope);
+      assert.match(html,new RegExp(`data-theme="${id}"`));
+      assert.doesNotMatch(html,/TÃ|Ä‘|CustomerChào|AuthĐăng/);
+    }
+  }
+  signatures.add(Object.values(themeStructure.SOFT_BEIGE_PREMIUM).slice(0,7).join('|'));
+  assert.equal(signatures.size,5,'all four references and Soft Beige must have unique structures');
+});
+test('three new references render nine distinct and responsive interfaces',async()=>{
+  const {themeStructure}=await import('../dist/themes.js');
+  const {fullPageThemePreview,themeEditorPage}=await import('../dist/theme-builder.js');
+  const expected={
+    GLASSMORPHISM:['glass-orbit','prism-pedestal','crystal-suite','floating-dock','luminous-console','glass-carousel','floating-wizard'],
+    EMERALD_BUSINESS:['emerald-boardroom','growth-briefing','executive-access','enterprise-rail','growth-command','capability-matrix','approval-desk'],
+    SOCIAL_CREATOR:['creator-marquee','viral-collage','creator-studio','pop-ribbon','social-pulse','platform-stickers','boost-composer']
+  };
+  const firstFive=['SOFT_BEIGE_PREMIUM','JAPANESE_ZEN','DARK_LUXURY','PREMIUM_CORPORATE','CYBER_NEON'];
+  const signatures=new Set(firstFive.map(id=>Object.values(themeStructure[id]).slice(0,7).join('|')));
+  let interfaces=0;
+  for(const [id,variants] of Object.entries(expected)){
+    const actual=Object.values(themeStructure[id]).slice(0,7); assert.deepEqual(actual,variants); signatures.add(actual.join('|'));
+    for(const [scope,key,index] of [['landing','hero',1],['auth','auth',2],['customer','dashboard',4]]){
+      const html=fullPageThemePreview('',id,scope); interfaces++;
+      assert.match(html,new RegExp(`data-theme="${id}"`)); assert.match(html,new RegExp(`data-${key}-variant="${variants[index]}"`));
+      assert.match(html,/<meta name="viewport"/); assert.doesNotMatch(html,/TÃ|Ä‘|CustomerChào|AuthĐăng|overflow-x:\s*visible/);
+    }
+    const editor=themeEditorPage(id); for(const token of ['landing','auth','customer','desktop','tablet','mobile','theme-draft'])assert.match(editor,new RegExp(token));
+  }
+  assert.equal(interfaces,9); assert.equal(signatures.size,8,'all three references and the completed first five must differ');
+  for(const copy of ['Kính pha lê · lớp nổi phát sáng','Emerald đậm · tăng trưởng doanh nghiệp','Creator pop · hồng cam tím năng lượng'])assert.ok(adminOperations.includes(copy));
+  for(const thumb of ['thumb-glass','thumb-business','thumb-creator'])assert.ok(admin.includes(thumb));
+});
