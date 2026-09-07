@@ -115,6 +115,7 @@ export interface AuthStore {
     userId: string,
   ): Promise<{ roles: string[]; permissions: string[] }>;
   recordLogin(input: {
+    siteId: string;
     userId?: string;
     email: string;
     success: boolean;
@@ -123,6 +124,7 @@ export interface AuthStore {
     userAgent?: string;
   }): Promise<void>;
   countRecentFailures(
+    siteId: string,
     email: string,
     ipAddress: string | undefined,
     since: Date,
@@ -289,12 +291,14 @@ export class PrismaAuthStore implements AuthStore {
     return this.db.loginHistory.create({ data: input }).then(() => undefined);
   }
   countRecentFailures(
+    siteId: string,
     email: string,
     ipAddress: string | undefined,
     since: Date,
   ) {
     return this.db.loginHistory.count({
       where: {
+        siteId,
         success: false,
         createdAt: { gte: since },
         OR: [{ email }, ...(ipAddress ? [{ ipAddress }] : [])],

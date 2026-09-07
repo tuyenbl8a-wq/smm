@@ -475,6 +475,7 @@ model Platform {
   name String @unique @db.VarChar(120)
   slug String @unique @db.VarChar(140)
   icon String? @db.VarChar(255)
+  description String? @db.Text
   sortOrder Int @default(0) @map("sort_order")
   active Boolean @default(true)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -488,6 +489,7 @@ model ServiceCategory {
   name String @db.VarChar(160)
   slug String @unique @db.VarChar(180)
   description String? @db.Text
+  icon String? @db.VarChar(2048)
   sortOrder Int @default(0) @map("sort_order")
   active Boolean @default(true)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
@@ -505,6 +507,7 @@ model Service {
   name String @db.VarChar(255)
   source String @default("API") @db.VarChar(20)
   description String? @db.Text
+  icon String? @db.VarChar(2048)
   type String @db.VarChar(80)
   pricingModel String @default("PER_THOUSAND") @map("pricing_model") @db.VarChar(40)
   rate Decimal @db.Decimal(20, 8)
@@ -1168,4 +1171,3 @@ model OrderSiteSettlement {
   @@index([payerUserId, createdAt])
   @@map("order_site_settlements")
 }
-

@@ -2432,15 +2432,15 @@ export class AdminOperationsService {
     });
   }
 
-  async settings() {
+  async settings(siteId?: string) {
     return this.db.setting.findMany({
-      where: { encrypted: false },
+      where: { ...(siteId ? { siteId } : {}), encrypted: false },
       select: { group: true, key: true, value: true, updatedAt: true },
       orderBy: [{ group: "asc" }, { key: "asc" }],
     });
   }
 
-  async updateSettings(actorId: string, input: any) {
+  async updateSettings(actorId: string, input: any, siteId = ROOT_SITE_ID) {
     const allowed = new Set([
         "siteName",
         "metaDescription",
@@ -2592,12 +2592,13 @@ export class AdminOperationsService {
     return this.db.$transaction(async (tx: any) => {
       for (const [key, value] of entries)
         await tx.setting.upsert({
-          where: { siteId_group_key: { siteId: ROOT_SITE_ID, group: "general", key } },
+          where: { siteId_group_key: { siteId, group: "general", key } },
           update: { value, encrypted: false },
-          create: { siteId: ROOT_SITE_ID, group: "general", key, value, encrypted: false },
+          create: { siteId, group: "general", key, value, encrypted: false },
         });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "SETTINGS_UPDATE",
           resource: "Setting",

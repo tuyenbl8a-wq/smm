@@ -5,13 +5,25 @@ import { customerPage } from "./customer.js";
 import { adminPage, isAdminRoute } from "./admin.js";
 import { themeEditorPage, themePreviewPage } from "./theme-builder.js";
 const config = loadConfig(process.env, 3001);
+const browserHost = (value: string | string[] | undefined) => {
+  if (Array.isArray(value)) return null;
+  const host = String(value ?? "").trim().toLowerCase();
+  if (!host || host.length > 253 || /[\s\\/@]/.test(host)) return null;
+  try {
+    const parsed = new URL(`http://${host}`);
+    if (parsed.username || parsed.password || parsed.pathname !== "/") return null;
+    return parsed.host;
+  } catch { return null; }
+};
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", config.appUrl),
     path = url.pathname;
   if (path.startsWith("/api/")) {
     const chunks: Uint8Array[] = []; let size = 0;
     try { for await (const chunk of request as any) { size += chunk.length; if (size > 1_048_576) throw new Error("PAYLOAD_TOO_LARGE"); chunks.push(chunk); } } catch { response.statusCode=413; response.end("Payload too large"); return; }
-    const headers: Record<string,string> = { host: String(request.headers.host ?? "") };
+    const validatedHost = browserHost(request.headers.host);
+    if (!validatedHost) { response.statusCode=400; response.end("Invalid Host header"); return; }
+    const headers: Record<string,string> = { host: validatedHost };
     for (const name of ["content-type","cookie","x-csrf-token","idempotency-key","accept"]) { const value=request.headers[name]; if(typeof value==="string")headers[name]=value; }
     try {
       const upstream=await fetch(new URL(path+url.search, config.apiUrl),{method:request.method ?? "GET",headers,body:["GET","HEAD"].includes(request.method??"GET")?undefined:Buffer.concat(chunks),redirect:"manual",signal:AbortSignal.timeout(15_000)});

@@ -25,6 +25,18 @@ const name = (value: unknown): string => {
     throw new CatalogError("NAME_INVALID", "Name must be 2–255 characters");
   return result;
 };
+const safeImageUrl = (value: unknown, limit = 2048): string | null => {
+  const result = String(value ?? "").trim();
+  if (!result) return null;
+  try {
+    const url = new URL(result);
+    if (!['https:', 'http:'].includes(url.protocol) || result.length > limit)
+      throw new Error();
+    return result;
+  } catch {
+    throw new CatalogError('IMAGE_URL_INVALID', 'Link ảnh phải là URL HTTP hoặc HTTPS hợp lệ');
+  }
+};
 const mutationReason = (value: unknown): string => {
   const result = String(value ?? "").trim();
   if (result.length < 3 || result.length > 500)
@@ -741,6 +753,7 @@ export class CatalogService {
                 String(input.description).trim().slice(0, 5000) || null,
             }
           : {}),
+        ...(input.icon !== undefined ? { icon: safeImageUrl(input.icon) } : {}),
         ...(input.type !== undefined
           ? { type: name(input.type).slice(0, 80) }
           : {}),
@@ -1020,7 +1033,8 @@ export class CatalogService {
     const data = {
       name: name(input.name).slice(0, 120),
       slug: slug(input.slug).slice(0, 140),
-      icon: input.icon ? String(input.icon).trim().slice(0, 255) : null,
+      icon: safeImageUrl(input.icon, 255),
+      description: input.description ? String(input.description).trim().slice(0, 5000) : null,
       sortOrder: integer(input.sortOrder ?? 0, "sortOrder"),
       active: input.active !== false,
     };
@@ -1054,8 +1068,9 @@ export class CatalogService {
             ? { slug: slug(input.slug).slice(0, 140) }
             : {}),
           ...(input.icon !== undefined
-            ? { icon: String(input.icon).trim().slice(0, 255) || null }
+            ? { icon: safeImageUrl(input.icon, 255) }
             : {}),
+          ...(input.description !== undefined ? { description: String(input.description).trim().slice(0, 5000) || null } : {}),
           ...(input.sortOrder !== undefined
             ? { sortOrder: integer(input.sortOrder, "sortOrder") }
             : {}),
@@ -1085,6 +1100,7 @@ export class CatalogService {
       description: input.description
         ? String(input.description).slice(0, 5000)
         : null,
+      icon: safeImageUrl(input.icon),
       sortOrder: integer(input.sortOrder ?? 0, "sortOrder"),
       active: input.active !== false,
     };
@@ -1119,6 +1135,8 @@ export class CatalogService {
         ...(input.sortOrder !== undefined
           ? { sortOrder: integer(input.sortOrder, "sortOrder") }
           : {}),
+        ...(input.description !== undefined ? { description: String(input.description).trim().slice(0, 5000) || null } : {}),
+        ...(input.icon !== undefined ? { icon: safeImageUrl(input.icon) } : {}),
       };
       const item = await tx.serviceCategory.update({ where: { id }, data });
       await this.audit(
@@ -1184,6 +1202,7 @@ export class CatalogService {
           description: input.description
             ? String(input.description).trim().slice(0, 10000)
             : null,
+          icon: safeImageUrl(input.icon),
           type: name(input.type ?? providerService?.type ?? "DEFAULT").slice(
             0,
             80,
