@@ -97,6 +97,49 @@ export class AdminOperationsService {
     this.snapshots = new DailySnapshotService(db);
   }
 
+  async transactions(query: any) {
+    const page = Math.max(1, Number(query.page) || 1),
+      limit = clamp(query.limit),
+      search = optional(query.search),
+      type = optional(query.type),
+      user = optional(query.user ?? query.customer),
+      createdAt = {
+        ...(optional(query.from) ? { gte: new Date(`${query.from}T00:00:00.000Z`) } : {}),
+        ...(optional(query.to) ? { lte: new Date(`${query.to}T23:59:59.999Z`) } : {}),
+      },
+      where: any = {
+        ...(type ? { type } : {}),
+        ...(Object.keys(createdAt).length ? { createdAt } : {}),
+        ...(search
+          ? { OR: [{ id: { contains: search } }, { referenceId: { contains: search } }, { description: { contains: search, mode: "insensitive" } }] }
+          : {}),
+        ...(user
+          ? { wallet: { user: { OR: [{ username: { contains: user, mode: "insensitive" } }, { email: { contains: user, mode: "insensitive" } }] } } }
+          : {}),
+      };
+    const [items, total] = await Promise.all([
+      this.db.walletTransaction.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          id: true,
+          type: true,
+          amount: true,
+          balanceBefore: true,
+          balanceAfter: true,
+          referenceId: true,
+          description: true,
+          createdAt: true,
+          wallet: { select: { user: { select: { userNumber: true, username: true } } } },
+        },
+      }),
+      this.db.walletTransaction.count({ where }),
+    ]);
+    return { items, page, limit, total, pages: Math.ceil(total / limit) };
+  }
+
   async users(query: any) {
     const page = Math.max(1, Number(query.page) || 1),
       limit = clamp(query.limit),

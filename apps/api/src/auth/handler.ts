@@ -933,6 +933,13 @@ export class AuthHandler {
         /^\/api\/v1\/admin\/wallets\/([0-9a-f-]{36})(?:\/transactions|\/mutations)?$/.exec(
           path,
         );
+      if (request.method === "GET" && path === "/api/v1/admin/transactions") {
+        if (!canAccessAdmin(auth.access, "payments.view"))
+          return this.error(response, 403, "PERMISSION_DENIED", "Permission denied");
+        if (!this.admin) throw new Error("Admin operations unavailable");
+        const url = new URL(request.url ?? path, this.config.apiUrl);
+        return this.ok(response, await this.admin.transactions(Object.fromEntries(url.searchParams)));
+      }
       if (request.method === "GET" && adminWallet) {
         if (
           !canAccessAdmin(auth.access, "users.view") &&

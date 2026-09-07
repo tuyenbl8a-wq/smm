@@ -41,6 +41,13 @@ export class DepositService {
       accountName: process.env.BANK_ACCOUNT_NAME ?? "",
     },
     private providers: Record<string, PaymentProvider> = {},
+    private recipientForMethod?: (id: string) => Promise<{
+      bankName: string;
+      bankBin: string;
+      account: string;
+      accountName: string;
+      qrTemplate?: string;
+    } | null>,
   ) {}
   private units(value: unknown) {
     const raw = String(value ?? "0").trim();
@@ -187,24 +194,33 @@ export class DepositService {
       where: { id: x.paymentMethodId },
       select: { code: true, name: true, providerType: true },
     });
-    const isBank = ["VIETQR", "CASSO", "BANK"].includes(
+    const isBank = ["MANUAL", "VIETQR", "CASSO", "BANK"].includes(
         String(paymentMethod?.providerType).toUpperCase(),
       ),
-      bank = typeof this.bank === "function" ? await this.bank() : this.bank;
+      selected = this.recipientForMethod
+        ? await this.recipientForMethod(x.paymentMethodId)
+        : null,
+      fallback = typeof this.bank === "function" ? await this.bank() : this.bank,
+      bank = selected ?? {
+        bankName: fallback.name,
+        bankBin: fallback.bin,
+        account: fallback.account,
+        accountName: fallback.accountName,
+      };
     return {
       ...x,
       paymentMethod,
       payment: isBank
         ? {
-            available: Boolean(bank.bin && bank.account),
-            bankName: bank.name,
-            accountNumber: bank.account,
+            available: Boolean(bank.bankBin && bank.account),
+            bankName: bank.bankName,
+            account: bank.account,
             accountName: bank.accountName,
             transferContent: x.code,
             qrUrl:
-              bank.bin && bank.account
+              bank.bankBin && bank.account
                 ? vietQrUrl(
-                    bank.bin,
+                    bank.bankBin,
                     bank.account,
                     String(x.grossAmount),
                     x.code,

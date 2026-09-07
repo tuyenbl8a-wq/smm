@@ -371,10 +371,10 @@ test("customer and conditional payment workflows are behavioral and secret-safe"
   assert.match(adminOperations, /mode\.value!==['"]AUTO['"]/);
   for (const option of ["limits", "fees", "daily", "bonus"])
     assert.match(adminOperations, new RegExp(`\\['${option}','`));
-  assert.match(adminOperations, /feeFixed\)\|\|nonzero\(initial\.feePercent/);
+  assert.match(adminOperations, /feeFixed\)\|\|nonzero\(draft\.feePercent/);
   assert.match(
     adminOperations,
-    /dailyTransactionLimit\)\|\|nonzero\(initial\.dailyAmountLimit/,
+    /dailyTransactionLimit\)\|\|nonzero\(draft\.dailyAmountLimit/,
   );
   assert.match(adminOperations, /secret\(n,l,extra=.*return input\(n,l,''/);
   assert.match(adminOperations, /Đã cấu hình · để trống để giữ nguyên/);

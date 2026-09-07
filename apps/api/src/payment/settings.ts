@@ -66,6 +66,25 @@ export class PaymentSettingsService {
     });
   }
 
+  /** Returns only recipient fields needed by a customer for one selected method. */
+  async publicRecipient(id: string) {
+    const row = await this.db.paymentMethod.findUnique({
+      where: { id },
+      select: { providerType: true, configEncrypted: true },
+    });
+    if (!row?.configEncrypted) return null;
+    const type = String(row.providerType).toUpperCase();
+    if (!["MANUAL", "VIETQR", "CASSO"].includes(type)) return null;
+    const config = JSON.parse(decryptSecret(row.configEncrypted, this.encryptionKey));
+    return {
+      bankName: String(config.bankName ?? ""),
+      bankBin: String(config.bankBin ?? ""),
+      account: String(config.accountNumber ?? ""),
+      accountName: String(config.accountName ?? ""),
+      qrTemplate: String(config.qrTemplate ?? "compact2"),
+    };
+  }
+
   private decimal(value: unknown, field: string, scale = 8) {
     const raw = String(value ?? "0").trim();
     if (!new RegExp(`^(?:0|[1-9]\\d*)(?:\\.\\d{1,${scale}})?$`).test(raw))
