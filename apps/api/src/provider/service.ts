@@ -11,6 +11,24 @@ export class ProviderConfigError extends Error {
   }
 }
 
+const syncIntervals = new Set([5, 10, 15, 30, 60]);
+function syncInterval(value: unknown): number {
+  if (typeof value !== "number" || !syncIntervals.has(value))
+    throw new ProviderConfigError(
+      "PROVIDER_SYNC_INTERVAL_INVALID",
+      "Sync interval must be 5, 10, 15, 30, or 60 minutes",
+    );
+  return value;
+}
+function strictBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean")
+    throw new ProviderConfigError(
+      "PROVIDER_BOOLEAN_INVALID",
+      `${field} must be a boolean`,
+    );
+  return value;
+}
+
 function importPriceOverride(
   input: any,
   externalId: string,
@@ -628,8 +646,14 @@ export class ProviderService {
       priority: Number(input.priority ?? 100),
       timeoutMs: Number(input.timeoutMs ?? 15000),
       maxRetries: Number(input.maxRetries ?? 3),
-      autoSyncEnabled: Boolean(input.autoSyncEnabled ?? false),
-      syncIntervalMinutes: Number(input.syncIntervalMinutes ?? 15),
+      autoSyncEnabled:
+        input.autoSyncEnabled === undefined
+          ? false
+          : strictBoolean(input.autoSyncEnabled, "autoSyncEnabled"),
+      syncIntervalMinutes:
+        input.syncIntervalMinutes === undefined
+          ? 15
+          : syncInterval(input.syncIntervalMinutes),
     };
     return this.db.$transaction(async (tx: any) => {
       const item = await tx.provider.create({ data });
@@ -697,10 +721,15 @@ export class ProviderService {
         ? { maxRetries: Number(input.maxRetries) }
         : {}),
       ...(input.autoSyncEnabled != null
-        ? { autoSyncEnabled: Boolean(input.autoSyncEnabled) }
+        ? {
+            autoSyncEnabled: strictBoolean(
+              input.autoSyncEnabled,
+              "autoSyncEnabled",
+            ),
+          }
         : {}),
       ...(input.syncIntervalMinutes != null
-        ? { syncIntervalMinutes: Number(input.syncIntervalMinutes) }
+        ? { syncIntervalMinutes: syncInterval(input.syncIntervalMinutes) }
         : {}),
     };
     if (input.apiUrl != null) {

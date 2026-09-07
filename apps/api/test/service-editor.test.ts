@@ -450,3 +450,56 @@ test("clones service disabled with pricing and mapping copied safely", async () 
   assert.equal(state().audits.at(-1).before.id, original.service.id);
   assert.equal(state().audits.at(-1).after.reason, "Tạo biến thể");
 });
+
+test("service editor persists every automatic pricing control with fixed-point values", async () => {
+  const { db, state } = database("MANUAL");
+  await new CatalogService(db).updateServiceEditor("admin-1", "service-1", {
+    source: "MANUAL",
+    reason: "Cập nhật giá tự động",
+    pricingMode: "COST_PLUS_PERCENT_AND_FIXED",
+    defaultMarkupPercent: "12.5",
+    defaultFixedProfit: "0.15",
+    defaultMinProfit: "0.05",
+    autoDecrease: true,
+    safetyAction: "REQUIRE_REVIEW",
+    maxAutomaticIncreasePercent: "25",
+  });
+  assert.deepEqual(
+    {
+      pricingMode: state().service.pricingMode,
+      defaultMarkupPercent: state().service.defaultMarkupPercent,
+      defaultFixedProfit: state().service.defaultFixedProfit,
+      defaultMinProfit: state().service.defaultMinProfit,
+      autoDecrease: state().service.autoDecrease,
+      safetyAction: state().service.safetyAction,
+      maxAutomaticIncreasePercent: state().service.maxAutomaticIncreasePercent,
+    },
+    {
+      pricingMode: "COST_PLUS_PERCENT_AND_FIXED",
+      defaultMarkupPercent: "12.50000000",
+      defaultFixedProfit: "0.15000000",
+      defaultMinProfit: "0.05000000",
+      autoDecrease: true,
+      safetyAction: "REQUIRE_REVIEW",
+      maxAutomaticIncreasePercent: "25.00000000",
+    },
+  );
+  assert.equal(state().audits.length, 1);
+});
+
+test("service editor rejects invalid automatic pricing controls", async () => {
+  for (const input of [
+    { pricingMode: "FLOATING" },
+    { safetyAction: "IGNORE" },
+    { defaultMarkupPercent: "-1" },
+    { defaultFixedProfit: "NaN" },
+    { defaultMinProfit: Infinity },
+    { maxAutomaticIncreasePercent: "bad" },
+    { autoDecrease: "false" },
+  ]) {
+    const { db } = database("MANUAL");
+    await assert.rejects(() => new CatalogService(db).updateServiceEditor("admin-1", "service-1", {
+      source: "MANUAL", reason: "Kiểm tra dữ liệu", ...input,
+    }));
+  }
+});
