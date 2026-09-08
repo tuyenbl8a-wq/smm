@@ -1,5 +1,4 @@
 import { loadConfig } from "@smm/config";
-import { resolveNs } from "node:dns/promises";
 import { createApiServer } from "./server.js";
 import { AuthHandler } from "./auth/handler.js";
 import { PrismaAuthStore } from "./auth/store.js";
@@ -29,6 +28,7 @@ import {
   PanelService,
   PanelManagementService,
 } from "./tenant/panel-service.js";
+import { CloudflarePanelDnsProvider } from "./tenant/cloudflare-panel-dns.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -36,22 +36,16 @@ const dynamicImport = new Function("specifier", "return import(specifier)") as (
 const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
 const orderService = new OrderService(prisma);
-const panelService = new PanelService(prisma);
+const panelDns = new CloudflarePanelDnsProvider({
+  apiToken: process.env.CLOUDFLARE_API_TOKEN ?? "",
+  accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+  routingTarget: process.env.PANEL_ROUTING_TARGET ?? "",
+});
+const panelService = new PanelService(prisma, panelDns);
 const panelManagement = new PanelManagementService(
   prisma,
   panelService,
-  async (hostname, required) => {
-    try {
-      const actual = new Set(
-        (await resolveNs(hostname)).map((value) =>
-          value.toLowerCase().replace(/\.$/, ""),
-        ),
-      );
-      return required.every((value) => actual.has(value));
-    } catch {
-      return false;
-    }
-  },
+  panelDns,
 );
 const lifecycleService = new OrderLifecycleService(prisma);
 const resellerService = new ResellerService(

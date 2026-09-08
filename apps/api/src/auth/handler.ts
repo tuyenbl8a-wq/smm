@@ -21,7 +21,7 @@ import { PaymentSettingsService } from "../payment/settings.js";
 import { stringifyJson } from "../http/json.js";
 import { PromotionError, PromotionService } from "../promotion/service.js";
 import { endpointFromUrl, probeTcp } from "@smm/health";
-import type { TenantSite } from "../tenant/context.js";
+import { TenantError, type TenantSite } from "../tenant/context.js";
 import type { PanelManagementService } from "../tenant/panel-service.js";
 import { ROOT_SITE_ID } from "../tenant/context.js";
 import {
@@ -255,6 +255,24 @@ export class AuthHandler {
           ),
           201,
         );
+      }
+      const rentalRoute =
+        /^\/api\/v1\/customer\/panel-rentals\/([0-9a-f-]+)(?:\/(verify))?$/.exec(
+          path,
+        );
+      if (this.panels && rentalRoute) {
+        const [, rentalId, action] = rentalRoute;
+        if (request.method === "GET" && !action)
+          return this.ok(
+            response,
+            await this.panels.rentalIntent(tenant.id, auth.user.id, rentalId!),
+          );
+        this.csrf(request, auth.rawToken);
+        if (request.method === "POST" && action === "verify")
+          return this.ok(
+            response,
+            await this.panels.activate(tenant.id, auth.user.id, rentalId!),
+          );
       }
       const panelRoute =
         /^\/api\/v1\/customer\/panels\/(\d+)(?:\/(renew|auto-renew|branding|domains))?(?:\/([^/]+)(?:\/(verify|primary))?)?$/.exec(
@@ -2266,6 +2284,17 @@ export class AuthHandler {
               : 422;
         return this.error(response, status, error.code, error.message);
       }
+      if (error instanceof TenantError)
+        return this.error(
+          response,
+          error.code === "PAYMENT_REQUIRED"
+            ? 402
+            : error.code.endsWith("NOT_FOUND")
+              ? 404
+              : 422,
+          error.code,
+          error.message,
+        );
       if (
         error instanceof AdminOperationError ||
         error instanceof SupportError ||

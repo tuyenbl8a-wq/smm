@@ -558,8 +558,8 @@ test("panel customer and admin routes are wired", () => {
   ])
     assert.match(admin, new RegExp(path.replaceAll("/", "\\/")));
   assert.ok(customer.indexOf("ĐẶT HÀNG") < customer.indexOf("THUÊ PANEL"));
-  assert.match(customer, /ns1\.dichvu1st\.com/);
-  assert.match(customer, /ns2\.dichvu1st\.com/);
+  assert.doesNotMatch(customer, /ns[12]\.dichvu1st\.com/);
+  assert.match(customer, /result\.nameservers/);
   assert.match(customer, /Không cần cấu hình CNAME hoặc TXT/);
   assert.match(customer, /auto-renew/);
 });
@@ -867,9 +867,10 @@ test("final reference pair completes exactly ten unique three-scope architecture
   assert.match(admin, /\.thumb-stage/);
 });
 
-test("reference themes provide 10x3 real shell architectures without document wrappers", async () => {
-  const { referenceThemeCompositions, renderReferenceComposition } =
-    await import("../dist/themes.js");
+test("reference themes provide 30 concrete renderers without document wrappers", async () => {
+  const { renderReferenceComposition } = await import("../dist/themes.js");
+  const { referenceRenderers } =
+    await import("../dist/reference-theme-renderers.js");
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const ids = [
     "SOFT_BEIGE_PREMIUM",
@@ -886,7 +887,6 @@ test("reference themes provide 10x3 real shell architectures without document wr
   for (const scope of ["landing", "auth", "customer"]) {
     const fingerprints = new Set();
     for (const id of ids) {
-      const expected = referenceThemeCompositions[id][scope];
       const shell =
         scope === "landing" ? "hero" : scope === "auth" ? "auth" : "customer";
       const direct = renderReferenceComposition(
@@ -895,13 +895,19 @@ test("reference themes provide 10x3 real shell architectures without document wr
         `<div class="${shell}"><button>safe</button></div>`,
       );
       const html = fullPageThemePreview("", id, scope);
-      assert.match(direct, new RegExp(`data-theme-composition="${expected}"`));
-      assert.match(html, new RegExp(`data-theme-composition="${expected}"`));
+      assert.match(direct, /data-renderer="[^"]+"/);
+      assert.match(html, /data-renderer="[^"]+"/);
+      const renderer = /data-renderer="([^"]+)"/.exec(html)?.[1];
+      const regions = [...html.matchAll(/class="theme-region ([^"]+)"/g)].map(
+        (match) => match[1],
+      );
+      assert.equal(regions.length, 4);
+      assert.equal(new Set(regions).size, 4);
       assert.doesNotMatch(
         html,
         /data-composition-layer|data-theme-runtime-root|data-original-content/,
       );
-      fingerprints.add(expected);
+      fingerprints.add(`${renderer}|${regions.join("|")}`);
     }
     assert.equal(
       fingerprints.size,
@@ -909,11 +915,14 @@ test("reference themes provide 10x3 real shell architectures without document wr
       scope + " architectures must be 10/10 unique",
     );
   }
+  assert.equal(
+    new Set(ids.flatMap((id) => Object.values(referenceRenderers[id]))).size,
+    30,
+  );
   const runtime = await readFile(
     new URL("../dist/themes.js", import.meta.url),
     "utf8",
   );
-  assert.match(runtime, /shell\.dataset\.themeComposition/);
   assert.doesNotMatch(runtime, /while\s*\(document\.body\.firstChild\)/);
 });
 
@@ -942,4 +951,52 @@ test("admin forms and operational orders expose polished real contracts", () => 
   ])
     assert.match(admin, new RegExp(token));
   assert.match(admin, /Đã sao chép.*mã đơn NCC/);
+});
+
+test("acceptance UI audit covers every requested admin and customer surface", () => {
+  const adminPaths = [
+    "/admin/staff",
+    "/admin/platforms",
+    "/admin/categories",
+    "/admin/services",
+    "/admin/providers",
+    "/admin/price-groups",
+    "/admin/pricing",
+    "/admin/payment-methods",
+    "/admin/settings",
+    "/admin/panel-plans",
+    "/admin/panels",
+    "/admin/panel-subscriptions",
+    "/admin/orders",
+  ];
+  const customerPaths = [
+    "/dashboard",
+    "/orders/new",
+    "/orders/bulk",
+    "/orders",
+    "/services",
+    "/wallet",
+    "/deposit",
+    "/transactions",
+    "/panel-plans",
+    "/panels",
+    "/affiliate",
+    "/api",
+    "/support",
+    "/notifications",
+    "/account",
+  ];
+  for (const path of adminPaths)
+    assert.match(admin, new RegExp(path.replaceAll("/", "\\/")));
+  for (const path of customerPaths)
+    assert.match(customer, new RegExp(path.replaceAll("/", "\\/")));
+  const allUi = page + components + customer + client + admin + adminOperations;
+  assert.doesNotMatch(allUi, /TÃ|Ä‘|Ã©|Â /);
+  assert.match(admin, /\.switch-input\{appearance:none;width:44px/);
+  assert.match(admin, /payment-editor.*overflow:hidden/);
+  assert.match(admin, /modal-body.*overflow-y:auto/);
+  assert.match(admin, /overflow-wrap:break-word/);
+  assert.match(admin, /@media\(max-width:780px\)/);
+  assert.match(customer, /role="alert"/);
+  assert.match(client, /PAYMENT_REQUIRED/);
 });

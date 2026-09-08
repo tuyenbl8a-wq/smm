@@ -4,6 +4,7 @@ const randomUUID = () => {
   return `${x.slice(0, 8)}-${x.slice(8, 12)}-4${x.slice(13, 16)}-8${x.slice(17, 20)}-${x.slice(20)}`;
 };
 import { normalizeHostname, TenantError } from "./context.js";
+import type { PanelDnsProvider } from "./panel-dns-provider.js";
 const SCALE = 100_000_000n;
 const units = (v: unknown) => {
   const m = /^(\d{1,12})(?:\.(\d{1,8}))?$/.exec(String(v));
@@ -23,12 +24,9 @@ const slug = (v: unknown) => {
 export class PanelService {
   constructor(
     private readonly db: any,
-    private readonly rootDomain = "dichvu1st.com",
-    private readonly nameservers = [
-      "ns1.dichvu1st.com",
-      "ns2.dichvu1st.com",
-    ] as const,
+    private readonly dns: PanelDnsProvider,
   ) {}
+
   async rent(
     parentSiteId: string,
     renterUserId: string,
@@ -40,170 +38,248 @@ export class PanelService {
         "IDEMPOTENCY_KEY_INVALID",
         "Idempotency key required",
       );
-    const txKey = `panel-rent:${parentSiteId}:${renterUserId}:${key}`.slice(
-        0,
-        128,
-      ),
-      existing = await this.db.walletTransaction.findUnique({
-        where: { idempotencyKey: txKey },
+    const requestKey =
+      `panel-rent:${parentSiteId}:${renterUserId}:${key}`.slice(0, 128);
+    const existing = await this.db.panelRentalIntent.findUnique({
+      where: { requestKey },
+    });
+    if (existing) return this.intentResult(existing);
+    const [parent, plan, renter] = await Promise.all([
+      this.db.site.findUnique({ where: { id: parentSiteId } }),
+      this.db.panelRentalPlan.findFirst({
+        where: {
+          id: String(input.planId),
+          sellerSiteId: parentSiteId,
+          active: true,
+        },
+      }),
+      this.db.user.findFirst({
+        where: { id: renterUserId, siteId: parentSiteId, status: "ACTIVE" },
+      }),
+    ]);
+    if (!parent || parent.status !== "ACTIVE")
+      throw new TenantError("PANEL_SUSPENDED", "Seller panel unavailable");
+    if (!plan || !renter)
+      throw new TenantError("PANEL_PLAN_UNAVAILABLE", "Plan unavailable");
+    if (!plan.allowCustomDomain)
+      throw new TenantError(
+        "CUSTOM_DOMAIN_NOT_ALLOWED",
+        "Plan does not allow custom domains",
+      );
+    const depth = parent.depth + 1;
+    if (depth > plan.maxDepth)
+      throw new TenantError("PANEL_MAX_DEPTH", "Maximum depth reached");
+    const count = await this.db.site.count({
+      where: { parentSiteId, deletedAt: null, status: { not: "ARCHIVED" } },
+    });
+    if (count >= plan.maxDirectChildren)
+      throw new TenantError("PANEL_CHILD_LIMIT", "Direct child limit reached");
+    const hostname = normalizeHostname(String(input.domain));
+    const panelSlug = slug(input.slug ?? hostname.split(".")[0]);
+    const name = String(input.name ?? "").trim();
+    if (name.length < 2 || name.length > 160)
+      throw new TenantError("PANEL_NAME_INVALID", "Invalid panel name");
+    const zone = await this.dns.createZone(hostname);
+    try {
+      const intent = await this.db.panelRentalIntent.create({
+        data: {
+          sellerSiteId: parentSiteId,
+          renterUserId,
+          planId: plan.id,
+          name,
+          slug: panelSlug,
+          hostname,
+          providerZoneId: zone.zoneId,
+          assignedNameservers: zone.nameservers,
+          status: "PENDING_DNS",
+          autoRenew: Boolean(input.autoRenew),
+          requestKey,
+          activationKey: `panel-activate:${randomUUID()}`,
+          expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+        },
       });
-    if (existing) {
-      const site = await this.db.site.findUnique({
-        where: { id: String(existing.referenceId) },
-      });
-      return {
-        site,
-        subscription: await this.db.panelSubscription.findFirst({
-          where: { siteId: site.id },
-        }),
-      };
+      return this.intentResult(intent);
+    } catch (error) {
+      await this.dns.deleteZone(zone.zoneId).catch(() => undefined);
+      throw error;
     }
-    return this.db.$transaction(async (tx: any) => {
-      const [parent, plan, renter] = await Promise.all([
-        tx.site.findUnique({ where: { id: parentSiteId } }),
-        tx.panelRentalPlan.findFirst({
-          where: {
-            id: String(input.planId),
-            sellerSiteId: parentSiteId,
-            active: true,
-          },
-        }),
-        tx.user.findFirst({
-          where: { id: renterUserId, siteId: parentSiteId, status: "ACTIVE" },
-        }),
-      ]);
-      if (!parent || parent.status !== "ACTIVE")
-        throw new TenantError("PANEL_SUSPENDED", "Seller panel unavailable");
-      if (!plan || !renter)
-        throw new TenantError("PANEL_PLAN_UNAVAILABLE", "Plan unavailable");
-      if (parent.depth > 0) {
-        const own = await tx.panelSubscription.findFirst({
-            where: { siteId: parent.id, status: "ACTIVE" },
-          }),
-          ownPlan = own
-            ? await tx.panelRentalPlan.findUnique({ where: { id: own.planId } })
-            : null;
-        if (!ownPlan?.allowPanelResale)
-          throw new TenantError(
-            "PANEL_RESALE_NOT_ALLOWED",
-            "Panel resale is not allowed",
-          );
-        if (
-          plan.maxDepth > ownPlan.maxDepth ||
-          (plan.allowCustomDomain && !ownPlan.allowCustomDomain) ||
-          (plan.allowApi && !ownPlan.allowApi) ||
-          (plan.allowThemes && !ownPlan.allowThemes) ||
-          (plan.allowPanelResale && !ownPlan.allowPanelResale)
-        )
-          throw new TenantError(
-            "PANEL_PRIVILEGE_ESCALATION",
-            "Child plan exceeds seller entitlement",
-          );
-      }
-      const depth = parent.depth + 1;
-      if (depth > plan.maxDepth)
-        throw new TenantError("PANEL_MAX_DEPTH", "Maximum depth reached");
-      const count = await tx.site.count({
-        where: { parentSiteId, deletedAt: null, status: { not: "ARCHIVED" } },
+  }
+
+  async rentalIntent(sellerSiteId: string, renterUserId: string, id: string) {
+    const intent = await this.db.panelRentalIntent.findFirst({
+      where: { id, sellerSiteId, renterUserId },
+    });
+    if (!intent)
+      throw new TenantError("PANEL_RENTAL_NOT_FOUND", "Panel rental not found");
+    return this.intentResult(intent);
+  }
+
+  async activate(sellerSiteId: string, renterUserId: string, id: string) {
+    const initial = await this.db.panelRentalIntent.findFirst({
+      where: { id, sellerSiteId, renterUserId },
+    });
+    if (!initial)
+      throw new TenantError("PANEL_RENTAL_NOT_FOUND", "Panel rental not found");
+    if (initial.status === "ACTIVATED") {
+      const site = await this.db.site.findUnique({
+        where: { id: initial.activatedSiteId },
       });
-      if (count >= plan.maxDirectChildren)
+      return { activated: true, site, charged: false };
+    }
+    if (new Date(initial.expiresAt) <= new Date())
+      throw new TenantError(
+        "PANEL_RENTAL_EXPIRED",
+        "Panel rental request expired",
+      );
+    const [zoneStatus, assigned] = await Promise.all([
+      this.dns.getZoneStatus(initial.providerZoneId),
+      this.dns.getAssignedNameservers(initial.providerZoneId),
+    ]);
+    const expected = this.nameserversOf(initial.assignedNameservers);
+    if (
+      zoneStatus !== "ACTIVE" ||
+      !expected.every((ns) => assigned.includes(ns))
+    )
+      throw new TenantError(
+        "DOMAIN_VERIFICATION_FAILED",
+        "Nameserver delegation is not active",
+      );
+    await this.dns.ensurePanelRouting(initial.providerZoneId, initial.hostname);
+    const result = await this.db.$transaction(async (tx: any) => {
+      await tx.$queryRawUnsafe?.(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        initial.id,
+      );
+      const intent = await tx.panelRentalIntent.findUnique({
+        where: { id: initial.id },
+      });
+      if (intent.status === "ACTIVATED") {
+        return {
+          activated: true,
+          site: await tx.site.findUnique({
+            where: { id: intent.activatedSiteId },
+          }),
+          charged: false,
+        };
+      }
+      const [parent, plan] = await Promise.all([
+        tx.site.findUnique({ where: { id: sellerSiteId } }),
+        tx.panelRentalPlan.findUnique({ where: { id: intent.planId } }),
+      ]);
+      if (!parent || parent.status !== "ACTIVE" || !plan?.active)
         throw new TenantError(
-          "PANEL_CHILD_LIMIT",
-          "Direct child limit reached",
+          "PANEL_PLAN_UNAVAILABLE",
+          "Panel plan is unavailable",
         );
-      const requestedDomain = input.domain
-          ? normalizeHostname(String(input.domain))
-          : null,
-        panelSlug = slug(input.slug ?? requestedDomain?.split(".")[0]),
-        hostname =
-          requestedDomain ??
-          normalizeHostname(`${panelSlug}.${this.rootDomain}`),
-        siteId = randomUUID(),
-        price = decimal(units(plan.price));
-      if (requestedDomain && !plan.allowCustomDomain)
-        throw new TenantError(
-          "CUSTOM_DOMAIN_NOT_ALLOWED",
-          "Plan does not allow custom domains",
-        );
-      const rows = await tx.$queryRawUnsafe(
+      const price = decimal(units(plan.price));
+      const wallets = await tx.$queryRawUnsafe(
         'UPDATE "wallets" SET "balance"="balance"-$1::numeric,"version"="version"+1,"updated_at"=CURRENT_TIMESTAMP WHERE "user_id"=$2::uuid AND "site_id"=$3::uuid AND "balance">=$1::numeric RETURNING "id","balance"+$1::numeric AS "before","balance" AS "after"',
         price,
         renterUserId,
-        parentSiteId,
+        sellerSiteId,
       );
-      if (!rows[0])
-        throw new TenantError("INSUFFICIENT_BALANCE", "Insufficient balance");
-      const now = new Date(),
-        expiresAt = new Date(now.getTime() + plan.billingDays * 86400000),
-        graceUntil = new Date(expiresAt.getTime() + 7 * 86400000);
+      if (!wallets[0]) {
+        await tx.panelRentalIntent.update({
+          where: { id: intent.id },
+          data: { status: "PAYMENT_REQUIRED" },
+        });
+        return { paymentRequired: true };
+      }
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + plan.billingDays * 86_400_000);
+      const siteId = randomUUID();
       const site = await tx.site.create({
         data: {
           id: siteId,
-          parentSiteId,
+          parentSiteId: sellerSiteId,
           ownerUserId: renterUserId,
-          name: String(input.name).trim(),
-          slug: panelSlug,
-          status: requestedDomain ? "PENDING" : "ACTIVE",
-          depth,
+          name: intent.name,
+          slug: intent.slug,
+          status: "ACTIVE",
+          depth: parent.depth + 1,
         },
       });
-      const domain = await tx.siteDomain.create({
+      await tx.siteDomain.create({
         data: {
           siteId,
-          hostname,
-          type: requestedDomain ? "CUSTOM" : "SUBDOMAIN",
-          status: requestedDomain ? "PENDING" : "VERIFIED",
-          isPrimary: !requestedDomain,
+          hostname: intent.hostname,
+          type: "CUSTOM",
+          status: "VERIFIED",
+          isPrimary: true,
           verificationToken: randomUUID(),
-          verifiedAt: requestedDomain ? null : now,
+          verifiedAt: now,
         },
       });
-      const subscription = await tx.panelSubscription.create({
+      await tx.panelSubscription.create({
         data: {
           siteId,
-          sellerSiteId: parentSiteId,
+          sellerSiteId,
           planId: plan.id,
           renterUserId,
           status: "ACTIVE",
           startedAt: now,
           expiresAt,
-          graceUntil,
-          autoRenew: Boolean(input.autoRenew),
+          graceUntil: new Date(expiresAt.getTime() + 7 * 86_400_000),
+          autoRenew: intent.autoRenew,
         },
       });
       await tx.walletTransaction.create({
         data: {
-          siteId: parentSiteId,
-          walletId: rows[0].id,
+          siteId: sellerSiteId,
+          walletId: wallets[0].id,
           userId: renterUserId,
           type: "PANEL_RENT",
           amount: `-${price}`,
-          balanceBefore: rows[0].before,
-          balanceAfter: rows[0].after,
+          balanceBefore: wallets[0].before,
+          balanceAfter: wallets[0].after,
           referenceId: siteId,
-          idempotencyKey: txKey,
+          idempotencyKey: intent.activationKey,
           description: `Panel rental: ${plan.code}`,
         },
       });
+      await tx.panelRentalIntent.update({
+        where: { id: intent.id },
+        data: { status: "ACTIVATED", activatedSiteId: siteId },
+      });
       await tx.auditLog.create({
         data: {
-          siteId: parentSiteId,
+          siteId: sellerSiteId,
           actorId: renterUserId,
-          action: "PANEL_RENT",
+          action: "PANEL_RENT_ACTIVATE",
           resource: "Site",
           resourceId: siteId,
-          after: { planId: plan.id, depth, expiresAt, hostname },
+          after: {
+            planId: plan.id,
+            hostname: intent.hostname,
+            providerZoneId: intent.providerZoneId,
+          },
         },
       });
-      return {
-        site,
-        subscription,
-        domain: hostname,
-        domainId: domain.id,
-        nameservers: this.nameservers,
-      };
+      return { activated: true, site, charged: true };
     });
+    if (result.paymentRequired)
+      throw new TenantError("PAYMENT_REQUIRED", "Insufficient wallet balance");
+    return result;
   }
+
+  private intentResult(intent: any) {
+    return {
+      rental: {
+        id: intent.id,
+        status: intent.status,
+        domain: intent.hostname,
+        expiresAt: intent.expiresAt,
+      },
+      nameservers: this.nameserversOf(intent.assignedNameservers),
+    };
+  }
+
+  private nameserversOf(value: unknown): string[] {
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  }
+
   async renew(siteId: string, renterUserId: string, key: string) {
     const txKey = `panel-renew:${siteId}:${key}`.slice(0, 128);
     return this.db.$transaction(async (tx: any) => {
@@ -273,14 +349,7 @@ export class PanelManagementService {
   constructor(
     private readonly db: any,
     private readonly rental: PanelService,
-    private readonly verifyNameservers: (
-      hostname: string,
-      nameservers: readonly string[],
-    ) => Promise<boolean> = async () => false,
-    private readonly nameservers = [
-      "ns1.dichvu1st.com",
-      "ns2.dichvu1st.com",
-    ] as const,
+    private readonly dns: PanelDnsProvider,
   ) {}
   plans(siteId: string) {
     return this.db.panelRentalPlan.findMany({
@@ -371,6 +440,8 @@ export class PanelManagementService {
           isPrimary: true,
           verifiedAt: true,
           verificationToken: true,
+          providerZoneId: true,
+          assignedNameservers: true,
         },
       }),
       subscriptions: subscriptions.map((x: any) => ({ ...x, plan })),
@@ -382,6 +453,12 @@ export class PanelManagementService {
   }
   rent(siteId: string, userId: string, input: any, key: string) {
     return this.rental.rent(siteId, userId, input, key);
+  }
+  rentalIntent(siteId: string, userId: string, id: string) {
+    return this.rental.rentalIntent(siteId, userId, id);
+  }
+  activate(siteId: string, userId: string, id: string) {
+    return this.rental.activate(siteId, userId, id);
   }
   async renew(siteId: string, userId: string, siteNumber: string, key: string) {
     const panel = await this.owned(siteId, userId, siteNumber);
@@ -447,19 +524,26 @@ export class PanelManagementService {
         "CUSTOM_DOMAIN_NOT_ALLOWED",
         "Plan does not allow custom domains",
       );
-    const hostname = normalizeHostname(String(value)),
-      token = randomBytes(24).toString("base64url"),
-      domain = await this.db.siteDomain.create({
+    const hostname = normalizeHostname(String(value));
+    const zone = await this.dns.createZone(hostname);
+    try {
+      const domain = await this.db.siteDomain.create({
         data: {
           siteId: panel.id,
           hostname,
           type: "CUSTOM",
           status: "PENDING",
           isPrimary: false,
-          verificationToken: token,
+          verificationToken: randomBytes(24).toString("base64url"),
+          providerZoneId: zone.zoneId,
+          assignedNameservers: zone.nameservers,
         },
       });
-    return { ...domain, nameservers: this.nameservers };
+      return { ...domain, nameservers: zone.nameservers };
+    } catch (error) {
+      await this.dns.deleteZone(zone.zoneId).catch(() => undefined);
+      throw error;
+    }
   }
   async verifyDomain(
     siteId: string,
@@ -472,11 +556,24 @@ export class PanelManagementService {
         where: { id, siteId: panel.id, type: "CUSTOM", status: "PENDING" },
       });
     if (!domain) throw new TenantError("DOMAIN_NOT_FOUND", "Domain not found");
-    if (!(await this.verifyNameservers(domain.hostname, this.nameservers)))
+    if (!domain.providerZoneId)
+      throw new TenantError("DOMAIN_ZONE_MISSING", "DNS zone is missing");
+    const expected = Array.isArray(domain.assignedNameservers)
+      ? domain.assignedNameservers
+      : [];
+    const [zoneStatus, assigned] = await Promise.all([
+      this.dns.getZoneStatus(domain.providerZoneId),
+      this.dns.getAssignedNameservers(domain.providerZoneId),
+    ]);
+    if (
+      zoneStatus !== "ACTIVE" ||
+      !expected.every((nameserver: string) => assigned.includes(nameserver))
+    )
       throw new TenantError(
         "DOMAIN_VERIFICATION_FAILED",
-        `Nameserver must be ${this.nameservers.join(" and ")}`,
+        "Nameserver delegation is not active",
       );
+    await this.dns.ensurePanelRouting(domain.providerZoneId, domain.hostname);
     return this.db.$transaction(async (tx: any) => {
       await tx.siteDomain.updateMany({
         where: { siteId: panel.id },
@@ -538,12 +635,17 @@ export class PanelManagementService {
     id: string,
   ) {
     const panel = await this.owned(siteId, userId, siteNumber),
+      domain = await this.db.siteDomain.findFirst({
+        where: { id, siteId: panel.id, type: "CUSTOM" },
+      }),
       changed = await this.db.siteDomain.updateMany({
         where: { id, siteId: panel.id, type: "CUSTOM" },
         data: { status: "DISABLED", isPrimary: false },
       });
     if (!changed.count)
       throw new TenantError("DOMAIN_NOT_FOUND", "Domain not found");
+    if (domain?.providerZoneId)
+      await this.dns.deleteZone(domain.providerZoneId).catch(() => undefined);
     return { disabled: true };
   }
   async adminPanels(query: URLSearchParams) {
