@@ -257,7 +257,7 @@ export class AuthHandler {
         );
       }
       const panelRoute =
-        /^\/api\/v1\/customer\/panels\/(\d+)(?:\/(renew|branding|domains))?(?:\/([^/]+)(?:\/(verify|primary))?)?$/.exec(
+        /^\/api\/v1\/customer\/panels\/(\d+)(?:\/(renew|auto-renew|branding|domains))?(?:\/([^/]+)(?:\/(verify|primary))?)?$/.exec(
           path,
         );
       if (this.panels && panelRoute) {
@@ -282,6 +282,18 @@ export class AuthHandler {
               String(this.header(request, "idempotency-key") ?? ""),
             ),
           );
+        if (request.method === "PATCH" && action === "auto-renew") {
+          const body = await this.body(request);
+          return this.ok(
+            response,
+            await this.panels.autoRenew(
+              tenant.id,
+              auth.user.id,
+              number!,
+              body.enabled,
+            ),
+          );
+        }
         if (request.method === "PATCH" && action === "branding")
           return this.ok(
             response,

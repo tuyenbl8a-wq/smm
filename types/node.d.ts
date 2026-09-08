@@ -119,3 +119,7 @@ declare module "node:fs/promises" {
   export function readFile(...args: any[]): Promise<any>;
   export function writeFile(...args: any[]): Promise<any>;
 }
+
+declare module "node:dns/promises" {
+  export function resolveNs(hostname: string): Promise<string[]>;
+}

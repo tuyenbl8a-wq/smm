@@ -1,4 +1,5 @@
 import { loadConfig } from "@smm/config";
+import { resolveNs } from "node:dns/promises";
 import { createApiServer } from "./server.js";
 import { AuthHandler } from "./auth/handler.js";
 import { PrismaAuthStore } from "./auth/store.js";
@@ -24,7 +25,10 @@ import { LocalStorage } from "./storage/local.js";
 import { S3Storage } from "./storage/s3.js";
 import { PromotionService } from "./promotion/service.js";
 import { TenantResolver } from "./tenant/context.js";
-import { PanelService, PanelManagementService } from "./tenant/panel-service.js";
+import {
+  PanelService,
+  PanelManagementService,
+} from "./tenant/panel-service.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -33,7 +37,22 @@ const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
 const orderService = new OrderService(prisma);
 const panelService = new PanelService(prisma);
-const panelManagement = new PanelManagementService(prisma, panelService);
+const panelManagement = new PanelManagementService(
+  prisma,
+  panelService,
+  async (hostname, required) => {
+    try {
+      const actual = new Set(
+        (await resolveNs(hostname)).map((value) =>
+          value.toLowerCase().replace(/\.$/, ""),
+        ),
+      );
+      return required.every((value) => actual.has(value));
+    } catch {
+      return false;
+    }
+  },
+);
 const lifecycleService = new OrderLifecycleService(prisma);
 const resellerService = new ResellerService(
   prisma,
@@ -58,7 +77,10 @@ const attachmentStorage = s3Configured
         throw new Error("DURABLE_STORAGE_REQUIRED");
       })()
     : new LocalStorage(process.env.ATTACHMENT_PATH ?? ".data/attachments");
-const adminOperations = new AdminOperationsService(prisma, config.encryptionKey);
+const adminOperations = new AdminOperationsService(
+  prisma,
+  config.encryptionKey,
+);
 const binanceProvider = new BinanceMerchantProvider(
   "https://bpay.binanceapi.com",
   process.env.BINANCE_MERCHANT_API_KEY ?? "",
@@ -76,9 +98,14 @@ const server = createApiServer(
     orderService,
     lifecycleService,
     resellerService,
-    new DepositService(prisma, () => paymentSettings.publicBank(), {
-      BINANCE: binanceProvider,
-    }, (id) => paymentSettings.publicRecipient(id)),
+    new DepositService(
+      prisma,
+      () => paymentSettings.publicBank(),
+      {
+        BINANCE: binanceProvider,
+      },
+      (id) => paymentSettings.publicRecipient(id),
+    ),
     new SupportService(prisma),
     adminOperations,
     paymentSettings,
@@ -94,7 +121,15 @@ const server = createApiServer(
     paymentSettings.webhookToken(process.env.CASSO_WEBHOOK_SECURE_TOKEN ?? ""),
   ),
   () => adminOperations.maintenance(),
-  new TenantResolver(prisma, new Set([config.appUrl.hostname, config.apiUrl.hostname, "dichvu1st.com", "www.dichvu1st.com"])),
+  new TenantResolver(
+    prisma,
+    new Set([
+      config.appUrl.hostname,
+      config.apiUrl.hostname,
+      "dichvu1st.com",
+      "www.dichvu1st.com",
+    ]),
+  ),
 );
 server.listen(config.port, config.host, () => {
   console.log(

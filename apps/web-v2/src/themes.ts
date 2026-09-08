@@ -442,59 +442,63 @@ export const legacyThemeAliases: Record<string, ThemeId> = {
 };
 
 export type ThemeCompositionScope = "landing" | "auth" | "customer";
-type Composition = Record<ThemeCompositionScope, string[]>;
-/** Authored element hierarchies shared by runtime and preview; these are not CSS variant labels. */
+type Composition = Record<ThemeCompositionScope, string>;
+/**
+ * Authored page architectures shared by runtime and preview. These names describe
+ * real layouts; they are applied to the existing page shell instead of wrapping
+ * the complete document in inert elements.
+ */
 export const referenceThemeCompositions: Partial<Record<ThemeId, Composition>> =
   {
     SOFT_BEIGE_PREMIUM: {
-      landing: ["main", "article", "section"],
-      auth: ["main", "aside", "article", "section"],
-      customer: ["main", "section", "article", "section"],
+      landing: "beige-editorial-estate",
+      auth: "beige-hospitality-suite",
+      customer: "beige-executive-ledger",
     },
     JAPANESE_ZEN: {
-      landing: ["main", "section", "aside", "section"],
-      auth: ["main", "article", "section", "aside"],
-      customer: ["main", "aside", "section", "article"],
+      landing: "zen-garden-pavilion",
+      auth: "zen-shoji-retreat",
+      customer: "zen-quiet-ledger",
     },
     DARK_LUXURY: {
-      landing: ["main", "header", "article", "footer"],
-      auth: ["main", "section", "article", "footer"],
-      customer: ["main", "header", "section", "aside"],
+      landing: "noir-monument-gallery",
+      auth: "noir-private-suite",
+      customer: "noir-executive-console",
     },
     PREMIUM_CORPORATE: {
-      landing: ["main", "nav", "section", "article"],
-      auth: ["main", "header", "section", "article", "footer"],
-      customer: ["main", "nav", "article", "aside"],
+      landing: "corporate-architectural-split",
+      auth: "corporate-trust-portal",
+      customer: "corporate-kpi-board",
     },
     CYBER_NEON: {
-      landing: ["main", "aside", "section", "nav", "article"],
-      auth: ["main", "nav", "article", "section"],
-      customer: ["main", "aside", "article", "footer"],
+      landing: "neon-metropolis-stage",
+      auth: "neon-identity-portal",
+      customer: "neon-telemetry-grid",
     },
     GLASSMORPHISM: {
-      landing: ["main", "section", "figure", "article"],
-      auth: ["main", "figure", "section", "article"],
-      customer: ["main", "section", "figure", "aside"],
+      landing: "glass-orbital-showcase",
+      auth: "glass-floating-gateway",
+      customer: "glass-prismatic-workspace",
     },
     EMERALD_BUSINESS: {
-      landing: ["main", "header", "section", "aside", "footer"],
-      auth: ["main", "aside", "section", "footer"],
-      customer: ["main", "nav", "section", "footer"],
+      landing: "emerald-maritime-briefing",
+      auth: "emerald-secure-harbor",
+      customer: "emerald-operations-deck",
     },
     SOCIAL_CREATOR: {
-      landing: ["main", "article", "aside", "figure"],
-      auth: ["main", "section", "aside", "figure"],
-      customer: ["main", "header", "article", "figure"],
+      landing: "creator-collage-campaign",
+      auth: "creator-studio-pass",
+      customer: "creator-performance-studio",
     },
     EDITORIAL_BRUTALIST: {
-      landing: ["main", "nav", "article", "section", "footer"],
-      auth: ["main", "header", "article", "aside"],
-      customer: ["main", "nav", "aside", "article", "footer"],
+      landing: "brutalist-poster-grid",
+      auth: "brutalist-access-sheet",
+      customer: "brutalist-data-newsroom",
     },
     AI_FUTURISTIC: {
-      landing: ["main", "header", "nav", "section", "aside"],
-      auth: ["main", "nav", "section", "aside", "footer"],
-      customer: ["main", "header", "aside", "section", "footer"],
+      landing: "ai-neural-orbit",
+      auth: "ai-cognitive-gateway",
+      customer: "ai-intelligence-console",
     },
   };
 export function renderReferenceComposition(
@@ -502,14 +506,14 @@ export function renderReferenceComposition(
   scope: ThemeCompositionScope,
   inner: string,
 ) {
-  const tags = referenceThemeCompositions[theme]?.[scope];
-  return tags
-    ? tags.reduceRight(
-        (content, tag, index) =>
-          `<${tag} data-composition-layer="${index}">${content}</${tag}>`,
-        inner,
-      )
-    : inner;
+  const composition = referenceThemeCompositions[theme]?.[scope];
+  if (!composition) return inner;
+  const selector =
+    scope === "landing" ? "hero" : scope === "auth" ? "auth" : "customer";
+  return inner.replace(
+    `class="${selector}`,
+    `data-theme-composition="${composition}" class="${selector}`,
+  );
 }
 
 const dark = new Set([
@@ -591,7 +595,7 @@ export const runtimeThemeScript = (
   api: string,
   scope: "public" | "auth" | "customer",
 ) =>
-  `(()=>{const allowed=new Set(${JSON.stringify(themeIds)}),aliases=${JSON.stringify(legacyThemeAliases)},structures=${JSON.stringify(themeStructure)},compositions=${JSON.stringify(referenceThemeCompositions)},scope=${JSON.stringify(scope)},compositionScope=scope==='public'?'landing':scope,fallback='DARK_LUXURY',compose=theme=>{const old=document.querySelector('[data-theme-runtime-root]');if(old){const original=old.querySelector('[data-original-content]');old.replaceWith(...original.children)}const tags=compositions[theme]?.[compositionScope];if(!tags)return;const original=document.createElement('div');original.dataset.originalContent='';while(document.body.firstChild)original.append(document.body.firstChild);let node=original;[...tags].reverse().forEach((tag,index)=>{const wrapper=document.createElement(tag);wrapper.dataset.compositionLayer=String(tags.length-index-1);wrapper.append(node);node=wrapper});node.dataset.themeRuntimeRoot='';document.body.append(node)},setTheme=id=>{const normalized=aliases[id]||id,selected=allowed.has(normalized)?normalized:fallback;document.documentElement.dataset.theme=selected;const variants=structures[selected];Object.entries(variants).forEach(([key,value])=>document.documentElement.dataset[key]=value);compose(selected);return selected},safeUrl=value=>{if(typeof value!=='string')return null;try{const url=new URL(value,location.origin);return url.protocol==='http:'||url.protocol==='https:'?url.href:null}catch{return null}};setTheme(fallback);fetch(${JSON.stringify(api)}+'/api/v1/public/settings',{credentials:'include'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const s=j.data||{},key='theme'+scope[0].toUpperCase()+scope.slice(1),id=s.themeMode==='SEPARATE'?s[key]:s.themeGlobal;setTheme(id);const o=s.themeOptions||{};if(['compact','comfortable','spacious'].includes(o.density))document.documentElement.dataset.density=o.density;if(['small','medium','large'].includes(o.radius))document.documentElement.dataset.radius=o.radius;const overrides=s.themeOverrides||{},colorKeys=new Set(['primary','secondary','accent','background','surface','text','muted','border','success','warning','danger']);Object.entries(overrides.colors||{}).forEach(([key,value])=>{if(colorKeys.has(key)&&typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))document.documentElement.style.setProperty('--theme-'+key,value)});const c={...(s.themeContent||{}),...(overrides.content||{})},apply=()=>{document.querySelectorAll('[data-theme-content]').forEach(el=>{const v=c[el.dataset.themeContent];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-list]').forEach((el,i)=>{const v=c.featureBullets?.[i];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-href]').forEach(el=>{const href=safeUrl(c[el.dataset.themeHref]);if(href)el.setAttribute('href',href);else el.removeAttribute('href')})};apply();new MutationObserver(apply).observe(document.body,{childList:true,subtree:true})}).catch(()=>setTheme(fallback))})();`;
+  `(()=>{const allowed=new Set(${JSON.stringify(themeIds)}),aliases=${JSON.stringify(legacyThemeAliases)},structures=${JSON.stringify(themeStructure)},compositions=${JSON.stringify(referenceThemeCompositions)},scope=${JSON.stringify(scope)},compositionScope=scope==='public'?'landing':scope,fallback='DARK_LUXURY',compose=theme=>{const layout=compositions[theme]?.[compositionScope],selector=compositionScope==='landing'?'.hero':compositionScope==='auth'?'.auth':'.customer',shell=document.querySelector(selector);document.querySelectorAll('[data-theme-composition]').forEach(x=>x.removeAttribute('data-theme-composition'));if(shell&&layout)shell.dataset.themeComposition=layout},setTheme=id=>{const normalized=aliases[id]||id,selected=allowed.has(normalized)?normalized:fallback;document.documentElement.dataset.theme=selected;const variants=structures[selected];Object.entries(variants).forEach(([key,value])=>document.documentElement.dataset[key]=value);compose(selected);return selected},safeUrl=value=>{if(typeof value!=='string')return null;try{const url=new URL(value,location.origin);return url.protocol==='http:'||url.protocol==='https:'?url.href:null}catch{return null}};setTheme(fallback);fetch(${JSON.stringify(api)}+'/api/v1/public/settings',{credentials:'include'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const s=j.data||{},key='theme'+scope[0].toUpperCase()+scope.slice(1),id=s.themeMode==='SEPARATE'?s[key]:s.themeGlobal;setTheme(id);const o=s.themeOptions||{};if(['compact','comfortable','spacious'].includes(o.density))document.documentElement.dataset.density=o.density;if(['small','medium','large'].includes(o.radius))document.documentElement.dataset.radius=o.radius;const overrides=s.themeOverrides||{},colorKeys=new Set(['primary','secondary','accent','background','surface','text','muted','border','success','warning','danger']);Object.entries(overrides.colors||{}).forEach(([key,value])=>{if(colorKeys.has(key)&&typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))document.documentElement.style.setProperty('--theme-'+key,value)});const c={...(s.themeContent||{}),...(overrides.content||{})},apply=()=>{document.querySelectorAll('[data-theme-content]').forEach(el=>{const v=c[el.dataset.themeContent];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-list]').forEach((el,i)=>{const v=c.featureBullets?.[i];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-href]').forEach(el=>{const href=safeUrl(c[el.dataset.themeHref]);if(href)el.setAttribute('href',href);else el.removeAttribute('href')})};apply();new MutationObserver(apply).observe(document.body,{childList:true,subtree:true})}).catch(()=>setTheme(fallback))})();`;
 
 export const themeStyles = `${declarations}
 :root{--theme-bg:#090a0c;--theme-surface:#111827;--theme-border:#f5c97855;--theme-text:#f8fafc;--theme-muted:#a9b4c6;--theme-primary:#f5c978;--theme-secondary:#8f7350;--theme-radius:12px;--theme-shadow:0 18px 46px #0005;--theme-font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}

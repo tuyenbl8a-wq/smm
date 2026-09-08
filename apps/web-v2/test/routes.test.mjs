@@ -557,6 +557,11 @@ test("panel customer and admin routes are wired", () => {
     "/admin/panel-subscriptions",
   ])
     assert.match(admin, new RegExp(path.replaceAll("/", "\\/")));
+  assert.ok(customer.indexOf("ĐẶT HÀNG") < customer.indexOf("THUÊ PANEL"));
+  assert.match(customer, /ns1\.dichvu1st\.com/);
+  assert.match(customer, /ns2\.dichvu1st\.com/);
+  assert.match(customer, /Không cần cấu hình CNAME hoặc TXT/);
+  assert.match(customer, /auto-renew/);
 });
 test("same-origin API proxy is constrained to API paths and fixed config target", () => {
   assert.match(main, /path\.startsWith\("\/api\/"\)/);
@@ -862,7 +867,7 @@ test("final reference pair completes exactly ten unique three-scope architecture
   assert.match(admin, /\.thumb-stage/);
 });
 
-test("reference themes have 10x3 rendered structural fingerprints shared with runtime", async () => {
+test("reference themes provide 10x3 real shell architectures without document wrappers", async () => {
   const { referenceThemeCompositions, renderReferenceComposition } =
     await import("../dist/themes.js");
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
@@ -882,32 +887,34 @@ test("reference themes have 10x3 rendered structural fingerprints shared with ru
     const fingerprints = new Set();
     for (const id of ids) {
       const expected = referenceThemeCompositions[id][scope];
+      const shell =
+        scope === "landing" ? "hero" : scope === "auth" ? "auth" : "customer";
       const direct = renderReferenceComposition(
         id,
         scope,
-        "<button>safe</button>",
+        `<div class="${shell}"><button>safe</button></div>`,
       );
       const html = fullPageThemePreview("", id, scope);
-      const hierarchy = [
-        ...html.matchAll(
-          /<(main|header|nav|section|article|aside|figure|footer) data-composition-layer="\d+">/g,
-        ),
-      ].map((x) => x[1]);
-      assert.deepEqual(hierarchy.slice(0, expected.length), expected);
-      assert.match(direct, /data-composition-layer="0"/);
-      fingerprints.add(hierarchy.slice(0, expected.length).join(">"));
-      assert.doesNotMatch(html, /demoDashboard|DỮ LIỆU XEM TRƯỚC|TÃ|Ä‘/);
+      assert.match(direct, new RegExp(`data-theme-composition="${expected}"`));
+      assert.match(html, new RegExp(`data-theme-composition="${expected}"`));
+      assert.doesNotMatch(
+        html,
+        /data-composition-layer|data-theme-runtime-root|data-original-content/,
+      );
+      fingerprints.add(expected);
     }
     assert.equal(
       fingerprints.size,
       10,
-      scope + " structures must be 10/10 unique",
+      scope + " architectures must be 10/10 unique",
     );
   }
-  assert.match(
-    await readFile(new URL("../dist/themes.js", import.meta.url), "utf8"),
-    /data-theme-runtime-root/,
+  const runtime = await readFile(
+    new URL("../dist/themes.js", import.meta.url),
+    "utf8",
   );
+  assert.match(runtime, /shell\.dataset\.themeComposition/);
+  assert.doesNotMatch(runtime, /while\s*\(document\.body\.firstChild\)/);
 });
 
 test("admin forms and operational orders expose polished real contracts", () => {
