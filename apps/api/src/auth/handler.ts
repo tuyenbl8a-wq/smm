@@ -23,6 +23,7 @@ import { PromotionError, PromotionService } from "../promotion/service.js";
 import { endpointFromUrl, probeTcp } from "@smm/health";
 import { TenantError, type TenantSite } from "../tenant/context.js";
 import type { PanelManagementService } from "../tenant/panel-service.js";
+import { PanelDnsProviderError } from "../tenant/panel-dns-provider.js";
 import { ROOT_SITE_ID } from "../tenant/context.js";
 import {
   csrfValue,
@@ -2292,6 +2293,13 @@ export class AuthHandler {
             : error.code.endsWith("NOT_FOUND")
               ? 404
               : 422,
+          error.code,
+          error.message,
+        );
+      if (error instanceof PanelDnsProviderError)
+        return this.error(
+          response,
+          error.code === "PANEL_DNS_NOT_CONFIGURED" ? 503 : 502,
           error.code,
           error.message,
         );

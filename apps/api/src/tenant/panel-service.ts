@@ -144,7 +144,6 @@ export class PanelService {
         "DOMAIN_VERIFICATION_FAILED",
         "Nameserver delegation is not active",
       );
-    await this.dns.ensurePanelRouting(initial.providerZoneId, initial.hostname);
     const result = await this.db.$transaction(async (tx: any) => {
       await tx.$queryRawUnsafe?.(
         "SELECT pg_advisory_xact_lock(hashtext($1))",
@@ -160,6 +159,16 @@ export class PanelService {
             where: { id: intent.activatedSiteId },
           }),
           charged: false,
+        };
+      }
+      if (intent.status === "ROUTING_REQUIRED") {
+        return {
+          routingRequired: true,
+          site: await tx.site.findUnique({
+            where: { id: intent.activatedSiteId },
+          }),
+          charged: false,
+          intent,
         };
       }
       const [parent, plan] = await Promise.all([
@@ -195,7 +204,7 @@ export class PanelService {
           ownerUserId: renterUserId,
           name: intent.name,
           slug: intent.slug,
-          status: "ACTIVE",
+          status: "PENDING",
           depth: parent.depth + 1,
         },
       });
@@ -208,6 +217,8 @@ export class PanelService {
           isPrimary: true,
           verificationToken: randomUUID(),
           verifiedAt: now,
+          providerZoneId: intent.providerZoneId,
+          assignedNameservers: intent.assignedNameservers,
         },
       });
       await tx.panelSubscription.create({
@@ -239,13 +250,13 @@ export class PanelService {
       });
       await tx.panelRentalIntent.update({
         where: { id: intent.id },
-        data: { status: "ACTIVATED", activatedSiteId: siteId },
+        data: { status: "ROUTING_REQUIRED", activatedSiteId: siteId },
       });
       await tx.auditLog.create({
         data: {
           siteId: sellerSiteId,
           actorId: renterUserId,
-          action: "PANEL_RENT_ACTIVATE",
+          action: "PANEL_RENT_PAYMENT_CAPTURED",
           resource: "Site",
           resourceId: siteId,
           after: {
@@ -255,11 +266,64 @@ export class PanelService {
           },
         },
       });
-      return { activated: true, site, charged: true };
+      return { routingRequired: true, site, charged: true, intent };
     });
     if (result.paymentRequired)
       throw new TenantError("PAYMENT_REQUIRED", "Insufficient wallet balance");
-    return result;
+    if (!result.routingRequired) return result;
+
+    // External routing only happens after the debit and pending site are durably
+    // committed. A provider/second-transaction failure leaves a retryable state;
+    // subsequent Verify calls do not charge again and routing is idempotent.
+    await this.dns.ensurePanelRouting(
+      result.intent.providerZoneId,
+      result.intent.hostname,
+    );
+    return this.db.$transaction(async (tx: any) => {
+      await tx.$queryRawUnsafe?.(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        initial.id,
+      );
+      const intent = await tx.panelRentalIntent.findUnique({
+        where: { id: initial.id },
+      });
+      if (intent.status === "ACTIVATED") {
+        return {
+          activated: true,
+          site: await tx.site.findUnique({
+            where: { id: intent.activatedSiteId },
+          }),
+          charged: false,
+        };
+      }
+      if (intent.status !== "ROUTING_REQUIRED")
+        throw new TenantError(
+          "PANEL_ACTIVATION_STATE_INVALID",
+          "Panel activation is not ready for routing",
+        );
+      const site = await tx.site.update({
+        where: { id: intent.activatedSiteId },
+        data: { status: "ACTIVE" },
+      });
+      await tx.panelRentalIntent.update({
+        where: { id: intent.id },
+        data: { status: "ACTIVATED" },
+      });
+      await tx.auditLog.create({
+        data: {
+          siteId: sellerSiteId,
+          actorId: renterUserId,
+          action: "PANEL_RENT_ACTIVATE",
+          resource: "Site",
+          resourceId: site.id,
+          after: {
+            hostname: intent.hostname,
+            providerZoneId: intent.providerZoneId,
+          },
+        },
+      });
+      return { activated: true, site, charged: result.charged };
+    });
   }
 
   private intentResult(intent: any) {

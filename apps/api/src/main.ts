@@ -28,7 +28,7 @@ import {
   PanelService,
   PanelManagementService,
 } from "./tenant/panel-service.js";
-import { CloudflarePanelDnsProvider } from "./tenant/cloudflare-panel-dns.js";
+import { createPanelDnsProvider } from "./tenant/panel-dns-config.js";
 const config = loadConfig(process.env, 4000);
 const dynamicImport = new Function("specifier", "return import(specifier)") as (
   specifier: string,
@@ -36,11 +36,7 @@ const dynamicImport = new Function("specifier", "return import(specifier)") as (
 const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
 const orderService = new OrderService(prisma);
-const panelDns = new CloudflarePanelDnsProvider({
-  apiToken: process.env.CLOUDFLARE_API_TOKEN ?? "",
-  accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
-  routingTarget: process.env.PANEL_ROUTING_TARGET ?? "",
-});
+const panelDns = createPanelDnsProvider(process.env);
 const panelService = new PanelService(prisma, panelDns);
 const panelManagement = new PanelManagementService(
   prisma,

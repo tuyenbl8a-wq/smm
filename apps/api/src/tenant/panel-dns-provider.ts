@@ -22,3 +22,29 @@ export class PanelDnsProviderError extends Error {
     super(message);
   }
 }
+
+/** Keeps the API available while making an unconfigured optional feature explicit. */
+export class UnavailablePanelDnsProvider implements PanelDnsProvider {
+  private unavailable(): never {
+    throw new PanelDnsProviderError(
+      "PANEL_DNS_NOT_CONFIGURED",
+      "Panel DNS is not configured",
+    );
+  }
+
+  async createZone(): Promise<PanelDnsZone> {
+    return this.unavailable();
+  }
+  async getAssignedNameservers(): Promise<string[]> {
+    return this.unavailable();
+  }
+  async getZoneStatus(): Promise<PanelDnsZoneStatus> {
+    return this.unavailable();
+  }
+  async ensurePanelRouting(): Promise<void> {
+    return this.unavailable();
+  }
+  async deleteZone(): Promise<void> {
+    return this.unavailable();
+  }
+}

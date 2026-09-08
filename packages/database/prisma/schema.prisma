@@ -38,6 +38,7 @@ enum PanelSubscriptionStatus {
 enum PanelRentalIntentStatus {
   PENDING_DNS
   PAYMENT_REQUIRED
+  ROUTING_REQUIRED
   ACTIVATED
   CANCELED
   EXPIRED

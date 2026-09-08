@@ -869,7 +869,7 @@ test("final reference pair completes exactly ten unique three-scope architecture
 
 test("reference themes provide 30 concrete renderers without document wrappers", async () => {
   const { renderReferenceComposition } = await import("../dist/themes.js");
-  const { referenceRenderers } =
+  const { referenceRenderers, isMeaningfulReferenceRender } =
     await import("../dist/reference-theme-renderers.js");
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const ids = [
@@ -898,11 +898,36 @@ test("reference themes provide 30 concrete renderers without document wrappers",
       assert.match(direct, /data-renderer="[^"]+"/);
       assert.match(html, /data-renderer="[^"]+"/);
       const renderer = /data-renderer="([^"]+)"/.exec(html)?.[1];
-      const regions = [...html.matchAll(/class="theme-region ([^"]+)"/g)].map(
-        (match) => match[1],
+      assert.equal(isMeaningfulReferenceRender(html, scope), true);
+      const regionClasses =
+        scope === "landing"
+          ? ["theme-navigation", "theme-story", "theme-offer", "theme-cta"]
+          : scope === "auth"
+            ? [
+                "auth-navigation",
+                "auth-visual",
+                "auth-form-region",
+                "auth-assurance",
+              ]
+            : [
+                "dashboard-navigation",
+                "dashboard-wallet",
+                "dashboard-kpis",
+                "dashboard-orders",
+              ];
+      const regions = regionClasses.map((className) => {
+        const content = new RegExp(
+          `class="${className}">([\\s\\S]*?)<\\/`,
+        ).exec(html)?.[1];
+        return content
+          ?.replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+      });
+      assert.equal(
+        regions.every((region) => region && region.length >= 8),
+        true,
       );
-      assert.equal(regions.length, 4);
-      assert.equal(new Set(regions).size, 4);
       assert.doesNotMatch(
         html,
         /data-composition-layer|data-theme-runtime-root|data-original-content/,
@@ -915,6 +940,8 @@ test("reference themes provide 30 concrete renderers without document wrappers",
       scope + " architectures must be 10/10 unique",
     );
   }
+  const oldEmptyHack = `<div class="hero"><nav class="theme-navigation"></nav><section class="theme-story"></section><aside class="theme-offer"></aside><footer class="theme-cta"></footer></div>`;
+  assert.equal(isMeaningfulReferenceRender(oldEmptyHack, "landing"), false);
   assert.equal(
     new Set(ids.flatMap((id) => Object.values(referenceRenderers[id]))).size,
     30,

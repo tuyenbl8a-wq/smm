@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { PanelService } from "../src/tenant/panel-service.js";
 import type { PanelDnsProvider } from "../src/tenant/panel-dns-provider.js";
+import { createPanelDnsProvider } from "../src/tenant/panel-dns-config.js";
 
 const dns = (): PanelDnsProvider & { calls: string[] } => ({
   calls: [],
@@ -124,8 +125,82 @@ test("verified NS with insufficient balance returns PAYMENT_REQUIRED without sit
   assert.equal(siteCreated, false);
   assert.equal(
     Boolean(provider.calls.includes("route:panel.example.com")),
-    true,
+    false,
   );
+});
+
+test("API DNS bootstrap is optional and panel rent fails clearly when unconfigured", async () => {
+  const provider = createPanelDnsProvider({});
+  await assert.rejects(
+    () => provider.createZone("panel.example.com"),
+    (error: any) => error.code === "PANEL_DNS_NOT_CONFIGURED",
+  );
+});
+
+test("activation persists provider metadata before routing and activates afterward", async () => {
+  const provider = dns();
+  const state: any = { ...intent };
+  let domainData: any;
+  let siteStatus = "PENDING";
+  let transactionCount = 0;
+  const tx: any = {
+    $queryRawUnsafe: async (sql: string) =>
+      sql.startsWith("SELECT")
+        ? []
+        : [{ id: "wallet", before: "200", after: "100" }],
+    panelRentalIntent: {
+      findUnique: async () => state,
+      update: async ({ data }: any) => Object.assign(state, data),
+    },
+    site: {
+      findUnique: async () => ({ id: "seller", status: "ACTIVE", depth: 0 }),
+      create: async ({ data }: any) => {
+        siteStatus = data.status;
+        return data;
+      },
+      update: async ({ data }: any) => {
+        siteStatus = data.status;
+        return { id: state.activatedSiteId, status: siteStatus };
+      },
+    },
+    panelRentalPlan: {
+      findUnique: async () => ({
+        id: "plan",
+        code: "PRO",
+        active: true,
+        price: "100.00000000",
+        billingDays: 30,
+      }),
+    },
+    siteDomain: {
+      create: async ({ data }: any) => {
+        domainData = data;
+      },
+    },
+    panelSubscription: { create: async () => undefined },
+    walletTransaction: { create: async () => undefined },
+    auditLog: { create: async () => undefined },
+  };
+  const db: any = {
+    panelRentalIntent: { findFirst: async () => state },
+    site: { findUnique: async () => ({ id: "seller", status: "ACTIVE" }) },
+    $transaction: async (fn: any) => {
+      transactionCount += 1;
+      return fn(tx);
+    },
+  };
+  const result = await new PanelService(db, provider).activate(
+    "seller",
+    "user",
+    intent.id,
+  );
+  assert.equal(result.activated, true);
+  assert.equal(transactionCount, 2);
+  assert.equal(siteStatus, "ACTIVE");
+  assert.equal(state.status, "ACTIVATED");
+  assert.equal(domainData.providerZoneId, "zone-real");
+  assert.deepEqual(domainData.assignedNameservers, intent.assignedNameservers);
+  assert.equal(provider.calls.at(-1), "route:panel.example.com");
 });
 
 test("repeated verify of an activated rental never charges again", async () => {
