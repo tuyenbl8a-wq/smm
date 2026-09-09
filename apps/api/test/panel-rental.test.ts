@@ -115,6 +115,9 @@ test("verified NS with insufficient balance returns PAYMENT_REQUIRED without sit
             billingDays: 30,
           }),
         },
+        user: {
+          findFirst: async () => ({ id: "user", siteId: "seller" }),
+        },
       }),
   };
   await assert.rejects(
@@ -141,6 +144,8 @@ test("activation persists provider metadata before routing and activates afterwa
   const provider = dns();
   const state: any = { ...intent };
   let domainData: any;
+  let childOwnerData: any;
+  let assignedOwnerId: string | undefined;
   let siteStatus = "PENDING";
   let transactionCount = 0;
   const tx: any = {
@@ -159,6 +164,7 @@ test("activation persists provider metadata before routing and activates afterwa
         return data;
       },
       update: async ({ data }: any) => {
+        if (data.ownerUserId) assignedOwnerId = data.ownerUserId;
         siteStatus = data.status;
         return { id: state.activatedSiteId, status: siteStatus };
       },
@@ -172,6 +178,24 @@ test("activation persists provider metadata before routing and activates afterwa
         billingDays: 30,
       }),
     },
+    user: {
+      findFirst: async () => ({
+        id: "user",
+        siteId: "seller",
+        email: "owner@example.com",
+        username: "owner",
+        passwordHash: "hash",
+        status: "ACTIVE",
+      }),
+      create: async ({ data }: any) => ({
+        ...(childOwnerData = data),
+        id: "child-owner",
+      }),
+    },
+    role: { findUniqueOrThrow: async () => ({ id: "admin-role" }) },
+    userRole: { create: async () => undefined },
+    wallet: { create: async () => undefined },
+    affiliate: { create: async () => undefined },
     siteDomain: {
       create: async ({ data }: any) => {
         domainData = data;
@@ -200,6 +224,8 @@ test("activation persists provider metadata before routing and activates afterwa
   assert.equal(state.status, "ACTIVATED");
   assert.equal(domainData.providerZoneId, "zone-real");
   assert.deepEqual(domainData.assignedNameservers, intent.assignedNameservers);
+  assert.equal(childOwnerData.siteId, state.activatedSiteId);
+  assert.equal(assignedOwnerId, "child-owner");
   assert.equal(provider.calls.at(-1), "route:panel.example.com");
 });
 

@@ -843,7 +843,7 @@ model DailyReportSnapshot {
   newUsers Int @default(0) @map("new_users")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-  @@unique([date, timezone])
+  @@unique([siteId, date, timezone])
   @@index([timezone, date])
   @@map("daily_report_snapshots")
 }

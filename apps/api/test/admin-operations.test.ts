@@ -184,7 +184,10 @@ test("general settings never return encrypted values", async () => {
     },
   });
   await service.settings();
-  assert.deepEqual(query.where, { encrypted: false });
+  assert.deepEqual(query.where, {
+    siteId: "00000000-0000-4000-8000-000000000001",
+    encrypted: false,
+  });
   assert.equal(query.select.value, true);
 });
 
@@ -391,8 +394,14 @@ test("explicit provider sync accepts short and UUID references, including manual
     const service = new AdminOperationsService(db, key);
     const short = await service.syncOrderFromProvider("admin", "100002");
     await service.syncOrderFromProvider("admin", base.publicId);
-    assert.deepEqual(references[0], { id: 2n });
-    assert.deepEqual(references[1], { publicId: base.publicId });
+    assert.deepEqual(references[0], {
+      id: 2n,
+      siteId: "00000000-0000-4000-8000-000000000001",
+    });
+    assert.deepEqual(references[1], {
+      publicId: base.publicId,
+      siteId: "00000000-0000-4000-8000-000000000001",
+    });
     assert.equal(short.refundAdded, "20.00000000");
     assert.equal((short as any).apiKeyEncrypted, undefined);
     assert.equal(histories[0].actorId, "admin");

@@ -1,3 +1,4 @@
+import { ROOT_SITE_ID } from "../tenant/context.js";
 export type WalletMutationType =
   | "DEPOSIT"
   | "ORDER"
@@ -56,11 +57,16 @@ function same(
 }
 export class WalletService {
   constructor(private readonly db: any) {}
-  async summary(userId: string) {
-    const wallet = await this.db.wallet.findUnique({
-      where: { userId },
-      select: { balance: true, currency: true, updatedAt: true },
-    });
+  async summary(userId: string, siteId = ROOT_SITE_ID) {
+    const wallet = this.db.wallet.findFirst
+      ? await this.db.wallet.findFirst({
+          where: { userId, siteId },
+          select: { balance: true, currency: true, updatedAt: true },
+        })
+      : await this.db.wallet.findUnique({
+          where: { userId },
+          select: { balance: true, currency: true, updatedAt: true },
+        });
     if (!wallet) throw new WalletError("WALLET_NOT_FOUND", "Wallet not found");
     return {
       balance: String(wallet.balance),
@@ -68,7 +74,12 @@ export class WalletService {
       updatedAt: wallet.updatedAt,
     };
   }
-  async history(userId: string, page: number, limit: number) {
+  async history(
+    userId: string,
+    page: number,
+    limit: number,
+    siteId = ROOT_SITE_ID,
+  ) {
     if (
       !Number.isInteger(page) ||
       page < 1 ||
@@ -78,9 +89,9 @@ export class WalletService {
     )
       throw new WalletError("PAGINATION_INVALID", "Invalid pagination");
     const [total, items] = await Promise.all([
-      this.db.walletTransaction.count({ where: { userId } }),
+      this.db.walletTransaction.count({ where: { userId, siteId } }),
       this.db.walletTransaction.findMany({
-        where: { userId },
+        where: { userId, siteId },
         select: {
           id: true,
           amount: true,

@@ -171,11 +171,14 @@ export class PanelService {
           intent,
         };
       }
-      const [parent, plan] = await Promise.all([
+      const [parent, plan, renter] = await Promise.all([
         tx.site.findUnique({ where: { id: sellerSiteId } }),
         tx.panelRentalPlan.findUnique({ where: { id: intent.planId } }),
+        tx.user.findFirst({
+          where: { id: renterUserId, siteId: sellerSiteId, status: "ACTIVE" },
+        }),
       ]);
-      if (!parent || parent.status !== "ACTIVE" || !plan?.active)
+      if (!parent || parent.status !== "ACTIVE" || !plan?.active || !renter)
         throw new TenantError(
           "PANEL_PLAN_UNAVAILABLE",
           "Panel plan is unavailable",
@@ -197,16 +200,49 @@ export class PanelService {
       const now = new Date();
       const expiresAt = new Date(now.getTime() + plan.billingDays * 86_400_000);
       const siteId = randomUUID();
-      const site = await tx.site.create({
+      await tx.site.create({
         data: {
           id: siteId,
           parentSiteId: sellerSiteId,
-          ownerUserId: renterUserId,
           name: intent.name,
           slug: intent.slug,
           status: "PENDING",
           depth: parent.depth + 1,
         },
+      });
+      const childOwner = await tx.user.create({
+        data: {
+          siteId,
+          email: renter.email,
+          username: renter.username,
+          fullName: renter.fullName,
+          phone: renter.phone,
+          passwordHash: renter.passwordHash,
+          status: "ACTIVE",
+          emailVerifiedAt: renter.emailVerifiedAt,
+          referralCode: `P${randomBytes(10).toString("hex").toUpperCase()}`,
+        },
+      });
+      const adminRole = await tx.role.findUniqueOrThrow({
+        where: { code: "ADMIN" },
+      });
+      await tx.userRole.create({
+        data: { userId: childOwner.id, roleId: adminRole.id },
+      });
+      await tx.wallet.create({
+        data: { siteId, userId: childOwner.id, currency: "USD" },
+      });
+      await tx.affiliate.create({
+        data: {
+          siteId,
+          userId: childOwner.id,
+          code: childOwner.referralCode,
+          commissionRate: "10.000000",
+        },
+      });
+      const site = await tx.site.update({
+        where: { id: siteId },
+        data: { ownerUserId: childOwner.id },
       });
       await tx.siteDomain.create({
         data: {
