@@ -10,6 +10,7 @@ test("order validation rejects invalid link before persistence", async () => {
     () =>
       new OrderService({}).create(
         "u",
+        "00000000-0000-4000-8000-000000000001",
         { serviceId: "s", quantity: 10, link: "javascript:bad" },
         "valid-key-1234",
       ),
@@ -24,14 +25,23 @@ test("order list is strictly scoped to authenticated user", async () => {
       findMany: async () => [],
     },
   };
-  await new OrderService(db).list("user-a", 1, 20);
-  assert.deepEqual(where, { userId: "user-a" });
+  await new OrderService(db).list(
+    "user-a",
+    "00000000-0000-4000-8000-000000000001",
+    1,
+    20,
+  );
+  assert.deepEqual(where, {
+    userId: "user-a",
+    siteId: "00000000-0000-4000-8000-000000000001",
+  });
 });
 
 const routingDatabase = (source: "MANUAL" | "API") => {
   let outbox = 0;
   const service = {
       id: "service-1",
+      siteId: "00000000-0000-4000-8000-000000000001",
       source,
       active: true,
       deletedAt: null,
@@ -62,8 +72,14 @@ const routingDatabase = (source: "MANUAL" | "API") => {
       rate: "0.50000000",
     },
     tx: any = {
-      service: { findUnique: async () => service },
-      user: { findUnique: async () => ({ priceGroupId: null }) },
+      service: {
+        findFirst: async () => service,
+        findUnique: async () => service,
+      },
+      user: {
+        findFirst: async () => ({ siteId: service.siteId }),
+        findUnique: async () => ({ priceGroupId: null }),
+      },
       serviceMapping: {
         findMany: async () => (source === "API" ? [mapping] : []),
       },
@@ -75,6 +91,7 @@ const routingDatabase = (source: "MANUAL" | "API") => {
           source === "API" ? [{ id: "provider-1", status: "ACTIVE" }] : [],
       },
       order: {
+        findFirst: async () => null,
         findUnique: async () => null,
         create: async ({ data }: any) => ({
           id: 1n,
@@ -85,9 +102,16 @@ const routingDatabase = (source: "MANUAL" | "API") => {
       walletTransaction: { create: async () => ({}) },
       orderHistory: { create: async () => ({}) },
       providerOutbox: { create: async () => (outbox++, {}) },
-      $queryRawUnsafe: async () => [
-        { id: "wallet-1", before: "10.00000000", after: "9.99900000" },
-      ],
+      $queryRawUnsafe: async (sql: string) =>
+        sql.startsWith("SELECT")
+          ? [{ balance: "10.00000000" }]
+          : [
+              {
+                id: "wallet-1",
+                before: "10.00000000",
+                after: "9.99900000",
+              },
+            ],
     };
   const db: any = {
     ...tx,
@@ -100,6 +124,7 @@ test("manual order is persisted without provider adapter outbox or fake provider
   const { db, outbox } = routingDatabase("MANUAL");
   const order = await new OrderService(db).create(
     "user-1",
+    "00000000-0000-4000-8000-000000000001",
     { serviceId: "service-1", quantity: 1, link: "https://example.com/post" },
     "manual-order-123",
   );
@@ -111,8 +136,42 @@ test("API order snapshots mapping and creates exactly one provider outbox", asyn
   const { db, outbox } = routingDatabase("API");
   await new OrderService(db).create(
     "user-1",
+    "00000000-0000-4000-8000-000000000001",
     { serviceId: "service-1", quantity: 1, link: "https://example.com/post" },
     "provider-order-123",
   );
   assert.equal(outbox(), 1);
+});
+
+test("foreign service UUID guessing is hidden from child order creation", async () => {
+  const child = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const candidate = {
+    id: "root-service",
+    siteId: "00000000-0000-4000-8000-000000000001",
+    active: true,
+    min: 1,
+    max: 100,
+  };
+  const tx: any = {
+    service: { findFirst: async () => candidate },
+    siteServiceRule: { findUnique: async () => null },
+  };
+  const db: any = {
+    order: { findFirst: async () => null },
+    $transaction: async (run: any) => run(tx),
+  };
+  await assert.rejects(
+    () =>
+      new OrderService(db).create(
+        "child-user",
+        child,
+        {
+          serviceId: candidate.id,
+          quantity: 10,
+          link: "https://example.com/post",
+        },
+        "foreign-service-key",
+      ),
+    (error: any) => error.code === "SERVICE_UNAVAILABLE",
+  );
 });

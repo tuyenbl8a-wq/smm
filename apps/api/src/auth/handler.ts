@@ -21,8 +21,9 @@ import { PaymentSettingsService } from "../payment/settings.js";
 import { stringifyJson } from "../http/json.js";
 import { PromotionError, PromotionService } from "../promotion/service.js";
 import { endpointFromUrl, probeTcp } from "@smm/health";
-import type { TenantSite } from "../tenant/context.js";
+import { TenantError, type TenantSite } from "../tenant/context.js";
 import type { PanelManagementService } from "../tenant/panel-service.js";
+import { PanelDnsProviderError } from "../tenant/panel-dns-provider.js";
 import { ROOT_SITE_ID } from "../tenant/context.js";
 import {
   csrfValue,
@@ -122,6 +123,7 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.catalog.publicCatalog({
+            siteId: tenant.id,
             page: Number(url.searchParams.get("page") ?? "1"),
             limit: Number(url.searchParams.get("limit") ?? "12"),
             ...(url.searchParams.get("search")
@@ -156,6 +158,28 @@ export class AuthHandler {
           401,
           "AUTHENTICATION_REQUIRED",
           "Authentication required",
+        );
+      const rootOnlyAdminPrefixes = [
+        "/api/v1/admin/catalog",
+        "/api/v1/admin/services",
+        "/api/v1/admin/providers",
+        "/api/v1/admin/payment-settings",
+        "/api/v1/admin/payment-methods",
+        "/api/v1/admin/coupons",
+        "/api/v1/admin/referrals",
+        "/api/v1/admin/system-status",
+      ];
+      if (
+        tenant.id !== ROOT_SITE_ID &&
+        rootOnlyAdminPrefixes.some(
+          (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+        )
+      )
+        return this.error(
+          response,
+          403,
+          "GLOBAL_ENDPOINT_ROOT_ONLY",
+          "Tác vụ quản trị nền tảng chỉ khả dụng trên website gốc",
         );
       if (
         path.startsWith("/api/v1/customer") &&
@@ -256,8 +280,26 @@ export class AuthHandler {
           201,
         );
       }
+      const rentalRoute =
+        /^\/api\/v1\/customer\/panel-rentals\/([0-9a-f-]+)(?:\/(verify))?$/.exec(
+          path,
+        );
+      if (this.panels && rentalRoute) {
+        const [, rentalId, action] = rentalRoute;
+        if (request.method === "GET" && !action)
+          return this.ok(
+            response,
+            await this.panels.rentalIntent(tenant.id, auth.user.id, rentalId!),
+          );
+        this.csrf(request, auth.rawToken);
+        if (request.method === "POST" && action === "verify")
+          return this.ok(
+            response,
+            await this.panels.activate(tenant.id, auth.user.id, rentalId!),
+          );
+      }
       const panelRoute =
-        /^\/api\/v1\/customer\/panels\/(\d+)(?:\/(renew|branding|domains))?(?:\/([^/]+)(?:\/(verify|primary))?)?$/.exec(
+        /^\/api\/v1\/customer\/panels\/(\d+)(?:\/(renew|auto-renew|branding|domains))?(?:\/([^/]+)(?:\/(verify|primary))?)?$/.exec(
           path,
         );
       if (this.panels && panelRoute) {
@@ -282,6 +324,18 @@ export class AuthHandler {
               String(this.header(request, "idempotency-key") ?? ""),
             ),
           );
+        if (request.method === "PATCH" && action === "auto-renew") {
+          const body = await this.body(request);
+          return this.ok(
+            response,
+            await this.panels.autoRenew(
+              tenant.id,
+              auth.user.id,
+              number!,
+              body.enabled,
+            ),
+          );
+        }
         if (request.method === "PATCH" && action === "branding")
           return this.ok(
             response,
@@ -348,13 +402,16 @@ export class AuthHandler {
       }
       if (request.method === "GET" && path === "/api/v1/customer/wallet") {
         if (!this.wallet) throw new Error("Wallet service unavailable");
-        return this.ok(response, await this.wallet.summary(auth.user.id));
+        return this.ok(
+          response,
+          await this.wallet.summary(auth.user.id, tenant.id),
+        );
       }
       if (request.method === "GET" && path === "/api/v1/customer/price-group") {
         if (!this.admin) throw new Error("Admin service unavailable");
         return this.ok(
           response,
-          await this.admin.customerPriceGroup(auth.user.id),
+          await this.admin.customerPriceGroup(auth.user.id, tenant.id),
         );
       }
       if (request.method === "GET" && path === "/api/v1/customer/settings")
@@ -365,6 +422,7 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.catalog.customerCatalog(auth.user.id, {
+            siteId: tenant.id,
             page: Number(url.searchParams.get("page") ?? "1"),
             limit: Number(url.searchParams.get("limit") ?? "50"),
             ...(url.searchParams.get("category")
@@ -422,6 +480,7 @@ export class AuthHandler {
             auth.user.id,
             Number(url.searchParams.get("page") ?? "1"),
             Number(url.searchParams.get("limit") ?? "20"),
+            tenant.id,
           ),
         );
       }
@@ -430,7 +489,7 @@ export class AuthHandler {
         const url = new URL(request.url ?? path, this.config.apiUrl);
         return this.ok(
           response,
-          await this.orders.list(auth.user.id, {
+          await this.orders.list(auth.user.id, tenant.id, {
             page: Number(url.searchParams.get("page") ?? "1"),
             limit: Number(url.searchParams.get("limit") ?? "20"),
             search: url.searchParams.get("search") ?? "",
@@ -445,7 +504,7 @@ export class AuthHandler {
       if (request.method === "GET" && orderDetail)
         return this.ok(
           response,
-          await this.orders!.detail(auth.user.id, orderDetail[1]!),
+          await this.orders!.detail(auth.user.id, tenant.id, orderDetail[1]!),
         );
       if (request.method === "GET" && path === "/api/v1/customer/api-keys")
         return this.ok(
@@ -474,23 +533,34 @@ export class AuthHandler {
           ),
         );
       if (request.method === "GET" && path === "/api/v1/customer/tickets")
-        return this.ok(response, await this.support!.list(auth.user.id));
+        return this.ok(
+          response,
+          await this.support!.list(auth.user.id, tenant.id),
+        );
       const ticketDetail = /^\/api\/v1\/customer\/tickets\/(\d+)$/.exec(path);
       if (request.method === "GET" && ticketDetail)
         return this.ok(
           response,
-          await this.support!.detail(auth.user.id, BigInt(ticketDetail[1]!)),
+          await this.support!.detail(
+            auth.user.id,
+            BigInt(ticketDetail[1]!),
+            false,
+            tenant.id,
+          ),
         );
       if (request.method === "GET" && path === "/api/v1/customer/notifications")
         return this.ok(
           response,
-          await this.support!.notifications(auth.user.id),
+          await this.support!.notifications(auth.user.id, tenant.id),
         );
       if (
         request.method === "GET" &&
         path === "/api/v1/customer/notifications/unread-count"
       )
-        return this.ok(response, await this.support!.unreadCount(auth.user.id));
+        return this.ok(
+          response,
+          await this.support!.unreadCount(auth.user.id, tenant.id),
+        );
       if (request.method === "GET" && path === "/api/v1/admin/users") {
         if (!canAccessAdmin(auth.access, "users.view"))
           return this.error(
@@ -502,7 +572,10 @@ export class AuthHandler {
         const url = new URL(request.url ?? path, this.config.apiUrl);
         return this.ok(
           response,
-          await this.admin!.users(Object.fromEntries(url.searchParams)),
+          await this.admin!.users(
+            Object.fromEntries(url.searchParams),
+            tenant.id,
+          ),
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/users/search") {
@@ -519,7 +592,10 @@ export class AuthHandler {
         const query = new URL(request.url ?? path, this.config.apiUrl);
         return this.ok(
           response,
-          await this.admin!.customerSearch(query.searchParams.get("search")),
+          await this.admin!.customerSearch(
+            query.searchParams.get("search"),
+            tenant.id,
+          ),
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/staff") {
@@ -530,7 +606,7 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
-        return this.ok(response, await this.admin!.staff());
+        return this.ok(response, await this.admin!.staff(tenant.id));
       }
       if (
         request.method === "GET" &&
@@ -546,7 +622,10 @@ export class AuthHandler {
         const query = new URL(request.url ?? path, this.config.apiUrl);
         return this.ok(
           response,
-          await this.admin!.staffCandidates(query.searchParams.get("search")),
+          await this.admin!.staffCandidates(
+            query.searchParams.get("search"),
+            tenant.id,
+          ),
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/price-groups") {
@@ -557,7 +636,10 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
-        return this.ok(response, await this.admin!.priceGroupConfiguration());
+        return this.ok(
+          response,
+          await this.admin!.priceGroupConfiguration(tenant.id),
+        );
       }
       const adminUser = /^\/api\/v1\/admin\/users\/(#?\d+|[0-9a-f-]{36})$/.exec(
         path,
@@ -570,7 +652,10 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
-        return this.ok(response, await this.admin!.user(adminUser[1]!));
+        return this.ok(
+          response,
+          await this.admin!.user(adminUser[1]!, tenant.id),
+        );
       }
       if (
         request.method === "GET" &&
@@ -583,7 +668,10 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
-        return this.ok(response, await this.admin!.orderProviders());
+        return this.ok(
+          response,
+          await this.admin!.orderFilterOptions({ kind: "provider" }, tenant.id),
+        );
       }
       if (
         request.method === "GET" &&
@@ -601,6 +689,7 @@ export class AuthHandler {
           response,
           await this.admin!.orderFilterOptions(
             Object.fromEntries(url.searchParams),
+            tenant.id,
           ),
         );
       }
@@ -620,7 +709,7 @@ export class AuthHandler {
           response,
           await this.admin!.providerOrderIds(
             Object.fromEntries(url.searchParams),
-            auth.access.roles.includes("SUPER_ADMIN") ? undefined : tenant.id,
+            tenant.id,
           ),
         );
       }
@@ -640,7 +729,7 @@ export class AuthHandler {
           response,
           await this.admin!.orderServiceAnalytics(
             Object.fromEntries(url.searchParams),
-            auth.access.roles.includes("SUPER_ADMIN") ? undefined : tenant.id,
+            tenant.id,
           ),
         );
       }
@@ -657,7 +746,7 @@ export class AuthHandler {
           response,
           await this.admin!.orders(
             Object.fromEntries(url.searchParams),
-            auth.access.roles.includes("SUPER_ADMIN") ? undefined : tenant.id,
+            tenant.id,
           ),
         );
       }
@@ -671,7 +760,10 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
-        return this.ok(response, await this.admin!.order(adminOrder[1]!));
+        return this.ok(
+          response,
+          await this.admin!.order(adminOrder[1]!, tenant.id),
+        );
       }
       if (request.method === "GET" && path === "/api/v1/admin/reports") {
         if (!canAccessAdmin(auth.access, "reports.read"))
@@ -691,6 +783,7 @@ export class AuthHandler {
             url.searchParams.get("to")
               ? new Date(url.searchParams.get("to")!)
               : undefined,
+            tenant.id,
           ),
         );
       }
@@ -710,7 +803,10 @@ export class AuthHandler {
           !/^\d{4}-\d{2}-\d{2}$/.test(to)
         )
           throw new InputError("REPORT_RANGE_INVALID", "Invalid report range");
-        return this.ok(response, await this.admin!.reportTrend(from, to));
+        return this.ok(
+          response,
+          await this.admin!.reportTrend(from, to, tenant.id),
+        );
       }
       if (request.method === "GET" && path === "/api/v1/admin/reports.csv") {
         if (!canAccessAdmin(auth.access, "reports.read"))
@@ -734,6 +830,7 @@ export class AuthHandler {
           await this.admin!.reportsCsv(
             from ? new Date(from) : undefined,
             to ? new Date(to) : undefined,
+            tenant.id,
           ),
         );
         return true;
@@ -756,6 +853,7 @@ export class AuthHandler {
             url.searchParams.get("kind") ?? "audit",
             Number(url.searchParams.get("page") ?? 1),
             Number(url.searchParams.get("limit") ?? 50),
+            tenant.id,
           ),
         );
       }
@@ -824,7 +922,10 @@ export class AuthHandler {
         const u = new URL(request.url ?? path, this.config.apiUrl);
         return this.ok(
           response,
-          await this.support!.adminInbox(Object.fromEntries(u.searchParams)),
+          await this.support!.adminInbox(
+            Object.fromEntries(u.searchParams),
+            tenant.id,
+          ),
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/system-status") {
@@ -883,27 +984,30 @@ export class AuthHandler {
         const u = new URL(request.url ?? path, this.config.apiUrl);
         return this.ok(
           response,
-          await this.deposits!.adminHistory({
-            ...(u.searchParams.get("status")
-              ? { status: u.searchParams.get("status")! }
-              : {}),
-            ...(u.searchParams.get("method")
-              ? { method: u.searchParams.get("method")! }
-              : {}),
-            ...(u.searchParams.get("user")
-              ? { user: u.searchParams.get("user")! }
-              : {}),
-            ...(u.searchParams.get("transactionId")
-              ? { transactionId: u.searchParams.get("transactionId")! }
-              : {}),
-            ...(u.searchParams.get("from")
-              ? { from: u.searchParams.get("from")! }
-              : {}),
-            ...(u.searchParams.get("to")
-              ? { to: u.searchParams.get("to")! }
-              : {}),
-            take: Number(u.searchParams.get("limit") ?? "50"),
-          }),
+          await this.deposits!.adminHistory(
+            {
+              ...(u.searchParams.get("status")
+                ? { status: u.searchParams.get("status")! }
+                : {}),
+              ...(u.searchParams.get("method")
+                ? { method: u.searchParams.get("method")! }
+                : {}),
+              ...(u.searchParams.get("user")
+                ? { user: u.searchParams.get("user")! }
+                : {}),
+              ...(u.searchParams.get("transactionId")
+                ? { transactionId: u.searchParams.get("transactionId")! }
+                : {}),
+              ...(u.searchParams.get("from")
+                ? { from: u.searchParams.get("from")! }
+                : {}),
+              ...(u.searchParams.get("to")
+                ? { to: u.searchParams.get("to")! }
+                : {}),
+              take: Number(u.searchParams.get("limit") ?? "50"),
+            },
+            tenant.id,
+          ),
         );
       }
       const depositOperation =
@@ -924,6 +1028,7 @@ export class AuthHandler {
             depositOperation[1]!,
             body.action,
             body.reason,
+            tenant.id,
           ),
         );
       }
@@ -946,6 +1051,7 @@ export class AuthHandler {
             auth.user.id,
             BigInt(adminTicket[1]!),
             true,
+            tenant.id,
           ),
         );
       }
@@ -964,6 +1070,7 @@ export class AuthHandler {
           auth.user.id,
           adminAttachmentDownload[1]!,
           true,
+          tenant.id,
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/catalog") {
@@ -1202,7 +1309,10 @@ export class AuthHandler {
         const url = new URL(request.url ?? path, this.config.apiUrl);
         return this.ok(
           response,
-          await this.admin.transactions(Object.fromEntries(url.searchParams)),
+          await this.admin.transactions(
+            Object.fromEntries(url.searchParams),
+            tenant.id,
+          ),
         );
       }
       if (request.method === "GET" && adminWallet) {
@@ -1225,10 +1335,14 @@ export class AuthHandler {
               adminWallet[1]!,
               Number(url.searchParams.get("page") ?? "1"),
               Number(url.searchParams.get("limit") ?? "20"),
+              tenant.id,
             ),
           );
         }
-        return this.ok(response, await this.wallet.summary(adminWallet[1]!));
+        return this.ok(
+          response,
+          await this.wallet.summary(adminWallet[1]!, tenant.id),
+        );
       }
       if (["POST", "PATCH", "PUT", "DELETE"].includes(request.method ?? "")) {
         const csrf = this.cookie(request, "smm_csrf");
@@ -1256,7 +1370,12 @@ export class AuthHandler {
           );
         return this.ok(
           response,
-          await this.orders.create(auth.user.id, await this.body(request), key),
+          await this.orders.create(
+            auth.user.id,
+            tenant.id,
+            await this.body(request),
+            key,
+          ),
         );
       }
       const adminOrderMutation =
@@ -1289,6 +1408,7 @@ export class AuthHandler {
             await this.admin!.syncOrderFromProvider(
               auth.user.id,
               adminOrderMutation[1]!,
+              tenant.id,
             ),
           );
         if (adminOrderMutation[2] === "refund")
@@ -1298,6 +1418,7 @@ export class AuthHandler {
               auth.user.id,
               adminOrderMutation[1]!,
               await this.body(request),
+              tenant.id,
             ),
           );
         if (adminOrderMutation[2] === "retry-provider") {
@@ -1313,6 +1434,7 @@ export class AuthHandler {
               auth.user.id,
               adminOrderMutation[1]!,
               { ...(await this.body(request)), idempotencyKey },
+              tenant.id,
             ),
           );
         }
@@ -1322,6 +1444,7 @@ export class AuthHandler {
             auth.user.id,
             adminOrderMutation[1]!,
             await this.body(request),
+            tenant.id,
           ),
         );
       }
@@ -1351,6 +1474,7 @@ export class AuthHandler {
             auth.user.id,
             userPriceGroup[1]!,
             await this.body(request),
+            tenant.id,
           ),
         );
       }
@@ -1367,7 +1491,10 @@ export class AuthHandler {
           );
         return this.ok(
           response,
-          await this.admin!.bulkPriceGroupPreview(await this.body(request)),
+          await this.admin!.bulkPriceGroupPreview(
+            await this.body(request),
+            tenant.id,
+          ),
         );
       }
       if (
@@ -1386,6 +1513,7 @@ export class AuthHandler {
           await this.admin!.bulkAssignPriceGroup(
             auth.user.id,
             await this.body(request),
+            tenant.id,
           ),
         );
       }
@@ -1405,6 +1533,7 @@ export class AuthHandler {
           await this.admin!.updatePriceGroupSettings(
             auth.user.id,
             await this.body(request),
+            tenant.id,
           ),
         );
       }
@@ -1429,12 +1558,17 @@ export class AuthHandler {
         delete body.newPassword;
         return this.ok(
           response,
-          await this.admin!.updateUser(auth.user.id, userUpdate[1]!, {
-            ...body,
-            ...(newPassword
-              ? { passwordHash: await hashPassword(newPassword) }
-              : {}),
-          }),
+          await this.admin!.updateUser(
+            auth.user.id,
+            userUpdate[1]!,
+            {
+              ...body,
+              ...(newPassword
+                ? { passwordHash: await hashPassword(newPassword) }
+                : {}),
+            },
+            tenant.id,
+          ),
         );
       }
       if (request.method === "POST" && userRoles) {
@@ -1451,7 +1585,12 @@ export class AuthHandler {
           : [];
         return this.ok(
           response,
-          await this.admin!.roles(auth.user.id, userRoles[1]!, roles),
+          await this.admin!.roles(
+            auth.user.id,
+            userRoles[1]!,
+            roles,
+            tenant.id,
+          ),
         );
       }
       if (request.method === "POST" && userSessions) {
@@ -1464,7 +1603,11 @@ export class AuthHandler {
           );
         return this.ok(
           response,
-          await this.admin!.revokeSessions(auth.user.id, userSessions[1]!),
+          await this.admin!.revokeSessions(
+            auth.user.id,
+            userSessions[1]!,
+            tenant.id,
+          ),
         );
       }
       if (request.method === "POST" && path === "/api/v1/admin/staff") {
@@ -1486,6 +1629,7 @@ export class AuthHandler {
             },
             auth.access.permissions,
             auth.access.roles.includes("SUPER_ADMIN"),
+            tenant.id,
           );
         await this.store.createPasswordReset(
           staff.id,
@@ -1522,6 +1666,7 @@ export class AuthHandler {
             staffUpdate[1]!,
             await this.body(request),
             auth.access.roles.includes("SUPER_ADMIN"),
+            tenant.id,
           ),
         );
       }
@@ -1534,12 +1679,16 @@ export class AuthHandler {
             "Permission denied",
           );
         const token = opaqueToken();
+        await this.admin!.revokeSessions(
+          auth.user.id,
+          adminReset[1]!,
+          tenant.id,
+        );
         await this.store.createPasswordReset(
           adminReset[1]!,
           tokenHash(token),
           new Date(Date.now() + 60 * 60 * 1000),
         );
-        await this.admin!.revokeSessions(auth.user.id, adminReset[1]!);
         await this.admin!.recordSecurityAction(
           auth.user.id,
           adminReset[1]!,
@@ -1721,7 +1870,7 @@ export class AuthHandler {
           throw new InputError("REPORT_DATE_INVALID", "Invalid report date");
         return this.ok(
           response,
-          await this.admin!.rebuildReport(auth.user.id, date),
+          await this.admin!.rebuildReport(auth.user.id, date, tenant.id),
         );
       }
       const couponUpdate = /^\/api\/v1\/admin\/coupons\/([0-9a-f-]{36})$/.exec(
@@ -1760,7 +1909,11 @@ export class AuthHandler {
       if (request.method === "POST" && path === "/api/v1/customer/tickets")
         return this.ok(
           response,
-          await this.support!.create(auth.user.id, await this.body(request)),
+          await this.support!.create(
+            auth.user.id,
+            await this.body(request),
+            tenant.id,
+          ),
         );
       const adminTicketAction =
         /^\/api\/v1\/admin\/tickets\/(\d+)\/(reply|close|reopen)$/.exec(path);
@@ -1784,11 +1937,13 @@ export class AuthHandler {
                 ticketId,
                 await this.body(request),
                 true,
+                tenant.id,
               )
             : await this.support!.adminStatus(
                 auth.user.id,
                 ticketId,
                 adminTicketAction[2] === "close" ? "CLOSED" : "OPEN",
+                tenant.id,
               ),
         );
       }
@@ -1808,6 +1963,7 @@ export class AuthHandler {
           auth.user.id,
           BigInt(adminAttachmentUpload[1]!),
           true,
+          tenant.id,
         );
       }
       const customerAttachmentUpload =
@@ -1821,6 +1977,7 @@ export class AuthHandler {
           auth.user.id,
           BigInt(customerAttachmentUpload[1]!),
           false,
+          tenant.id,
         );
       if (request.method === "GET" && customerAttachmentDownload)
         return await this.downloadAttachment(
@@ -1828,6 +1985,7 @@ export class AuthHandler {
           auth.user.id,
           customerAttachmentDownload[1]!,
           false,
+          tenant.id,
         );
       const ticketReply = /^\/api\/v1\/customer\/tickets\/(\d+)\/reply$/.exec(
         path,
@@ -1839,6 +1997,8 @@ export class AuthHandler {
             auth.user.id,
             BigInt(ticketReply[1]!),
             await this.body(request),
+            false,
+            tenant.id,
           ),
         );
       const notificationRead =
@@ -1849,11 +2009,18 @@ export class AuthHandler {
         request.method === "POST" &&
         path === "/api/v1/customer/notifications/read-all"
       )
-        return this.ok(response, await this.support!.markAllRead(auth.user.id));
+        return this.ok(
+          response,
+          await this.support!.markAllRead(auth.user.id, tenant.id),
+        );
       if (request.method === "POST" && notificationRead)
         return this.ok(
           response,
-          await this.support!.markRead(auth.user.id, notificationRead[1]!),
+          await this.support!.markRead(
+            auth.user.id,
+            notificationRead[1]!,
+            tenant.id,
+          ),
         );
       const lifecycle =
         /^\/api\/v1\/customer\/orders\/([0-9]{6,}|[0-9a-f-]{36})\/(refill|cancel)$/.exec(
@@ -1870,6 +2037,7 @@ export class AuthHandler {
           response,
           await this.lifecycle!.request(
             auth.user.id,
+            tenant.id,
             lifecycle[1]!,
             lifecycle[2] as any,
             key,
@@ -2147,6 +2315,7 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.wallet.mutate({
+            siteId: tenant.id,
             userId: adminWallet[1]!,
             amount: String(body.amount ?? ""),
             type: type as "ADMIN_ADD" | "ADMIN_SUBTRACT" | "ADJUSTMENT",
@@ -2210,7 +2379,10 @@ export class AuthHandler {
         return this.ok(response, {
           user: this.publicUser(auth.user),
           area: "customer",
-          dashboard: await this.store.customerDashboard(auth.user.id),
+          dashboard: await this.store.customerDashboard(
+            auth.user.id,
+            tenant.id,
+          ),
         });
       if (path.startsWith("/api/v1/admin") && request.method === "GET") {
         if (!canAccessAdmin(auth.access))
@@ -2224,7 +2396,7 @@ export class AuthHandler {
           user: this.publicUser(auth.user),
           area: "admin",
           access: auth.access,
-          dashboard: await this.store.adminDashboard(),
+          dashboard: await this.store.adminDashboard(tenant.id),
         });
       }
       return this.error(response, 404, "NOT_FOUND", "Route not found");
@@ -2254,6 +2426,24 @@ export class AuthHandler {
               : 422;
         return this.error(response, status, error.code, error.message);
       }
+      if (error instanceof TenantError)
+        return this.error(
+          response,
+          error.code === "PAYMENT_REQUIRED"
+            ? 402
+            : error.code.endsWith("NOT_FOUND")
+              ? 404
+              : 422,
+          error.code,
+          error.message,
+        );
+      if (error instanceof PanelDnsProviderError)
+        return this.error(
+          response,
+          error.code === "PANEL_DNS_NOT_CONFIGURED" ? 503 : 502,
+          error.code,
+          error.message,
+        );
       if (
         error instanceof AdminOperationError ||
         error instanceof SupportError ||
@@ -2435,12 +2625,8 @@ export class AuthHandler {
     const session = await this.store.findSession(tokenHash(rawToken));
     if (!session || session.revokedAt || session.expiresAt <= new Date())
       return null;
-    const user = await this.store.findUserById(session.userId);
-    if (
-      !user ||
-      user.status !== "ACTIVE" ||
-      (user.siteId && user.siteId !== siteId)
-    )
+    const user = await this.store.findUserById(session.userId, siteId);
+    if (!user || user.status !== "ACTIVE" || user.siteId !== siteId)
       return null;
     return {
       rawToken,
@@ -2594,6 +2780,7 @@ export class AuthHandler {
     userId: string,
     ticketId: bigint,
     isStaff: boolean,
+    siteId: string,
   ): Promise<true> {
     if (!this.storage)
       return this.error(
@@ -2618,6 +2805,7 @@ export class AuthHandler {
         ticketId,
         { storageKey: stored.key, originalName: name, mime, size: stored.size },
         isStaff,
+        siteId,
       ),
     );
   }
@@ -2626,6 +2814,7 @@ export class AuthHandler {
     userId: string,
     id: string,
     isStaff: boolean,
+    siteId: string,
   ): Promise<true> {
     if (!this.storage)
       return this.error(
@@ -2634,7 +2823,7 @@ export class AuthHandler {
         "STORAGE_UNAVAILABLE",
         "Storage unavailable",
       );
-    const item = await this.support!.attachment(userId, id, isStaff),
+    const item = await this.support!.attachment(userId, id, isStaff, siteId),
       data = await this.storage.read(item.storageKey),
       filename = String(item.originalName).replace(/[^A-Za-z0-9._-]/g, "_");
     response.statusCode = 200;

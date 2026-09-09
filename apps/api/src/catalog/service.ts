@@ -1,6 +1,7 @@
 import { decimalInput, moneyUnits, resolveCustomerRate } from "./pricing.js";
 import { BulkPricingService } from "./bulk-pricing.js";
 import { repriceMappedServices } from "./repricing.js";
+import { ROOT_SITE_ID } from "../tenant/context.js";
 
 export class CatalogError extends Error {
   constructor(
@@ -30,11 +31,14 @@ const safeImageUrl = (value: unknown, limit = 2048): string | null => {
   if (!result) return null;
   try {
     const url = new URL(result);
-    if (!['https:', 'http:'].includes(url.protocol) || result.length > limit)
+    if (!["https:", "http:"].includes(url.protocol) || result.length > limit)
       throw new Error();
     return result;
   } catch {
-    throw new CatalogError('IMAGE_URL_INVALID', 'Link ảnh phải là URL HTTP hoặc HTTPS hợp lệ');
+    throw new CatalogError(
+      "IMAGE_URL_INVALID",
+      "Link ảnh phải là URL HTTP hoặc HTTPS hợp lệ",
+    );
   }
 };
 const mutationReason = (value: unknown): string => {
@@ -110,6 +114,7 @@ export class CatalogService {
 
   /** A deliberately small, read-only catalogue for unauthenticated marketing pages. */
   async publicCatalog(query: {
+    siteId: string;
     page: number;
     limit: number;
     search?: string;
@@ -153,9 +158,30 @@ export class CatalogService {
       categories = categories.filter(
         (item: any) => item.slug === slug(query.category),
       );
+    const siteRules =
+      query.siteId === ROOT_SITE_ID
+        ? []
+        : await this.db.siteServiceRule.findMany({
+            where: { siteId: query.siteId, active: true },
+            select: {
+              serviceId: true,
+              fixedRate: true,
+              markupPercent: true,
+              fixedProfit: true,
+              minProfit: true,
+              minOverride: true,
+              maxOverride: true,
+            },
+          });
+    const ruleMap = new Map(
+      siteRules.map((rule: any) => [rule.serviceId, rule]),
+    );
     const where = {
       active: true,
       deletedAt: null,
+      ...(query.siteId === ROOT_SITE_ID
+        ? { siteId: query.siteId }
+        : { id: { in: siteRules.map((rule: any) => rule.serviceId) } }),
       categoryId: { in: categories.map((category: any) => category.id) },
       ...(query.search
         ? {
@@ -201,7 +227,9 @@ export class CatalogService {
       total,
       pages: Math.ceil(total / limit),
       categories,
-      services,
+      services: services.map((service: any) =>
+        this.applySiteRule(service, ruleMap.get(service.id)),
+      ),
     };
   }
 
@@ -257,6 +285,7 @@ export class CatalogService {
   async customerCatalog(
     userId: string,
     query: {
+      siteId: string;
       page: number;
       limit: number;
       category?: string;
@@ -300,9 +329,30 @@ export class CatalogService {
           ? (platformMap.get(item.platformId) ?? null)
           : null,
       }));
+    const siteRules =
+      query.siteId === ROOT_SITE_ID
+        ? []
+        : await this.db.siteServiceRule.findMany({
+            where: { siteId: query.siteId, active: true },
+            select: {
+              serviceId: true,
+              fixedRate: true,
+              markupPercent: true,
+              fixedProfit: true,
+              minProfit: true,
+              minOverride: true,
+              maxOverride: true,
+            },
+          });
+    const siteRuleMap = new Map(
+      siteRules.map((rule: any) => [rule.serviceId, rule]),
+    );
     const where = {
       active: true,
       deletedAt: null,
+      ...(query.siteId === ROOT_SITE_ID
+        ? { siteId: query.siteId }
+        : { id: { in: siteRules.map((rule: any) => rule.serviceId) } }),
       categoryId: { in: categories.map((category: any) => category.id) },
       ...(query.search
         ? {
@@ -310,8 +360,8 @@ export class CatalogService {
           }
         : {}),
     };
-    const user = await this.db.user.findUnique({
-      where: { id: userId },
+    const user = await this.db.user.findFirst({
+      where: { id: userId, siteId: query.siteId },
       select: { priceGroupId: true },
     });
     const [total, services, rules, group] = await Promise.all([
@@ -350,7 +400,11 @@ export class CatalogService {
         : [],
       user?.priceGroupId
         ? this.db.priceGroup.findFirst({
-            where: { id: user.priceGroupId, active: true },
+            where: {
+              id: user.priceGroupId,
+              siteId: query.siteId,
+              active: true,
+            },
           })
         : null,
     ]);
@@ -378,17 +432,44 @@ export class CatalogService {
       services: services.map((service: any) => {
         const source: any = costMap.get(service.id);
         const rule: any = ruleMap.get(service.id);
-        return {
-          ...service,
-          serviceNumber: String(service.serviceNumber),
-          rate: resolveCustomerRate({
-            service: source,
-            group,
-            override: rule,
-            providerCost: source.providerCost,
-          }),
-        };
+        return this.applySiteRule(
+          {
+            ...service,
+            serviceNumber: String(service.serviceNumber),
+            rate: resolveCustomerRate({
+              service: source,
+              group,
+              override: rule,
+              providerCost: source.providerCost,
+            }),
+          },
+          siteRuleMap.get(service.id),
+        );
       }),
+    };
+  }
+
+  private applySiteRule(service: any, rule: any) {
+    if (!rule) return service;
+    const base = moneyUnits(service.rate);
+    const percent = BigInt(
+      String(rule.markupPercent ?? 0).split(".")[0] || "0",
+    );
+    const fixed = moneyUnits(rule.fixedProfit ?? 0);
+    const minimum = moneyUnits(rule.minProfit ?? 0);
+    const rate =
+      rule.fixedRate != null
+        ? String(rule.fixedRate)
+        : moneyText(
+            base +
+              (base * percent) / 100n +
+              (fixed > minimum ? fixed : minimum),
+          );
+    return {
+      ...service,
+      rate,
+      min: rule.minOverride ?? service.min,
+      max: rule.maxOverride ?? service.max,
     };
   }
 
@@ -715,7 +796,12 @@ export class CatalogService {
             }
           : {}),
         ...(input.defaultMarkupPercent !== undefined
-          ? { defaultMarkupPercent: decimalInput(input.defaultMarkupPercent, true) }
+          ? {
+              defaultMarkupPercent: decimalInput(
+                input.defaultMarkupPercent,
+                true,
+              ),
+            }
           : {}),
         ...(input.defaultFixedProfit !== undefined
           ? { defaultFixedProfit: decimalInput(input.defaultFixedProfit, true) }
@@ -1034,7 +1120,9 @@ export class CatalogService {
       name: name(input.name).slice(0, 120),
       slug: slug(input.slug).slice(0, 140),
       icon: safeImageUrl(input.icon, 255),
-      description: input.description ? String(input.description).trim().slice(0, 5000) : null,
+      description: input.description
+        ? String(input.description).trim().slice(0, 5000)
+        : null,
       sortOrder: integer(input.sortOrder ?? 0, "sortOrder"),
       active: input.active !== false,
     };
@@ -1070,7 +1158,12 @@ export class CatalogService {
           ...(input.icon !== undefined
             ? { icon: safeImageUrl(input.icon, 255) }
             : {}),
-          ...(input.description !== undefined ? { description: String(input.description).trim().slice(0, 5000) || null } : {}),
+          ...(input.description !== undefined
+            ? {
+                description:
+                  String(input.description).trim().slice(0, 5000) || null,
+              }
+            : {}),
           ...(input.sortOrder !== undefined
             ? { sortOrder: integer(input.sortOrder, "sortOrder") }
             : {}),
@@ -1135,7 +1228,12 @@ export class CatalogService {
         ...(input.sortOrder !== undefined
           ? { sortOrder: integer(input.sortOrder, "sortOrder") }
           : {}),
-        ...(input.description !== undefined ? { description: String(input.description).trim().slice(0, 5000) || null } : {}),
+        ...(input.description !== undefined
+          ? {
+              description:
+                String(input.description).trim().slice(0, 5000) || null,
+            }
+          : {}),
         ...(input.icon !== undefined ? { icon: safeImageUrl(input.icon) } : {}),
       };
       const item = await tx.serviceCategory.update({ where: { id }, data });

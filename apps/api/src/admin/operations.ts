@@ -97,7 +97,7 @@ export class AdminOperationsService {
     this.snapshots = new DailySnapshotService(db);
   }
 
-  async transactions(query: any) {
+  async transactions(query: any, siteId = ROOT_SITE_ID) {
     const page = Math.max(1, Number(query.page) || 1),
       limit = clamp(query.limit),
       search = optional(query.search),
@@ -112,6 +112,7 @@ export class AdminOperationsService {
           : {}),
       },
       where: any = {
+        siteId,
         ...(type ? { type } : {}),
         ...(Object.keys(createdAt).length ? { createdAt } : {}),
         ...(search
@@ -161,7 +162,7 @@ export class AdminOperationsService {
     return { items, page, limit, total, pages: Math.ceil(total / limit) };
   }
 
-  async users(query: any) {
+  async users(query: any, siteId = ROOT_SITE_ID) {
     const page = Math.max(1, Number(query.page) || 1),
       limit = clamp(query.limit),
       search = optional(query.search) ?? "",
@@ -172,6 +173,7 @@ export class AdminOperationsService {
         "USER_STATUS_INVALID",
       ),
       where: any = {
+        siteId,
         ...(status ? { status } : {}),
         ...(optional(query.priceGroupId)
           ? {
@@ -245,6 +247,7 @@ export class AdminOperationsService {
     const groups = this.db.priceGroup?.findMany
       ? await this.db.priceGroup.findMany({
           where: {
+            siteId,
             active: true,
             OR: [
               { id: { in: groupIds } },
@@ -259,7 +262,9 @@ export class AdminOperationsService {
       [wallets, userRoles, roleRows, deposits, orders, lastLogins] =
         await Promise.all([
           this.db.wallet?.findMany
-            ? this.db.wallet.findMany({ where: { userId: { in: ids } } })
+            ? this.db.wallet.findMany({
+                where: { siteId, userId: { in: ids } },
+              })
             : [],
           this.db.userRole?.findMany
             ? this.db.userRole.findMany({ where: { userId: { in: ids } } })
@@ -268,21 +273,21 @@ export class AdminOperationsService {
           this.db.deposit?.groupBy
             ? this.db.deposit.groupBy({
                 by: ["userId"],
-                where: { userId: { in: ids }, status: "PAID" },
+                where: { siteId, userId: { in: ids }, status: "PAID" },
                 _sum: { netAmount: true },
               })
             : [],
           this.db.order?.groupBy
             ? this.db.order.groupBy({
                 by: ["userId"],
-                where: { userId: { in: ids } },
+                where: { siteId, userId: { in: ids } },
                 _sum: { charge: true, refundedAmount: true },
                 _count: { _all: true },
               })
             : [],
           this.db.loginHistory?.findMany
             ? this.db.loginHistory.findMany({
-                where: { userId: { in: ids }, success: true },
+                where: { siteId, userId: { in: ids }, success: true },
                 orderBy: { createdAt: "desc" },
               })
             : [],
@@ -329,11 +334,14 @@ export class AdminOperationsService {
     };
   }
 
-  async user(id: string) {
-    const user = await this.db.user.findUnique({
-      where: /^#?\d+$/.test(id)
-        ? { userNumber: BigInt(id.replace(/^#/, "")) }
-        : { id },
+  async user(id: string, siteId = ROOT_SITE_ID) {
+    const user = await this.db.user.findFirst({
+      where: {
+        siteId,
+        ...(/^#?\d+$/.test(id)
+          ? { userNumber: BigInt(id.replace(/^#/, "")) }
+          : { id }),
+      },
       select: {
         id: true,
         userNumber: true,
@@ -385,6 +393,7 @@ export class AdminOperationsService {
         : null,
       this.db.priceGroup.findMany({
         where: {
+          siteId,
           active: true,
           code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] },
         },
@@ -552,16 +561,26 @@ export class AdminOperationsService {
     };
   }
 
-  async assignPriceGroup(actorId: string, userId: string, input: any) {
+  async assignPriceGroup(
+    actorId: string,
+    userId: string,
+    input: any,
+    siteId = ROOT_SITE_ID,
+  ) {
     const reason = optional(input.reason)?.slice(0, 500);
     return this.db.$transaction(async (tx: any) => {
       const [user, next] = await Promise.all([
-        tx.user.findUnique({
-          where: { id: userId },
-          select: { id: true, priceGroupId: true },
-        }),
+        tx.user.findFirst
+          ? tx.user.findFirst({
+              where: { id: userId, siteId },
+              select: { id: true, priceGroupId: true },
+            })
+          : tx.user.findUnique({
+              where: { id: userId },
+              select: { id: true, priceGroupId: true },
+            }),
         tx.priceGroup.findFirst({
-          where: { id: String(input.priceGroupId ?? ""), active: true },
+          where: { id: String(input.priceGroupId ?? ""), siteId, active: true },
         }),
       ]);
       if (!user)
@@ -586,6 +605,7 @@ export class AdminOperationsService {
         );
       const history = await tx.priceGroupHistory.create({
         data: {
+          siteId,
           userId,
           oldPriceGroupId: previous?.id,
           oldPriceGroupCode: previous?.code,
@@ -613,7 +633,7 @@ export class AdminOperationsService {
     });
   }
 
-  private async bulkPriceGroupCandidates(db: any, input: any) {
+  private async bulkPriceGroupCandidates(db: any, input: any, siteId: string) {
     const ids = Array.isArray(input.userIds)
       ? [...new Set(input.userIds.map(String))].slice(0, 5000)
       : [];
@@ -624,10 +644,10 @@ export class AdminOperationsService {
       );
     const [next, users] = await Promise.all([
       db.priceGroup.findFirst({
-        where: { id: String(input.priceGroupId ?? ""), active: true },
+        where: { id: String(input.priceGroupId ?? ""), siteId, active: true },
       }),
       db.user.findMany({
-        where: { id: { in: ids }, deletedAt: null },
+        where: { id: { in: ids }, siteId, deletedAt: null },
         select: { id: true, email: true, username: true, priceGroupId: true },
       }),
     ]);
@@ -653,8 +673,8 @@ export class AdminOperationsService {
     };
   }
 
-  async bulkPriceGroupPreview(input: any) {
-    const result = await this.bulkPriceGroupCandidates(this.db, input);
+  async bulkPriceGroupPreview(input: any, siteId = ROOT_SITE_ID) {
+    const result = await this.bulkPriceGroupCandidates(this.db, input, siteId);
     return {
       count: result.users.length,
       priceGroup: {
@@ -666,10 +686,14 @@ export class AdminOperationsService {
     };
   }
 
-  async bulkAssignPriceGroup(actorId: string, input: any) {
+  async bulkAssignPriceGroup(
+    actorId: string,
+    input: any,
+    siteId = ROOT_SITE_ID,
+  ) {
     const reason = optional(input.reason)?.slice(0, 500);
     return this.db.$transaction(async (tx: any) => {
-      const result = await this.bulkPriceGroupCandidates(tx, input);
+      const result = await this.bulkPriceGroupCandidates(tx, input, siteId);
       for (const user of result.users) {
         const changed = await tx.user.updateMany({
           where: { id: user.id, priceGroupId: user.priceGroupId },
@@ -685,6 +709,7 @@ export class AdminOperationsService {
           );
         await tx.priceGroupHistory.create({
           data: {
+            siteId,
             userId: user.id,
             oldPriceGroupId: user.oldPriceGroup?.id,
             oldPriceGroupCode: user.oldPriceGroup?.code,
@@ -701,6 +726,7 @@ export class AdminOperationsService {
       }
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "USER_PRICE_GROUP_BULK_CHANGE",
           resource: "User",
@@ -715,20 +741,26 @@ export class AdminOperationsService {
     });
   }
 
-  async customerPriceGroup(userId: string) {
+  async customerPriceGroup(userId: string, siteId = ROOT_SITE_ID) {
     const [user, settings, groups] = await Promise.all([
-      this.db.user.findUnique({
-        where: { id: userId },
-        select: { priceGroupId: true },
-      }),
+      this.db.user.findFirst
+        ? this.db.user.findFirst({
+            where: { id: userId, siteId },
+            select: { priceGroupId: true },
+          })
+        : this.db.user.findUnique({
+            where: { id: userId },
+            select: { priceGroupId: true },
+          }),
       this.db.setting.findMany({
         where: {
+          siteId,
           group: "pricing",
           key: { in: ["autoUpgradeEnabled", "autoDowngradeEnabled"] },
         },
       }),
       this.db.priceGroup.findMany({
-        where: { active: true },
+        where: { siteId, active: true },
         orderBy: { tierOrder: "asc" },
       }),
     ]);
@@ -746,14 +778,14 @@ export class AdminOperationsService {
         : null;
     const [deposits, spending, completedOrders] = await Promise.all([
       this.db.deposit.aggregate({
-        where: { userId, status: "PAID" },
+        where: { userId, siteId, status: "PAID" },
         _sum: { netAmount: true },
       }),
       this.db.order.aggregate({
-        where: { userId },
+        where: { userId, siteId },
         _sum: { charge: true, refundedAmount: true },
       }),
-      this.db.order.count({ where: { userId, status: "COMPLETED" } }),
+      this.db.order.count({ where: { userId, siteId, status: "COMPLETED" } }),
     ]);
     const stats = {
       successfulDeposits: String(deposits._sum.netAmount ?? "0"),
@@ -840,10 +872,15 @@ export class AdminOperationsService {
     };
   }
 
-  async updateUser(actorId: string, id: string, input: any) {
+  async updateUser(
+    actorId: string,
+    id: string,
+    input: any,
+    siteId = ROOT_SITE_ID,
+  ) {
     if (actorId === id && input.status === "BANNED")
       throw new AdminOperationError("SELF_BAN_DENIED", "Cannot ban yourself");
-    const current = await this.user(id),
+    const current = await this.user(id, siteId),
       before = {
         id: current.id,
         email: current.email,
@@ -908,6 +945,7 @@ export class AdminOperationsService {
         });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "USER_UPDATE",
           resource: "User",
@@ -920,13 +958,15 @@ export class AdminOperationsService {
     });
   }
 
-  async priceGroupConfiguration() {
+  async priceGroupConfiguration(siteId = ROOT_SITE_ID) {
     const [priceGroups, settings] = await Promise.all([
       this.db.priceGroup.findMany({
+        where: { siteId },
         orderBy: [{ tierOrder: "asc" }, { name: "asc" }],
       }),
       this.db.setting.findMany({
         where: {
+          siteId,
           group: "pricing",
           key: { in: ["autoUpgradeEnabled", "autoDowngradeEnabled"] },
         },
@@ -942,21 +982,28 @@ export class AdminOperationsService {
     };
   }
 
-  async updatePriceGroupSettings(actorId: string, input: any) {
+  async updatePriceGroupSettings(
+    actorId: string,
+    input: any,
+    siteId = ROOT_SITE_ID,
+  ) {
     const values = {
       autoUpgradeEnabled: input.autoUpgradeEnabled === true,
       autoDowngradeEnabled: input.autoDowngradeEnabled === true,
     };
     return this.db.$transaction(async (tx: any) => {
-      const before = await tx.setting.findMany({ where: { group: "pricing" } });
+      const before = await tx.setting.findMany({
+        where: { siteId, group: "pricing" },
+      });
       for (const [key, value] of Object.entries(values))
         await tx.setting.upsert({
-          where: { group_key: { group: "pricing", key } },
-          create: { key, value, group: "pricing", encrypted: false },
+          where: { siteId_group_key: { siteId, group: "pricing", key } },
+          create: { siteId, key, value, group: "pricing", encrypted: false },
           update: { value, encrypted: false },
         });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "PRICE_GROUP_POLICY_UPDATE",
           resource: "Setting",
@@ -968,7 +1015,12 @@ export class AdminOperationsService {
     });
   }
 
-  async roles(actorId: string, id: string, codes: string[]) {
+  async roles(
+    actorId: string,
+    id: string,
+    codes: string[],
+    siteId = ROOT_SITE_ID,
+  ) {
     if (!Array.isArray(codes) || !codes.length)
       throw new AdminOperationError(
         "ROLES_REQUIRED",
@@ -984,6 +1036,11 @@ export class AdminOperationsService {
     });
     if (roles.length !== new Set(codes).size)
       throw new AdminOperationError("ROLE_INVALID", "Invalid role");
+    if (
+      this.db.user?.findFirst &&
+      !(await this.db.user.findFirst({ where: { id, siteId } }))
+    )
+      throw new AdminOperationError("USER_NOT_FOUND", "User not found");
     return this.db.$transaction(async (tx: any) => {
       const before = await tx.userRole.findMany({ where: { userId: id } });
       await tx.userRole.deleteMany({ where: { userId: id } });
@@ -1004,7 +1061,12 @@ export class AdminOperationsService {
     });
   }
 
-  async revokeSessions(actorId: string, id: string) {
+  async revokeSessions(actorId: string, id: string, siteId = ROOT_SITE_ID) {
+    if (
+      this.db.user?.findFirst &&
+      !(await this.db.user.findFirst({ where: { id, siteId } }))
+    )
+      throw new AdminOperationError("USER_NOT_FOUND", "User not found");
     const result = await this.db.session.updateMany({
       where: { userId: id, revokedAt: null },
       data: { revokedAt: new Date() },
@@ -1037,7 +1099,7 @@ export class AdminOperationsService {
     });
   }
 
-  async staff() {
+  async staff(siteId = ROOT_SITE_ID) {
     const roles = await this.db.role.findMany({
       where: { code: { in: ["STAFF", "ADMIN", "SUPER_ADMIN"] } },
     });
@@ -1046,6 +1108,7 @@ export class AdminOperationsService {
     });
     const users = await this.db.user.findMany({
       where: {
+        siteId,
         id: { in: links.map((link: any) => link.userId) },
         deletedAt: null,
       },
@@ -1062,6 +1125,7 @@ export class AdminOperationsService {
       [
         this.db.loginHistory.findMany({
           where: {
+            siteId,
             userId: { in: users.map((user: any) => user.id) },
             success: true,
           },
@@ -1127,7 +1191,7 @@ export class AdminOperationsService {
     };
   }
 
-  async staffCandidates(search: unknown) {
+  async staffCandidates(search: unknown, siteId = ROOT_SITE_ID) {
     const term = String(search ?? "").trim();
     if (term.length < 2 || term.length > 254)
       throw new AdminOperationError(
@@ -1148,6 +1212,7 @@ export class AdminOperationsService {
     if (uuid) searchConditions.push({ id: term });
     const users = await this.db.user.findMany({
       where: {
+        siteId,
         deletedAt: null,
         OR: searchConditions,
       },
@@ -1197,7 +1262,7 @@ export class AdminOperationsService {
     });
   }
 
-  async customerSearch(search: unknown) {
+  async customerSearch(search: unknown, siteId = ROOT_SITE_ID) {
     const term = String(search ?? "").trim();
     if (term.length < 2 || term.length > 254)
       throw new AdminOperationError(
@@ -1212,7 +1277,7 @@ export class AdminOperationsService {
     if (/^\d+$/.test(numericTerm))
       conditions.push({ userNumber: { equals: BigInt(numericTerm) } });
     const users = await this.db.user.findMany({
-      where: { deletedAt: null, OR: conditions },
+      where: { siteId, deletedAt: null, OR: conditions },
       select: {
         id: true,
         userNumber: true,
@@ -1237,6 +1302,7 @@ export class AdminOperationsService {
     input: any,
     actorPermissions: string[] = [],
     superAdmin = false,
+    siteId = ROOT_SITE_ID,
   ) {
     const roleCode = input.role === "ADMIN" ? "ADMIN" : "STAFF",
       reason = optional(input.reason),
@@ -1263,9 +1329,11 @@ export class AdminOperationsService {
           where: { code: roleCode },
         }),
         normal =
-          (await tx.priceGroup.findUnique({ where: { code: "CUSTOMER" } })) ??
+          (await tx.priceGroup.findUnique({
+            where: { siteId_code: { siteId, code: "CUSTOMER" } },
+          })) ??
           (await tx.priceGroup.findFirst({
-            where: { active: true },
+            where: { siteId, active: true },
             orderBy: { tierOrder: "asc" },
           })),
         permissions = requested.length
@@ -1278,6 +1346,7 @@ export class AdminOperationsService {
         );
       const user = await tx.user.create({
         data: {
+          siteId,
           email: String(input.email).trim().toLowerCase(),
           username: String(input.username).trim(),
           passwordHash: String(input.passwordHash),
@@ -1296,9 +1365,12 @@ export class AdminOperationsService {
             grantedBy: actorId,
           })),
         });
-      await tx.wallet.create({ data: { userId: user.id, currency: "USD" } });
+      await tx.wallet.create({
+        data: { siteId, userId: user.id, currency: "USD" },
+      });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "STAFF_CREATE",
           resource: "User",
@@ -1327,12 +1399,18 @@ export class AdminOperationsService {
     targetId: string,
     input: any,
     superAdmin = false,
+    siteId = ROOT_SITE_ID,
   ) {
     if (actorId === targetId)
       throw new AdminOperationError(
         "SELF_ESCALATION_DENIED",
         "Cannot change your own staff access",
       );
+    if (
+      this.db.user?.findFirst &&
+      !(await this.db.user.findFirst({ where: { id: targetId, siteId } }))
+    )
+      throw new AdminOperationError("USER_NOT_FOUND", "User not found");
     const links = await this.db.userRole.findMany({
         where: { userId: targetId },
       }),
@@ -1445,7 +1523,7 @@ export class AdminOperationsService {
     });
   }
 
-  private async orderWhere(query: any, siteId?: string) {
+  private async orderWhere(query: any, siteId: string) {
     const status = enumFilter(
       query.status,
       [
@@ -1478,6 +1556,7 @@ export class AdminOperationsService {
     const customerRows = customerSearch
       ? await this.db.user.findMany({
           where: {
+            siteId,
             OR: [
               { username: { contains: customerSearch, mode: "insensitive" } },
               { email: { contains: customerSearch, mode: "insensitive" } },
@@ -1540,6 +1619,7 @@ export class AdminOperationsService {
       serviceSearch || categoryIds
         ? await this.db.service.findMany({
             where: {
+              siteId,
               ...(serviceSearch
                 ? {
                     OR: [
@@ -1558,7 +1638,7 @@ export class AdminOperationsService {
           })
         : [];
     const where: any = {
-      ...(siteId ? { siteId } : {}),
+      siteId,
       ...(status ? { status } : {}),
       ...(provider ? { providerId: provider } : {}),
       ...(providerSearch
@@ -1604,24 +1684,35 @@ export class AdminOperationsService {
     return { where, service };
   }
 
-  async orderFilterOptions(query: any) {
+  async orderFilterOptions(query: any, siteId = ROOT_SITE_ID) {
     const search = optional(query.search),
       kind = String(query.kind || "");
     if (kind === "provider")
-      return this.db.provider.findMany({
-        where: {
-          deletedAt: null,
-          ...(search
-            ? { name: { contains: search, mode: "insensitive" } }
-            : {}),
-        },
-        select: { id: true, name: true, status: true },
-        orderBy: { name: "asc" },
-        take: 30,
-      });
+      return this.db.order
+        .findMany({
+          where: { siteId, providerId: { not: null } },
+          distinct: ["providerId"],
+          select: { providerId: true },
+          take: 100,
+        })
+        .then((orders: any[]) =>
+          this.db.provider.findMany({
+            where: {
+              id: { in: orders.map((order) => order.providerId) },
+              deletedAt: null,
+              ...(search
+                ? { name: { contains: search, mode: "insensitive" } }
+                : {}),
+            },
+            select: { id: true, name: true, status: true },
+            orderBy: { name: "asc" },
+            take: 30,
+          }),
+        );
     if (kind === "service") {
       const rows = await this.db.service.findMany({
         where: {
+          siteId,
           deletedAt: null,
           ...(search
             ? {
@@ -1646,7 +1737,7 @@ export class AdminOperationsService {
     return [];
   }
 
-  async providerOrderIds(query: any, siteId?: string) {
+  async providerOrderIds(query: any, siteId = ROOT_SITE_ID) {
     const { where } = await this.orderWhere(query, siteId),
       limit = Math.min(5000, Math.max(1, Number(query.limit) || 5000));
     const rows = await this.db.order.findMany({
@@ -1665,15 +1756,20 @@ export class AdminOperationsService {
     };
   }
 
-  async orderServiceAnalytics(query: any, siteId?: string) {
+  async orderServiceAnalytics(query: any, siteId = ROOT_SITE_ID) {
     const { where, service } = await this.orderWhere(query, siteId);
     if (!service)
       throw new AdminOperationError("SERVICE_REQUIRED", "Select one service");
     const [meta, totals, statuses] = await Promise.all([
-      this.db.service.findUnique({
-        where: { id: service },
-        select: { id: true, serviceNumber: true, name: true },
-      }),
+      this.db.service.findFirst
+        ? this.db.service.findFirst({
+            where: { id: service, siteId },
+            select: { id: true, serviceNumber: true, name: true },
+          })
+        : this.db.service.findUnique({
+            where: { id: service },
+            select: { id: true, serviceNumber: true, name: true },
+          }),
       this.db.order.aggregate({
         where,
         _count: { _all: true },
@@ -1701,7 +1797,7 @@ export class AdminOperationsService {
     };
   }
 
-  async orders(query: any, siteId?: string) {
+  async orders(query: any, siteId = ROOT_SITE_ID) {
     const page = Math.max(1, Number(query.page) || 1),
       limit = clamp(query.limit),
       { where } = await this.orderWhere(query, siteId);
@@ -1716,6 +1812,7 @@ export class AdminOperationsService {
       this.db.order.groupBy
         ? this.db.order.groupBy({
             by: ["status", "providerId"],
+            where: { siteId },
             _count: { _all: true },
           })
         : [],
@@ -1724,6 +1821,7 @@ export class AdminOperationsService {
       items.length && this.db.user?.findMany
         ? this.db.user.findMany({
             where: {
+              siteId,
               id: { in: [...new Set(items.map((item: any) => item.userId))] },
             },
             select: { id: true, userNumber: true, email: true, username: true },
@@ -1732,6 +1830,7 @@ export class AdminOperationsService {
       items.length && this.db.service?.findMany
         ? this.db.service.findMany({
             where: {
+              siteId,
               id: {
                 in: [...new Set(items.map((item: any) => item.serviceId))],
               },
@@ -1792,15 +1891,15 @@ export class AdminOperationsService {
     };
   }
 
-  async order(reference: string) {
+  async order(reference: string, siteId = ROOT_SITE_ID) {
     const numericId = /^[0-9]+$/.test(reference)
       ? BigInt(reference) - 100000n
       : null;
     const order = await this.db.order.findFirst({
       where:
         numericId !== null && numericId > 0n
-          ? { id: numericId }
-          : { publicId: reference },
+          ? { id: numericId, siteId }
+          : { publicId: reference, siteId },
     });
     if (!order)
       throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
@@ -1846,15 +1945,19 @@ export class AdminOperationsService {
     };
   }
 
-  async syncOrderFromProvider(actorId: string, reference: string) {
+  async syncOrderFromProvider(
+    actorId: string,
+    reference: string,
+    siteId = ROOT_SITE_ID,
+  ) {
     const numericId = /^[0-9]+$/.test(reference)
       ? BigInt(reference) - 100000n
       : null;
     const order = await this.db.order.findFirst({
       where:
         numericId !== null && numericId > 0n
-          ? { id: numericId }
-          : { publicId: reference },
+          ? { id: numericId, siteId }
+          : { publicId: reference, siteId },
     });
     if (!order)
       throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
@@ -1920,7 +2023,12 @@ export class AdminOperationsService {
     );
   }
 
-  async retryProviderOrder(actorId: string, reference: string, input: any) {
+  async retryProviderOrder(
+    actorId: string,
+    reference: string,
+    input: any,
+    siteId = ROOT_SITE_ID,
+  ) {
     const reason = String(input?.reason ?? "").trim(),
       idempotencyKey = String(input?.idempotencyKey ?? "").trim();
     if (reason.length < 3 || reason.length > 500)
@@ -1933,7 +2041,7 @@ export class AdminOperationsService {
         "IDEMPOTENCY_KEY_INVALID",
         "Khóa chống trùng không hợp lệ",
       );
-    const order = await this.findOrderReference(reference);
+    const order = await this.findOrderReference(reference, siteId);
     return this.db.$transaction(async (tx: any) => {
       if (tx.$executeRawUnsafe)
         await tx.$executeRawUnsafe(
@@ -2215,7 +2323,12 @@ export class AdminOperationsService {
     });
   }
 
-  async refundOrder(actorId: string, reference: string, input: any) {
+  async refundOrder(
+    actorId: string,
+    reference: string,
+    input: any,
+    siteId = ROOT_SITE_ID,
+  ) {
     const reason = String(input?.reason ?? "").trim();
     if (reason.length < 3 || reason.length > 500)
       throw new AdminOperationError(
@@ -2231,7 +2344,7 @@ export class AdminOperationsService {
         "Tổng tiền hoàn không hợp lệ",
       );
     }
-    const found = await this.findOrderReference(reference);
+    const found = await this.findOrderReference(reference, siteId);
     return this.db.$transaction(async (tx: any) => {
       if (tx.$executeRawUnsafe)
         await tx.$executeRawUnsafe(
@@ -2316,14 +2429,19 @@ export class AdminOperationsService {
     });
   }
 
-  async updateOrder(actorId: string, reference: string, input: any) {
+  async updateOrder(
+    actorId: string,
+    reference: string,
+    input: any,
+    siteId = ROOT_SITE_ID,
+  ) {
     const reason = String(input?.reason ?? "").trim();
     if (reason.length < 3 || reason.length > 500)
       throw new AdminOperationError(
         "REASON_REQUIRED",
         "Vui lòng nhập lý do thao tác từ 3 đến 500 ký tự",
       );
-    const order = await this.findOrderReference(reference),
+    const order = await this.findOrderReference(reference, siteId),
       allowed = [
         "PENDING",
         "PROCESSING",
@@ -2511,28 +2629,32 @@ export class AdminOperationsService {
     }
   }
 
-  private async findOrderReference(reference: string) {
+  private async findOrderReference(reference: string, siteId: string) {
     const numericId = /^[0-9]+$/.test(reference)
       ? BigInt(reference) - 100000n
       : null;
     const order = await this.db.order.findFirst({
       where:
         numericId !== null && numericId > 0n
-          ? { id: numericId }
-          : { publicId: reference },
+          ? { id: numericId, siteId }
+          : { publicId: reference, siteId },
     });
     if (!order)
       throw new AdminOperationError("ORDER_NOT_FOUND", "Order not found");
     return order;
   }
 
-  async reports(from?: Date, to?: Date) {
+  async reports(from?: Date, to?: Date, siteId = ROOT_SITE_ID) {
     const createdAt = {
         ...(from ? { gte: from } : {}),
         ...(to ? { lte: to } : {}),
       },
-      orderWhere = from || to ? { createdAt } : {},
-      depositWhere = { ...(from || to ? { createdAt } : {}), status: "PAID" };
+      orderWhere = { siteId, ...(from || to ? { createdAt } : {}) },
+      depositWhere = {
+        siteId,
+        ...(from || to ? { createdAt } : {}),
+        status: "PAID",
+      };
     const [
       orders,
       money,
@@ -2559,9 +2681,9 @@ export class AdminOperationsService {
       this.db.order.count({ where: { ...orderWhere, status: "PARTIAL" } }),
       this.db.order.count({ where: { ...orderWhere, status: "REFUNDED" } }),
       this.db.user.count({
-        where: from || to ? { createdAt } : undefined,
+        where: { siteId, ...(from || to ? { createdAt } : {}) },
       }),
-      this.db.deposit.count({ where: { status: "MANUAL_REVIEW" } }),
+      this.db.deposit.count({ where: { siteId, status: "MANUAL_REVIEW" } }),
       this.db.order.groupBy({
         by: ["serviceId"],
         where: orderWhere,
@@ -2603,8 +2725,8 @@ export class AdminOperationsService {
     };
   }
 
-  async reportsCsv(from?: Date, to?: Date) {
-    const report = await this.reports(from, to),
+  async reportsCsv(from?: Date, to?: Date, siteId = ROOT_SITE_ID) {
+    const report = await this.reports(from, to, siteId),
       safe = (value: unknown) => {
         const text = String(value ?? "").replaceAll('"', '""');
         return `"${/^[=+\-@]/.test(text) ? `'${text}` : text}"`;
@@ -2624,27 +2746,32 @@ export class AdminOperationsService {
     return rows.map((row) => row.map(safe).join(",")).join("\r\n");
   }
 
-  async reportTrend(from: string, to: string) {
+  async reportTrend(from: string, to: string, siteId = ROOT_SITE_ID) {
     const setting = await this.db.setting.findUnique({
-      where: { group_key: { group: "general", key: "timezone" } },
+      where: {
+        siteId_group_key: { siteId, group: "general", key: "timezone" },
+      },
     });
     const timezone =
       typeof setting?.value === "string" ? setting.value : "Asia/Ho_Chi_Minh";
     return {
       timezone,
-      items: await this.snapshots.trend(timezone, from, to),
+      items: await this.snapshots.trend(timezone, from, to, siteId),
     };
   }
 
-  async rebuildReport(actorId: string, date: string) {
+  async rebuildReport(actorId: string, date: string, siteId = ROOT_SITE_ID) {
     const setting = await this.db.setting.findUnique({
-      where: { group_key: { group: "general", key: "timezone" } },
+      where: {
+        siteId_group_key: { siteId, group: "general", key: "timezone" },
+      },
     });
     const timezone =
         typeof setting?.value === "string" ? setting.value : "Asia/Ho_Chi_Minh",
-      snapshot = await this.snapshots.build(date, timezone);
+      snapshot = await this.snapshots.build(date, timezone, siteId);
     await this.db.auditLog.create({
       data: {
+        siteId,
         actorId,
         action: "REPORT_SNAPSHOT_REBUILD",
         resource: "DailyReportSnapshot",
@@ -2655,7 +2782,12 @@ export class AdminOperationsService {
     return snapshot;
   }
 
-  async logs(kind: string, page = 1, limit = 50) {
+  async logs(kind: string, page = 1, limit = 50, siteId = ROOT_SITE_ID) {
+    if (siteId !== ROOT_SITE_ID && kind !== "audit")
+      throw new AdminOperationError(
+        "GLOBAL_ENDPOINT_ROOT_ONLY",
+        "Global logs are available only on the root site",
+      );
     const model =
       kind === "system"
         ? this.db.systemLog
@@ -2663,15 +2795,16 @@ export class AdminOperationsService {
           ? this.db.webhookLog
           : this.db.auditLog;
     return model.findMany({
+      ...(kind === "audit" ? { where: { siteId } } : {}),
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * clamp(limit, 50),
       take: clamp(limit, 50),
     });
   }
 
-  async settings(siteId?: string) {
+  async settings(siteId = ROOT_SITE_ID) {
     return this.db.setting.findMany({
-      where: { ...(siteId ? { siteId } : {}), encrypted: false },
+      where: { siteId, encrypted: false },
       select: { group: true, key: true, value: true, updatedAt: true },
       orderBy: [{ group: "asc" }, { key: "asc" }],
     });

@@ -32,7 +32,13 @@ test("empty admin filters never reach Prisma as undefined enum strings", async (
     service = new AdminOperationsService(db);
   await service.users({ status: "undefined", role: "null", search: "" });
   await service.orders({ status: "undefined", provider: "null", search: "" });
-  assert.deepEqual(seen, [{}, {}, {}, {}]);
+  const root = "00000000-0000-4000-8000-000000000001";
+  assert.deepEqual(seen, [
+    { siteId: root },
+    { siteId: root },
+    { siteId: root },
+    { siteId: root },
+  ]);
   await assert.rejects(
     () => service.users({ status: "NOT_A_USER_STATUS" }),
     (error: any) => error.code === "USER_STATUS_INVALID",
@@ -59,8 +65,13 @@ test("deposit and support filters normalize empty values and reject invalid enum
     });
   await deposits.adminHistory({ status: "undefined" });
   await support.adminInbox({ status: "undefined", search: "null" });
-  assert.equal(depositCalls[0].where, undefined);
-  assert.deepEqual(ticketCalls, [{}, {}]);
+  assert.deepEqual(depositCalls[0].where, {
+    siteId: "00000000-0000-4000-8000-000000000001",
+  });
+  assert.deepEqual(ticketCalls, [
+    { siteId: "00000000-0000-4000-8000-000000000001" },
+    { siteId: "00000000-0000-4000-8000-000000000001" },
+  ]);
   await assert.rejects(
     () => deposits.adminHistory({ status: "WRONG" }),
     (error: any) => error.code === "DEPOSIT_STATUS_INVALID",

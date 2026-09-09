@@ -31,7 +31,7 @@ export class OrderService {
     this.pricing = new PricingResolver(db);
     this.settlements = new SiteSettlementService(db);
   }
-  async create(userId: string, input: any, key: string) {
+  async create(userId: string, siteId: string, input: any, key: string) {
     if (!/^[A-Za-z0-9:_-]{12,128}$/.test(key))
       throw new OrderError(
         "IDEMPOTENCY_KEY_INVALID",
@@ -48,32 +48,59 @@ export class OrderService {
     } catch {
       throw new OrderError("LINK_INVALID", "Link must be HTTP(S)");
     }
-    const submitKey = `order:${userId}:${key}`.slice(0, 128);
-    const existing = await this.db.order.findUnique({
-      where: { providerSubmitKey: submitKey },
+    const submitKey = `order:${siteId}:${userId}:${key}`.slice(0, 128);
+    const existing = await this.db.order.findFirst({
+      where: { providerSubmitKey: submitKey, siteId, userId },
     });
     if (existing) return this.serialize(existing);
     try {
       return await this.db.$transaction(async (tx: any) => {
-        const service = await tx.service.findUnique({
+        const candidate = await tx.service.findFirst({
           where: /^\d+$/.test(serviceReference)
             ? { serviceNumber: BigInt(serviceReference) }
             : { id: serviceReference },
         });
+        const siteRule =
+          candidate && siteId !== "00000000-0000-4000-8000-000000000001"
+            ? await tx.siteServiceRule.findUnique({
+                where: {
+                  siteId_serviceId: { siteId, serviceId: candidate.id },
+                },
+              })
+            : null;
+        const service =
+          candidate &&
+          (candidate.siteId === siteId || Boolean(siteRule?.active))
+            ? candidate
+            : null;
         const serviceId = service?.id ?? serviceReference;
         if (!service || !service.active || service.deletedAt)
           throw new OrderError("SERVICE_UNAVAILABLE", "Service unavailable");
-        if (quantity < service.min || quantity > service.max)
+        const minimum = siteRule?.minOverride ?? service.min;
+        const maximum = siteRule?.maxOverride ?? service.max;
+        if (quantity < minimum || quantity > maximum)
           throw new OrderError(
             "QUANTITY_OUT_OF_RANGE",
-            `Quantity must be ${service.min}-${service.max}`,
+            `Quantity must be ${minimum}-${maximum}`,
           );
-        const user = tx.user ? await tx.user.findUnique({ where: { id: userId }, select: { siteId: true } }) : null;
-        const siteId = user?.siteId;
-        if (tx.site && !user) throw new OrderError("USER_NOT_FOUND", "User not found");
-        const currentSite = siteId && tx.site ? await tx.site.findUnique({ where: { id: siteId } }) : null;
-        if (siteId && (!currentSite || currentSite.status !== "ACTIVE")) throw new OrderError("PANEL_SUSPENDED", "Panel is unavailable");
-        const edges = siteId && tx.siteServiceRule ? await this.settlements.quote(tx, siteId, service, quantity) : [];
+        const user = tx.user
+          ? await tx.user.findFirst({
+              where: { id: userId, siteId },
+              select: { siteId: true },
+            })
+          : null;
+        if (tx.site && !user)
+          throw new OrderError("USER_NOT_FOUND", "User not found");
+        const currentSite =
+          siteId && tx.site
+            ? await tx.site.findUnique({ where: { id: siteId } })
+            : null;
+        if (tx.site && (!currentSite || currentSite.status !== "ACTIVE"))
+          throw new OrderError("PANEL_SUSPENDED", "Panel is unavailable");
+        const edges =
+          siteId && tx.siteServiceRule
+            ? await this.settlements.quote(tx, siteId, service, quantity)
+            : [];
         const resolved = await this.pricing.resolveCustomerPrice(
           userId,
           serviceId,
@@ -86,7 +113,22 @@ export class OrderService {
             "PROVIDER_MAPPING_UNAVAILABLE",
             "Provider mapping unavailable",
           );
-        const saleRate = resolved.rate;
+        const baseRate = units(resolved.rate);
+        const siteMarkup = BigInt(
+          String(siteRule?.markupPercent ?? 0).split(".")[0] || "0",
+        );
+        const siteFixed = units(siteRule?.fixedProfit ?? 0);
+        const siteMinimum = units(siteRule?.minProfit ?? 0);
+        const saleRate =
+          siteRule?.fixedRate != null
+            ? String(siteRule.fixedRate)
+            : siteRule
+              ? text(
+                  baseRate +
+                    (baseRate * siteMarkup) / 100n +
+                    (siteFixed > siteMinimum ? siteFixed : siteMinimum),
+                )
+              : resolved.rate;
         const originalCharge = orderAmount(saleRate, quantity),
           providerCost = orderAmount(resolved.providerCost, quantity),
           coupon = input.couponCode
@@ -106,14 +148,33 @@ export class OrderService {
           ),
           discountAmount = text(units(originalCharge) - units(charge)),
           profit = text(units(charge) - units(providerCost));
-        const required = siteId ? [{ userId, siteId, amount: charge }, ...edges.map((edge) => ({ userId: edge.payerUserId, siteId: edge.parentSiteId, amount: edge.upstreamCharge }))] : [];
+        const required = siteId
+          ? [
+              { userId, siteId, amount: charge },
+              ...edges.map((edge) => ({
+                userId: edge.payerUserId,
+                siteId: edge.parentSiteId,
+                amount: edge.upstreamCharge,
+              })),
+            ]
+          : [];
         for (const item of required) {
-          const locked = await tx.$queryRawUnsafe(`SELECT "balance" FROM "wallets" WHERE "user_id"=$1::uuid AND "site_id"=$2::uuid FOR UPDATE`, item.userId, item.siteId);
-          if (!locked[0] || units(locked[0].balance) < units(item.amount)) throw new OrderError(item.userId === userId ? "INSUFFICIENT_BALANCE" : "PANEL_UPSTREAM_BALANCE_LOW", "Required wallet balance is insufficient");
+          const locked = await tx.$queryRawUnsafe(
+            `SELECT "balance" FROM "wallets" WHERE "user_id"=$1::uuid AND "site_id"=$2::uuid FOR UPDATE`,
+            item.userId,
+            item.siteId,
+          );
+          if (!locked[0] || units(locked[0].balance) < units(item.amount))
+            throw new OrderError(
+              item.userId === userId
+                ? "INSUFFICIENT_BALANCE"
+                : "PANEL_UPSTREAM_BALANCE_LOW",
+              "Required wallet balance is insufficient",
+            );
         }
         const order = await tx.order.create({
           data: {
-            ...(siteId ? { siteId } : {}),
+            siteId,
             userId,
             serviceId,
             providerId: manual ? null : provider.id,
@@ -148,15 +209,16 @@ export class OrderService {
             },
           });
         const rows = await tx.$queryRawUnsafe(
-          `UPDATE "wallets" SET "balance"="balance"-$1::numeric,"version"="version"+1,"updated_at"=CURRENT_TIMESTAMP WHERE "user_id"=$2::uuid AND "balance">=$1::numeric RETURNING "id","balance"+$1::numeric AS "before","balance" AS "after"`,
+          `UPDATE "wallets" SET "balance"="balance"-$1::numeric,"version"="version"+1,"updated_at"=CURRENT_TIMESTAMP WHERE "user_id"=$2::uuid AND "site_id"=$3::uuid AND "balance">=$1::numeric RETURNING "id","balance"+$1::numeric AS "before","balance" AS "after"`,
           charge,
           userId,
+          siteId,
         );
         if (!rows[0])
           throw new OrderError("INSUFFICIENT_BALANCE", "Insufficient balance");
         await tx.walletTransaction.create({
           data: {
-            ...(siteId ? { siteId } : {}),
+            siteId,
             walletId: rows[0].id,
             userId,
             type: "ORDER",
@@ -171,7 +233,7 @@ export class OrderService {
         await this.settlements.debitAndSnapshot(tx, order, edges);
         await tx.orderHistory.create({
           data: {
-            ...(siteId ? { siteId } : {}),
+            siteId,
             orderId: order.id,
             toStatus: "PENDING",
             details: { source: "customer" },
@@ -183,23 +245,23 @@ export class OrderService {
       });
     } catch (error: any) {
       if (error?.code === "P2002") {
-        const found = await this.db.order.findUnique({
-          where: { providerSubmitKey: submitKey },
+        const found = await this.db.order.findFirst({
+          where: { providerSubmitKey: submitKey, siteId, userId },
         });
         if (found) return this.serialize(found);
       }
       throw error;
     }
   }
-  async detail(userId: string, reference: string) {
+  async detail(userId: string, siteId: string, reference: string) {
     const numericId = /^\d+$/.test(reference)
       ? BigInt(reference) - 100000n
       : null;
     const order = await this.db.order.findFirst({
       where:
         numericId !== null && numericId > 0n
-          ? { id: numericId, userId }
-          : { publicId: reference, userId },
+          ? { id: numericId, userId, siteId }
+          : { publicId: reference, userId, siteId },
     });
     if (!order) throw new OrderError("ORDER_NOT_FOUND", "Order not found");
     const service = await this.db.service.findUnique({
@@ -208,7 +270,7 @@ export class OrderService {
     });
     const [history, refills, cancellations] = await Promise.all([
       this.db.orderHistory.findMany({
-        where: { orderId: order.id },
+        where: { orderId: order.id, siteId },
         orderBy: { createdAt: "asc" },
       }),
       this.db.refill.findMany({
@@ -266,6 +328,7 @@ export class OrderService {
   }
   async list(
     userId: string,
+    siteId: string,
     pageOrQuery:
       | number
       | {
@@ -314,6 +377,7 @@ export class OrderService {
     };
     const where: any = {
       userId,
+      siteId,
       ...(query.status ? { status: query.status } : {}),
       ...(Object.keys(createdAt).length ? { createdAt } : {}),
       ...(search

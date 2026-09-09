@@ -7,6 +7,7 @@ test("cross-user lifecycle request is hidden", async () => {
     () =>
       new OrderLifecycleService(db).request(
         "me",
+        "00000000-0000-4000-8000-000000000001",
         "id",
         "cancel",
         "cancel:key:123",
@@ -23,7 +24,19 @@ test("duplicate refill uses database upsert idempotency", async () => {
     refill: { upsert: async () => ({ id: ++calls }) },
   };
   const s = new OrderLifecycleService(db);
-  await s.request("u", "id", "refill", "refill:key:123");
-  await s.request("u", "id", "refill", "refill:key:123");
+  await s.request(
+    "u",
+    "00000000-0000-4000-8000-000000000001",
+    "id",
+    "refill",
+    "refill:key:123",
+  );
+  await s.request(
+    "u",
+    "00000000-0000-4000-8000-000000000001",
+    "id",
+    "refill",
+    "refill:key:123",
+  );
   assert.equal(calls, 2);
 });

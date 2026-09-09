@@ -90,7 +90,13 @@ test("fixed price DISABLE_SERVICE fails closed when the floor is breached", asyn
 
 test("API v2 services uses owner price group without exposing internal pricing", async () => {
   const db: any = {
-    user: { findUnique: async () => ({ priceGroupId: "vip" }) },
+    user: {
+      findFirst: async () => ({
+        priceGroupId: "vip",
+        siteId: "00000000-0000-4000-8000-000000000001",
+      }),
+    },
+    siteServiceRule: { findMany: async () => [] },
     priceGroup: {
       findFirst: async () => ({
         id: "vip",
@@ -124,7 +130,10 @@ test("API v2 services uses owner price group without exposing internal pricing",
   const [item] = await reseller.execute(
     "unused",
     { action: "services" },
-    { userId: "user" },
+    {
+      userId: "user",
+      siteId: "00000000-0000-4000-8000-000000000001",
+    },
   );
   assert.equal(item.rate, "110.00000000");
   for (const secret of [
