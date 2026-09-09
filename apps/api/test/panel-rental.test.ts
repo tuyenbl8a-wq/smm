@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PanelService } from "../src/tenant/panel-service.js";
 import type { PanelDnsProvider } from "../src/tenant/panel-dns-provider.js";
@@ -305,5 +306,24 @@ test("Cloudflare adapter obtains assigned NS and prepares proxied routing throug
       request.url.startsWith("https://cloudflare.invalid"),
     ),
     true,
+  );
+});
+
+test("panel activation executes advisory locks without expecting query rows", async () => {
+  const source = await readFile(
+    new URL("../../src/tenant/panel-service.ts", import.meta.url),
+    "utf8",
+  );
+  assert.equal(
+    (
+      source.match(
+        /\$executeRawUnsafe\?\.\(\s*"SELECT pg_advisory_xact_lock/g,
+      ) ?? []
+    ).length,
+    2,
+  );
+  assert.equal(
+    /\$queryRawUnsafe\?\.\(\s*"SELECT pg_advisory_xact_lock/.test(source),
+    false,
   );
 });

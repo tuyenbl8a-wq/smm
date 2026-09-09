@@ -145,7 +145,7 @@ export class PanelService {
         "Nameserver delegation is not active",
       );
     const result = await this.db.$transaction(async (tx: any) => {
-      await tx.$queryRawUnsafe?.(
+      await tx.$executeRawUnsafe?.(
         "SELECT pg_advisory_xact_lock(hashtext($1))",
         initial.id,
       );
@@ -316,7 +316,7 @@ export class PanelService {
       result.intent.hostname,
     );
     return this.db.$transaction(async (tx: any) => {
-      await tx.$queryRawUnsafe?.(
+      await tx.$executeRawUnsafe?.(
         "SELECT pg_advisory_xact_lock(hashtext($1))",
         initial.id,
       );
