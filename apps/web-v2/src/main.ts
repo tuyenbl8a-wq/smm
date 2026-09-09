@@ -71,6 +71,7 @@ const server = createServer(async (request, response) => {
     path === "/transactions" ||
     path === "/panels" ||
     path === "/panels/new" ||
+    /^\/panels\/activate\/[0-9a-f-]{36}$/.test(path) ||
     path === "/panel-plans" ||
     /^\/panels\/\d+$/.test(path) ||
     path === "/affiliate" ||

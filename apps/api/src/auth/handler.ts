@@ -123,6 +123,7 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.catalog.publicCatalog({
+            siteId: tenant.id,
             page: Number(url.searchParams.get("page") ?? "1"),
             limit: Number(url.searchParams.get("limit") ?? "12"),
             ...(url.searchParams.get("search")
@@ -421,6 +422,7 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.catalog.customerCatalog(auth.user.id, {
+            siteId: tenant.id,
             page: Number(url.searchParams.get("page") ?? "1"),
             limit: Number(url.searchParams.get("limit") ?? "50"),
             ...(url.searchParams.get("category")
@@ -487,7 +489,7 @@ export class AuthHandler {
         const url = new URL(request.url ?? path, this.config.apiUrl);
         return this.ok(
           response,
-          await this.orders.list(auth.user.id, {
+          await this.orders.list(auth.user.id, tenant.id, {
             page: Number(url.searchParams.get("page") ?? "1"),
             limit: Number(url.searchParams.get("limit") ?? "20"),
             search: url.searchParams.get("search") ?? "",
@@ -502,7 +504,7 @@ export class AuthHandler {
       if (request.method === "GET" && orderDetail)
         return this.ok(
           response,
-          await this.orders!.detail(auth.user.id, orderDetail[1]!),
+          await this.orders!.detail(auth.user.id, tenant.id, orderDetail[1]!),
         );
       if (request.method === "GET" && path === "/api/v1/customer/api-keys")
         return this.ok(
@@ -1368,7 +1370,12 @@ export class AuthHandler {
           );
         return this.ok(
           response,
-          await this.orders.create(auth.user.id, await this.body(request), key),
+          await this.orders.create(
+            auth.user.id,
+            tenant.id,
+            await this.body(request),
+            key,
+          ),
         );
       }
       const adminOrderMutation =
@@ -2030,6 +2037,7 @@ export class AuthHandler {
           response,
           await this.lifecycle!.request(
             auth.user.id,
+            tenant.id,
             lifecycle[1]!,
             lifecycle[2] as any,
             key,
@@ -2307,6 +2315,7 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.wallet.mutate({
+            siteId: tenant.id,
             userId: adminWallet[1]!,
             amount: String(body.amount ?? ""),
             type: type as "ADMIN_ADD" | "ADMIN_SUBTRACT" | "ADJUSTMENT",

@@ -1044,3 +1044,21 @@ test("acceptance UI audit covers every requested admin and customer surface", ()
   assert.match(customer, /role="alert"/);
   assert.match(client, /PAYMENT_REQUIRED/);
 });
+
+test("customer router owns the panel rental activation UUID route", async () => {
+  const source = await readFile(
+    new URL("../src/customer.ts", import.meta.url),
+    "utf8",
+  );
+  const server = await readFile(
+    new URL("../src/main.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /\^\\\/panels\\\/activate\\\//);
+  assert.match(source, /panelActivation/);
+  assert.match(source, /\/api\/v1\/customer\/panel-rentals\//);
+  assert.equal(
+    server.includes("/^\\/panels\\/activate\\/[0-9a-f-]{36}$/"),
+    true,
+  );
+});

@@ -64,7 +64,12 @@ export class OrderLifecycleService {
             : calculated,
           "Partial order refund",
         );
-        await applySettlementTargetRefund(tx, order, refund.target, "Panel upstream partial refund");
+        await applySettlementTargetRefund(
+          tx,
+          order,
+          refund.target,
+          "Panel upstream partial refund",
+        );
         await tx.order.update({
           where: { id: orderId },
           data: {
@@ -81,6 +86,7 @@ export class OrderLifecycleService {
         });
       await tx.orderHistory.create({
         data: {
+          siteId: order.siteId,
           orderId,
           fromStatus: order.status,
           toStatus: status,
@@ -89,6 +95,7 @@ export class OrderLifecycleService {
       });
       await tx.auditLog?.create({
         data: {
+          siteId: order.siteId,
           action: "ORDER_PROVIDER_SYNC",
           resource: "Order",
           resourceId: order.publicId,
@@ -108,6 +115,7 @@ export class OrderLifecycleService {
   }
   async request(
     userId: string,
+    siteId: string,
     reference: string,
     action: "refill" | "cancel",
     key: string,
@@ -122,12 +130,16 @@ export class OrderLifecycleService {
       : null;
     const where =
       numericId !== null && numericId > 0n
-        ? { id: numericId }
-        : { publicId: reference };
+        ? { id: numericId, siteId, userId }
+        : { publicId: reference, siteId, userId };
     const order = this.db.order.findFirst
       ? await this.db.order.findFirst({ where })
       : await this.db.order.findUnique({ where });
-    if (!order || order.userId !== userId)
+    if (
+      !order ||
+      order.userId !== userId ||
+      (order.siteId !== undefined && order.siteId !== siteId)
+    )
       throw new LifecycleError("ORDER_NOT_FOUND", "Order not found");
     if (action === "refill") {
       if (!["COMPLETED", "PARTIAL"].includes(order.status))

@@ -61,11 +61,16 @@ test("API v2 refill reuses ownership-safe lifecycle service", async () => {
   const result = await service.execute(
     "unused",
     { action: "refill", order: "1", idempotency_key: "refill-request-123" },
-    { id: "key", userId: "u" },
+    {
+      id: "key",
+      userId: "u",
+      siteId: "00000000-0000-4000-8000-000000000001",
+    },
   );
   assert.deepEqual(result, { refill: "refill-id" });
   assert.deepEqual(requests[0], [
     "u",
+    "00000000-0000-4000-8000-000000000001",
     "public",
     "refill",
     "refill-request-123",
@@ -105,7 +110,7 @@ test("API v2 multiple status remains scoped and bounded", async () => {
 test("API v2 accepts a numeric public service identifier", async () => {
   let received: any;
   const orders: any = {
-    create: async (_userId: string, input: any) => {
+    create: async (_userId: string, _siteId: string, input: any) => {
       received = input;
       return { id: "100123" };
     },
@@ -119,7 +124,10 @@ test("API v2 accepts a numeric public service identifier", async () => {
       quantity: 10,
       idempotency_key: "numeric-service-1001",
     },
-    { userId: "user" },
+    {
+      userId: "user",
+      siteId: "00000000-0000-4000-8000-000000000001",
+    },
   );
   assert.equal(received.serviceId, "1001");
   assert.deepEqual(result, { order: "100123" });

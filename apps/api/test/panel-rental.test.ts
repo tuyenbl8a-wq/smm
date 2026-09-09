@@ -327,3 +327,63 @@ test("panel activation executes advisory locks without expecting query rows", as
     false,
   );
 });
+
+test("legacy panel owner repair is idempotent and never touches billing ledger", async () => {
+  const childSiteId = "a626afa7-23ce-4079-9e0d-e3283907b882";
+  const sellerSiteId = "00000000-0000-4000-8000-000000000001";
+  let ownerUserId: string | null = null;
+  let childOwner: any = null;
+  let createdUsers = 0;
+  let walletUpserts = 0;
+  let affiliateUpserts = 0;
+  let ledgerWrites = 0;
+  const tx: any = {
+    site: {
+      findUnique: async () => ({ id: childSiteId, ownerUserId }),
+      update: async ({ data }: any) => ((ownerUserId = data.ownerUserId), {}),
+    },
+    panelSubscription: {
+      findFirst: async () => ({
+        siteId: childSiteId,
+        sellerSiteId,
+        renterUserId: "root-renter",
+      }),
+    },
+    user: {
+      findFirst: async ({ where }: any) => {
+        if (where.id === "root-renter")
+          return {
+            id: "root-renter",
+            siteId: sellerSiteId,
+            email: "owner@example.com",
+            username: "owner",
+            passwordHash: "hash",
+            referralCode: "ROOTCODE",
+          };
+        if (where.siteId === childSiteId) return childOwner;
+        return null;
+      },
+      create: async ({ data }: any) => {
+        createdUsers += 1;
+        childOwner = { id: "child-owner", ...data };
+        return childOwner;
+      },
+    },
+    role: { findUniqueOrThrow: async () => ({ id: "admin-role" }) },
+    userRole: { upsert: async () => ({}) },
+    wallet: { upsert: async () => (walletUpserts += 1) },
+    affiliate: { upsert: async () => (affiliateUpserts += 1) },
+    walletTransaction: { create: async () => (ledgerWrites += 1) },
+  };
+  const db = { $transaction: async (run: any) => run(tx) };
+  const service = new PanelService(db, dns());
+  const first = await service.repairLegacyOwner(childSiteId);
+  const second = await service.repairLegacyOwner(childSiteId);
+  assert.equal(first.ownerUserId, "child-owner");
+  assert.equal(first.renterUserId, "root-renter");
+  assert.equal(second.ownerUserId, "child-owner");
+  assert.equal(createdUsers, 1);
+  assert.equal(walletUpserts, 2);
+  assert.equal(affiliateUpserts, 2);
+  assert.equal(ledgerWrites, 0);
+});

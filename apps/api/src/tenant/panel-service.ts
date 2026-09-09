@@ -27,6 +27,92 @@ export class PanelService {
     private readonly dns: PanelDnsProvider,
   ) {}
 
+  /**
+   * Repairs panels activated before child identities were introduced. This
+   * deliberately never touches the subscription payer or wallet ledger.
+   */
+  async repairLegacyOwner(childSiteId: string) {
+    return this.db.$transaction(async (tx: any) => {
+      const site = await tx.site.findUnique({ where: { id: childSiteId } });
+      const subscription = await tx.panelSubscription.findFirst({
+        where: { siteId: childSiteId },
+        orderBy: { createdAt: "asc" },
+      });
+      if (!site || !subscription)
+        throw new TenantError("PANEL_NOT_FOUND", "Panel not found");
+      const currentOwner = site.ownerUserId
+        ? await tx.user.findFirst({
+            where: { id: site.ownerUserId, siteId: childSiteId },
+          })
+        : null;
+      const renter = await tx.user.findFirst({
+        where: {
+          id: subscription.renterUserId,
+          siteId: subscription.sellerSiteId,
+        },
+      });
+      if (!renter)
+        throw new TenantError(
+          "PANEL_RENTER_NOT_FOUND",
+          "Panel renter not found",
+        );
+      const owner =
+        currentOwner ??
+        (await tx.user.findFirst({
+          where: { siteId: childSiteId, email: renter.email },
+        })) ??
+        (await tx.user.create({
+          data: {
+            siteId: childSiteId,
+            email: renter.email,
+            username: renter.username,
+            fullName: renter.fullName,
+            phone: renter.phone,
+            passwordHash: renter.passwordHash,
+            status: "ACTIVE",
+            emailVerifiedAt: renter.emailVerifiedAt,
+            referralCode: `P${randomBytes(10).toString("hex").toUpperCase()}`,
+          },
+        }));
+      const adminRole = await tx.role.findUniqueOrThrow({
+        where: { code: "ADMIN" },
+      });
+      await tx.userRole.upsert({
+        where: {
+          userId_roleId: { userId: owner.id, roleId: adminRole.id },
+        },
+        create: { userId: owner.id, roleId: adminRole.id },
+        update: {},
+      });
+      await tx.wallet.upsert({
+        where: { userId: owner.id },
+        create: { siteId: childSiteId, userId: owner.id, currency: "USD" },
+        update: {},
+      });
+      await tx.affiliate.upsert({
+        where: { userId: owner.id },
+        create: {
+          siteId: childSiteId,
+          userId: owner.id,
+          code: owner.referralCode,
+          commissionRate: "10.000000",
+        },
+        update: {},
+      });
+      if (site.ownerUserId !== owner.id)
+        await tx.site.update({
+          where: { id: childSiteId },
+          data: { ownerUserId: owner.id },
+        });
+      return {
+        siteId: childSiteId,
+        ownerUserId: owner.id,
+        renterUserId: subscription.renterUserId,
+        repaired: !currentOwner,
+      };
+    });
+  }
+
   async rent(
     parentSiteId: string,
     renterUserId: string,

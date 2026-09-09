@@ -70,14 +70,16 @@ export async function applyOrderTargetRefund(
   const amount = moneyFromUnits(delta),
     targetText = moneyFromUnits(target);
   const rows = await tx.$queryRawUnsafe(
-    `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
+    `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid AND "site_id"=$3::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
     amount,
     order.userId,
+    order.siteId,
   );
   if (!rows?.[0]) throw new Error("WALLET_NOT_FOUND");
   await tx.walletTransaction.create({
     data: {
       walletId: rows[0].id,
+      siteId: order.siteId,
       userId: order.userId,
       type: "REFUND",
       amount,

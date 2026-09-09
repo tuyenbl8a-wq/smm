@@ -9,6 +9,7 @@ export type WalletMutationType =
   | "BONUS"
   | "ADJUSTMENT";
 export interface WalletMutation {
+  siteId: string;
   userId: string;
   amount: string;
   type: WalletMutationType;
@@ -51,6 +52,7 @@ function same(
 ): boolean {
   return (
     existing.userId === mutation.userId &&
+    existing.siteId === mutation.siteId &&
     existing.type === mutation.type &&
     canonicalSigned(existing.amount) === signed
   );
@@ -142,14 +144,15 @@ export class WalletService {
           return existing;
         }
         const rows = await tx.$queryRawUnsafe(
-          `UPDATE "wallets" SET "balance" = "balance" + $1::numeric, "version" = "version" + 1, "updated_at" = CURRENT_TIMESTAMP WHERE "user_id" = $2::uuid AND ($1::numeric >= 0 OR "balance" + $1::numeric >= 0) RETURNING "id", "balance" - $1::numeric AS "balanceBefore", "balance" AS "balanceAfter"`,
+          `UPDATE "wallets" SET "balance" = "balance" + $1::numeric, "version" = "version" + 1, "updated_at" = CURRENT_TIMESTAMP WHERE "user_id" = $2::uuid AND "site_id" = $3::uuid AND ($1::numeric >= 0 OR "balance" + $1::numeric >= 0) RETURNING "id", "balance" - $1::numeric AS "balanceBefore", "balance" AS "balanceAfter"`,
           signed,
           mutation.userId,
+          mutation.siteId,
         );
         const row = rows[0];
         if (!row) {
-          const wallet = await tx.wallet.findUnique({
-            where: { userId: mutation.userId },
+          const wallet = await tx.wallet.findFirst({
+            where: { userId: mutation.userId, siteId: mutation.siteId },
             select: { id: true },
           });
           throw new WalletError(
@@ -160,6 +163,7 @@ export class WalletService {
         const ledger = await tx.walletTransaction.create({
           data: {
             walletId: row.id,
+            siteId: mutation.siteId,
             userId: mutation.userId,
             type: mutation.type,
             amount: signed,
@@ -179,6 +183,7 @@ export class WalletService {
           await tx.auditLog.create({
             data: {
               actorId: mutation.actorId,
+              siteId: mutation.siteId,
               action: "BALANCE_ADJUST",
               resource: "wallet",
               resourceId: mutation.userId,
