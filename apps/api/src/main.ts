@@ -119,6 +119,7 @@ const server = createApiServer(
       "dichvu1st.com",
       "www.dichvu1st.com",
     ]),
+    process.env.TENANT_PROXY_SECRET ?? config.sessionSecret,
   ),
 );
 server.listen(config.port, config.host, () => {

@@ -1062,3 +1062,16 @@ test("customer router owns the panel rental activation UUID route", async () => 
     true,
   );
 });
+
+test("API proxy signs the validated browser tenant host instead of forwarding spoofable input", async () => {
+  const server = await readFile(
+    new URL("../src/main.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(server, /browserHost\(request\.headers\.host\)/);
+  assert.match(server, /createHmac\("sha256", proxySecret\)/);
+  assert.match(server, /"x-smm-tenant-host": tenantHost/);
+  assert.match(server, /"x-smm-tenant-timestamp": timestamp/);
+  assert.match(server, /"x-smm-tenant-signature": signature/);
+  assert.doesNotMatch(server, /headers:\s*\{\s*host:\s*validatedHost/);
+});
