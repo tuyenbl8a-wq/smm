@@ -886,6 +886,7 @@ test("reference themes provide 30 concrete renderers without document wrappers",
   ];
   for (const scope of ["landing", "auth", "customer"]) {
     const fingerprints = new Set();
+    const domArchitectures = new Set();
     for (const id of ids) {
       const shell =
         scope === "landing" ? "hero" : scope === "auth" ? "auth" : "customer";
@@ -933,11 +934,27 @@ test("reference themes provide 30 concrete renderers without document wrappers",
         /data-composition-layer|data-theme-runtime-root|data-original-content/,
       );
       fingerprints.add(`${renderer}|${regions.join("|")}`);
+      const authoredDom = regionClasses
+        .map(
+          (className) =>
+            new RegExp(
+              `<(?:nav|section|aside|footer) class="${className}">([\\s\\S]*?)<\\/(?:nav|section|aside|footer)>`,
+            ).exec(html)?.[1] ?? "",
+        )
+        .join("")
+        .replace(/[^<]*(<[^>]+>)[^<]*/g, "$1")
+        .replace(/\s(?:class|href)="[^"]*"/g, "");
+      domArchitectures.add(authoredDom);
     }
     assert.equal(
       fingerprints.size,
       10,
       scope + " architectures must be 10/10 unique",
+    );
+    assert.equal(
+      domArchitectures.size,
+      10,
+      scope + " must use ten different nested DOM compositions",
     );
   }
   const oldEmptyHack = `<div class="hero"><nav class="theme-navigation"></nav><section class="theme-story"></section><aside class="theme-offer"></aside><footer class="theme-cta"></footer></div>`;
