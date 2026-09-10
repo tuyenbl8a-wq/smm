@@ -196,6 +196,11 @@ test("activation persists provider metadata before routing and activates afterwa
     },
     role: { findUniqueOrThrow: async () => ({ id: "admin-role" }) },
     userRole: { create: async () => undefined },
+    permission: {
+      findMany: async () =>
+        [1, 2, 3, 4].map((id) => ({ id: `permission-${id}` })),
+    },
+    userPermission: { createMany: async () => ({ count: 4 }) },
     wallet: { create: async () => undefined },
     affiliate: { create: async () => undefined },
     siteDomain: {
@@ -436,6 +441,8 @@ test("legacy panel owner repair is idempotent and never touches billing ledger",
   let walletUpserts = 0;
   let affiliateUpserts = 0;
   let ledgerWrites = 0;
+  let requestedPermissions: string[] = [];
+  let grantedPermissions: any[] = [];
   const tx: any = {
     site: {
       findUnique: async () => ({ id: childSiteId, ownerUserId }),
@@ -470,6 +477,18 @@ test("legacy panel owner repair is idempotent and never touches billing ledger",
     },
     role: { findUniqueOrThrow: async () => ({ id: "admin-role" }) },
     userRole: { upsert: async () => ({}) },
+    permission: {
+      findMany: async ({ where }: any) => {
+        requestedPermissions = where.code.in;
+        return requestedPermissions.map((code) => ({ id: code }));
+      },
+    },
+    userPermission: {
+      createMany: async ({ data }: any) => {
+        grantedPermissions = data;
+        return { count: data.length };
+      },
+    },
     wallet: { upsert: async () => (walletUpserts += 1) },
     affiliate: { upsert: async () => (affiliateUpserts += 1) },
     walletTransaction: { create: async () => (ledgerWrites += 1) },
@@ -485,4 +504,20 @@ test("legacy panel owner repair is idempotent and never touches billing ledger",
   assert.equal(walletUpserts, 2);
   assert.equal(affiliateUpserts, 2);
   assert.equal(ledgerWrites, 0);
+  assert.deepEqual(requestedPermissions, [
+    "services.view",
+    "services.presentation.manage",
+    "services.pricing.manage",
+    "services.toggle",
+  ]);
+  assert.equal(
+    requestedPermissions.some((code) =>
+      ["services.create", "services.import", "providers.manage"].includes(code),
+    ),
+    false,
+  );
+  assert.equal(
+    grantedPermissions.every((grant) => grant.userId === "child-owner"),
+    true,
+  );
 });

@@ -1174,6 +1174,8 @@ model SiteServiceRule {
   siteId        String      @map("site_id") @db.Uuid
   serviceId     String      @map("service_id") @db.Uuid
   active        Boolean     @default(true)
+  displayName   String?     @map("display_name") @db.VarChar(240)
+  displayDescription String? @map("display_description") @db.Text
   pricingMode   PricingMode @map("pricing_mode")
   fixedRate     Decimal?    @map("fixed_rate") @db.Decimal(20, 8)
   markupPercent Decimal?    @map("markup_percent") @db.Decimal(9, 6)

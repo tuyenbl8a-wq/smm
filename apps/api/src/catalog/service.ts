@@ -165,6 +165,8 @@ export class CatalogService {
             where: { siteId: query.siteId, active: true },
             select: {
               serviceId: true,
+              displayName: true,
+              displayDescription: true,
               fixedRate: true,
               markupPercent: true,
               fixedProfit: true,
@@ -336,6 +338,8 @@ export class CatalogService {
             where: { siteId: query.siteId, active: true },
             select: {
               serviceId: true,
+              displayName: true,
+              displayDescription: true,
               fixedRate: true,
               markupPercent: true,
               fixedProfit: true,
@@ -467,10 +471,169 @@ export class CatalogService {
           );
     return {
       ...service,
+      name: rule.displayName ?? service.name,
+      description: rule.displayDescription ?? service.description,
       rate,
       min: rule.minOverride ?? service.min,
       max: rule.maxOverride ?? service.max,
     };
+  }
+
+  async tenantAdminOverview(siteId: string) {
+    if (siteId === ROOT_SITE_ID) return this.adminOverview(false);
+    const rules = await this.db.siteServiceRule.findMany({
+      where: { siteId },
+      orderBy: { updatedAt: "desc" },
+    });
+    const services = await this.db.service.findMany({
+      where: {
+        id: { in: rules.map((rule: any) => rule.serviceId) },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        serviceNumber: true,
+        name: true,
+        description: true,
+        min: true,
+        max: true,
+        rate: true,
+        active: true,
+        categoryId: true,
+      },
+    });
+    const serviceMap = new Map(
+      services.map((service: any) => [service.id, service]),
+    );
+    return {
+      services: rules.flatMap((rule: any) => {
+        const service: any = serviceMap.get(rule.serviceId);
+        return service
+          ? [
+              {
+                ...this.applySiteRule(service, rule),
+                active: rule.active && service.active,
+              },
+            ]
+          : [];
+      }),
+      providers: [],
+      providerServices: [],
+      mappings: [],
+      priceHistory: [],
+    };
+  }
+
+  async tenantServiceEditor(siteId: string, serviceId: string) {
+    const [rule, service] = await Promise.all([
+      this.db.siteServiceRule.findUnique({
+        where: { siteId_serviceId: { siteId, serviceId } },
+      }),
+      this.db.service.findFirst({ where: { id: serviceId, deletedAt: null } }),
+    ]);
+    if (!rule || !service)
+      throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
+    return {
+      service: {
+        ...this.applySiteRule(service, rule),
+        active: rule.active && service.active,
+      },
+      tenantOverride: {
+        displayName: rule.displayName,
+        displayDescription: rule.displayDescription,
+        active: rule.active,
+        pricingMode: rule.pricingMode,
+        fixedRate: rule.fixedRate == null ? null : String(rule.fixedRate),
+        markupPercent:
+          rule.markupPercent == null ? null : String(rule.markupPercent),
+      },
+      mappings: [],
+      providerServices: [],
+      providers: [],
+      pricing: [],
+    };
+  }
+
+  async updateTenantService(
+    actorId: string,
+    siteId: string,
+    serviceId: string,
+    input: any,
+    capabilities: { presentation: boolean; pricing: boolean; toggle: boolean },
+  ) {
+    const presentationRequested =
+      input.name !== undefined || input.description !== undefined;
+    const pricingRequested =
+      input.fixedRate !== undefined || input.markupPercent !== undefined;
+    const toggleRequested = input.active !== undefined;
+    if (presentationRequested && !capabilities.presentation)
+      throw new CatalogError(
+        "PERMISSION_DENIED",
+        "Presentation permission required",
+      );
+    if (pricingRequested && !capabilities.pricing)
+      throw new CatalogError(
+        "PERMISSION_DENIED",
+        "Pricing permission required",
+      );
+    if (toggleRequested && !capabilities.toggle)
+      throw new CatalogError("PERMISSION_DENIED", "Toggle permission required");
+    if (!presentationRequested && !pricingRequested && !toggleRequested)
+      throw new CatalogError(
+        "TENANT_SERVICE_FIELDS_INVALID",
+        "No tenant-editable fields supplied",
+      );
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.siteServiceRule.findUnique({
+        where: { siteId_serviceId: { siteId, serviceId } },
+      });
+      if (!before)
+        throw new CatalogError(
+          "SERVICE_NOT_FOUND",
+          "Assigned service not found",
+        );
+      const data: any = {
+        ...(input.name !== undefined ? { displayName: name(input.name) } : {}),
+        ...(input.description !== undefined
+          ? {
+              displayDescription:
+                String(input.description).trim().slice(0, 5000) || null,
+            }
+          : {}),
+        ...(input.active !== undefined
+          ? { active: input.active === true }
+          : {}),
+        ...(input.fixedRate !== undefined
+          ? {
+              pricingMode: "FIXED",
+              fixedRate: decimalInput(input.fixedRate),
+              markupPercent: null,
+            }
+          : {}),
+        ...(input.markupPercent !== undefined
+          ? {
+              pricingMode: "COST_PLUS_PERCENT",
+              markupPercent: decimalInput(input.markupPercent, true),
+              fixedRate: null,
+            }
+          : {}),
+      };
+      const updated = await tx.siteServiceRule.update({
+        where: { siteId_serviceId: { siteId, serviceId } },
+        data,
+      });
+      await this.audit(
+        tx,
+        actorId,
+        "TENANT_SERVICE_UPDATE",
+        "site_service_rule",
+        updated.id,
+        before,
+        updated,
+        siteId,
+      );
+      return updated;
+    });
   }
 
   async adminOverview(includePricing = true) {
@@ -1786,9 +1949,11 @@ export class CatalogService {
     resourceId: string,
     before: any,
     after: any,
+    siteId = ROOT_SITE_ID,
   ) {
     return tx.auditLog.create({
       data: {
+        siteId,
         actorId,
         action,
         resource,

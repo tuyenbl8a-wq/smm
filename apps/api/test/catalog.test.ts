@@ -156,6 +156,73 @@ test("canonical staff permissions remain distinct from commercial price tiers", 
   );
 });
 
+test("child service edits persist only tenant overrides and never mutate the master service", async () => {
+  let serviceUpdated = false;
+  let overrideData: any;
+  const db: any = {
+    $transaction: async (fn: any) => fn(db),
+    siteServiceRule: {
+      findUnique: async () => ({
+        id: "rule",
+        siteId: "child",
+        serviceId: "service",
+      }),
+      update: async ({ data }: any) => {
+        overrideData = data;
+        return { id: "rule", siteId: "child", serviceId: "service", ...data };
+      },
+    },
+    service: {
+      update: async () => {
+        serviceUpdated = true;
+      },
+    },
+    auditLog: { create: async ({ data }: any) => data },
+  };
+  const catalog = new CatalogService(db);
+  await catalog.updateTenantService(
+    "child-admin",
+    "child",
+    "service",
+    { name: "Tên bán riêng", markupPercent: "15", active: false },
+    { presentation: true, pricing: true, toggle: true },
+  );
+  assert.equal(serviceUpdated, false);
+  assert.deepEqual(overrideData, {
+    displayName: "Tên bán riêng",
+    active: false,
+    pricingMode: "COST_PLUS_PERCENT",
+    markupPercent: "15.00000000",
+    fixedRate: null,
+  });
+});
+
+test("child service capabilities cannot create/import providers or edit unauthorized fields", async () => {
+  const catalog = new CatalogService({});
+  await assert.rejects(
+    () =>
+      catalog.updateTenantService(
+        "admin",
+        "child",
+        "service",
+        { name: "x" },
+        { presentation: false, pricing: true, toggle: true },
+      ),
+    (error: any) => error.code === "PERMISSION_DENIED",
+  );
+  await assert.rejects(
+    () =>
+      catalog.updateTenantService(
+        "admin",
+        "child",
+        "service",
+        { providerId: "foreign" },
+        { presentation: true, pricing: true, toggle: true },
+      ),
+    (error: any) => error.code === "TENANT_SERVICE_FIELDS_INVALID",
+  );
+});
+
 test("customer catalog is scoped to active categories and never exposes provider cost", async () => {
   const category = { id: "category-1", name: "Social", slug: "social" };
   let serviceWhere: any;

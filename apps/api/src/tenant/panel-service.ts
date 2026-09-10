@@ -4,6 +4,33 @@ const randomUUID = () => {
   return `${x.slice(0, 8)}-${x.slice(8, 12)}-4${x.slice(13, 16)}-8${x.slice(17, 20)}-${x.slice(20)}`;
 };
 import { normalizeHostname, TenantError } from "./context.js";
+
+const CHILD_SERVICE_PERMISSIONS = [
+  "services.view",
+  "services.presentation.manage",
+  "services.pricing.manage",
+  "services.toggle",
+] as const;
+
+async function grantChildServicePermissions(tx: any, userId: string) {
+  const permissions = await tx.permission.findMany({
+    where: { code: { in: [...CHILD_SERVICE_PERMISSIONS] } },
+    select: { id: true },
+  });
+  if (permissions.length !== CHILD_SERVICE_PERMISSIONS.length)
+    throw new TenantError(
+      "PANEL_PERMISSIONS_MISSING",
+      "Child panel permissions are not migrated",
+    );
+  await tx.userPermission.createMany({
+    data: permissions.map((permission: any) => ({
+      userId,
+      permissionId: permission.id,
+      grantedBy: null,
+    })),
+    skipDuplicates: true,
+  });
+}
 import type { PanelDnsProvider } from "./panel-dns-provider.js";
 const SCALE = 100_000_000n;
 const units = (v: unknown) => {
@@ -84,6 +111,7 @@ export class PanelService {
         create: { userId: owner.id, roleId: adminRole.id },
         update: {},
       });
+      await grantChildServicePermissions(tx, owner.id);
       await tx.wallet.upsert({
         where: { userId: owner.id },
         create: { siteId: childSiteId, userId: owner.id, currency: "USD" },
@@ -316,6 +344,7 @@ export class PanelService {
       await tx.userRole.create({
         data: { userId: childOwner.id, roleId: adminRole.id },
       });
+      await grantChildServicePermissions(tx, childOwner.id);
       await tx.wallet.create({
         data: { siteId, userId: childOwner.id, currency: "USD" },
       });
