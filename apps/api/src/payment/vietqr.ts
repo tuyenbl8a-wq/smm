@@ -56,13 +56,15 @@ export class VietQrWebhook {
           return { status: "MANUAL_REVIEW" };
         }
         const rows = await tx.$queryRawUnsafe(
-          `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
+          `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid AND "site_id"=$3::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
           String(deposit.netAmount),
           deposit.userId,
+          deposit.siteId,
         );
         await tx.walletTransaction.create({
           data: {
             walletId: rows[0].id,
+            siteId: deposit.siteId,
             userId: deposit.userId,
             type: "DEPOSIT",
             amount: String(deposit.netAmount),

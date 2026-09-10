@@ -38,7 +38,11 @@ test("daily snapshot creation is an idempotent upsert", async () => {
   assert.equal(result.revenue, "10");
   assert.equal(result.grossProfit, "6");
   assert.equal(result.depositAmount, "20");
-  assert.equal(upsert.where.date_timezone.timezone, "UTC");
+  assert.deepEqual(upsert.where.siteId_date_timezone, {
+    siteId: "00000000-0000-4000-8000-000000000001",
+    date: new Date("2026-08-19T00:00:00.000Z"),
+    timezone: "UTC",
+  });
 });
 
 test("chart trend is ordered and bounded", async () => {

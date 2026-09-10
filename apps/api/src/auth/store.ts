@@ -1,3 +1,5 @@
+import { ROOT_SITE_ID } from "../tenant/context.js";
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -5,7 +7,7 @@ export interface AuthUser {
   passwordHash: string;
   status: string;
   emailVerifiedAt: Date | null;
-  siteId?: string;
+  siteId: string;
 }
 export interface AuthSession {
   id: string;
@@ -71,16 +73,19 @@ export interface AdminDashboard {
   }>;
 }
 export interface AuthStore {
-  findUserByEmail(email: string, siteId?: string): Promise<AuthUser | null>;
-  findUserByUsername(username: string, siteId?: string): Promise<AuthUser | null>;
-  findUserById(id: string): Promise<AuthUser | null>;
+  findUserByEmail(email: string, siteId: string): Promise<AuthUser | null>;
+  findUserByUsername(
+    username: string,
+    siteId: string,
+  ): Promise<AuthUser | null>;
+  findUserById(id: string, siteId: string): Promise<AuthUser | null>;
   createUser(input: {
     email: string;
     username: string;
     passwordHash: string;
     referralCode: string;
     referredByCode?: string;
-    siteId?: string;
+    siteId: string;
   }): Promise<AuthUser>;
   updatePassword(userId: string, passwordHash: string): Promise<void>;
   createSession(input: {
@@ -129,19 +134,23 @@ export interface AuthStore {
     ipAddress: string | undefined,
     since: Date,
   ): Promise<number>;
-  customerDashboard(userId: string): Promise<CustomerDashboard>;
-  adminDashboard(): Promise<AdminDashboard>;
+  customerDashboard(userId: string, siteId: string): Promise<CustomerDashboard>;
+  adminDashboard(siteId: string): Promise<AdminDashboard>;
 }
 export class PrismaAuthStore implements AuthStore {
   constructor(private readonly db: any) {}
-  findUserByEmail(email: string, siteId?: string) {
-    return siteId ? this.db.user.findUnique({ where: { siteId_email: { siteId, email } } }) : this.db.user.findFirst({ where: { email } });
+  findUserByEmail(email: string, siteId = ROOT_SITE_ID) {
+    return this.db.user.findUnique({
+      where: { siteId_email: { siteId, email } },
+    });
   }
-  findUserByUsername(username: string, siteId?: string) {
-    return siteId ? this.db.user.findUnique({ where: { siteId_username: { siteId, username } } }) : this.db.user.findFirst({ where: { username } });
+  findUserByUsername(username: string, siteId = ROOT_SITE_ID) {
+    return this.db.user.findUnique({
+      where: { siteId_username: { siteId, username } },
+    });
   }
-  findUserById(id: string) {
-    return this.db.user.findUnique({ where: { id } });
+  findUserById(id: string, siteId = ROOT_SITE_ID) {
+    return this.db.user.findFirst({ where: { id, siteId } });
   }
   async createUser(input: {
     email: string;
@@ -154,12 +163,23 @@ export class PrismaAuthStore implements AuthStore {
     return this.db.$transaction(async (tx: any) => {
       const role = await tx.role.findUniqueOrThrow({ where: { code: "USER" } });
       const group =
-        (await tx.priceGroup.findUnique({ where: input.siteId ? { siteId_code: { siteId: input.siteId, code: "CUSTOMER" } } : { code: "CUSTOMER" } })) ??
-        (await tx.priceGroup.findUniqueOrThrow({ where: input.siteId ? { siteId_code: { siteId: input.siteId, code: "NORMAL" } } : { code: "NORMAL" } }));
+        (await tx.priceGroup.findUnique({
+          where: input.siteId
+            ? { siteId_code: { siteId: input.siteId, code: "CUSTOMER" } }
+            : { code: "CUSTOMER" },
+        })) ??
+        (await tx.priceGroup.findUniqueOrThrow({
+          where: input.siteId
+            ? { siteId_code: { siteId: input.siteId, code: "NORMAL" } }
+            : { code: "NORMAL" },
+        }));
       const { referredByCode, ...userInput } = input;
       const referrer = referredByCode
         ? await tx.user.findUnique({
-            where: { referralCode: referredByCode.trim().toUpperCase(), ...(input.siteId ? { siteId: input.siteId } : {}) },
+            where: {
+              referralCode: referredByCode.trim().toUpperCase(),
+              ...(input.siteId ? { siteId: input.siteId } : {}),
+            },
           })
         : null;
       if (referredByCode && !referrer) throw new Error("REFERRAL_CODE_INVALID");
@@ -167,7 +187,13 @@ export class PrismaAuthStore implements AuthStore {
         data: { ...userInput, status: "ACTIVE", priceGroupId: group.id },
       });
       await tx.userRole.create({ data: { userId: user.id, roleId: role.id } });
-      await tx.wallet.create({ data: { userId: user.id, ...(input.siteId ? { siteId: input.siteId } : {}), currency: "USD" } });
+      await tx.wallet.create({
+        data: {
+          userId: user.id,
+          ...(input.siteId ? { siteId: input.siteId } : {}),
+          currency: "USD",
+        },
+      });
       await tx.affiliate.create({
         data: {
           userId: user.id,
@@ -250,8 +276,13 @@ export class PrismaAuthStore implements AuthStore {
       const record = await tx.passwordResetToken.findUnique({
         where: { tokenHash },
       });
-      if (!record || record.usedAt || record.expiresAt <= new Date()) return null;
-      if (siteId && !(await tx.user.findFirst({ where: { id: record.userId, siteId } }))) return null;
+      if (!record || record.usedAt || record.expiresAt <= new Date())
+        return null;
+      if (
+        siteId &&
+        !(await tx.user.findFirst({ where: { id: record.userId, siteId } }))
+      )
+        return null;
       const claimed = await tx.passwordResetToken.updateMany({
         where: { id: record.id, usedAt: null, expiresAt: { gt: new Date() } },
         data: { usedAt: new Date() },
@@ -305,7 +336,10 @@ export class PrismaAuthStore implements AuthStore {
       },
     });
   }
-  async customerDashboard(userId: string): Promise<CustomerDashboard> {
+  async customerDashboard(
+    userId: string,
+    siteId: string,
+  ): Promise<CustomerDashboard> {
     const { buildActivitySeries, subtractDecimal } =
       await import("../customer/dashboard.js");
     const since = new Date();
@@ -324,37 +358,38 @@ export class PrismaAuthStore implements AuthStore {
       activityRecords,
     ] = await Promise.all([
       this.db.wallet.findUnique({
-        where: { userId },
+        where: { userId, siteId },
         select: { balance: true, currency: true },
       }),
-      this.db.order.count({ where: { userId } }),
+      this.db.order.count({ where: { userId, siteId } }),
       this.db.order.count({
         where: {
           userId,
+          siteId,
           status: { in: ["PENDING", "PROCESSING", "IN_PROGRESS"] },
         },
       }),
-      this.db.order.count({ where: { userId, status: "COMPLETED" } }),
+      this.db.order.count({ where: { userId, siteId, status: "COMPLETED" } }),
       this.db.order.aggregate({
-        where: { userId },
+        where: { userId, siteId },
         _sum: { charge: true, refundedAmount: true },
       }),
       this.db.deposit.aggregate({
-        where: { userId, status: "PAID" },
+        where: { userId, siteId, status: "PAID" },
         _sum: { netAmount: true },
       }),
       this.db.ticket.count({
-        where: { userId, status: { not: "CLOSED" } },
+        where: { userId, siteId, status: { not: "CLOSED" } },
       }),
-      this.db.notification.count({ where: { userId, readAt: null } }),
+      this.db.notification.count({ where: { userId, siteId, readAt: null } }),
       this.db.notification.findMany({
-        where: { userId },
+        where: { userId, siteId },
         select: { id: true, title: true, body: true, createdAt: true },
         orderBy: { createdAt: "desc" },
         take: 5,
       }),
       this.db.order.findMany({
-        where: { userId, createdAt: { gte: since } },
+        where: { userId, siteId, createdAt: { gte: since } },
         select: { createdAt: true, charge: true },
         orderBy: { createdAt: "asc" },
       }),
@@ -376,7 +411,7 @@ export class PrismaAuthStore implements AuthStore {
       notifications,
     };
   }
-  async adminDashboard(): Promise<AdminDashboard> {
+  async adminDashboard(siteId: string): Promise<AdminDashboard> {
     const { buildAdminActivity } = await import("../admin/dashboard.js");
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
@@ -404,39 +439,55 @@ export class PrismaAuthStore implements AuthStore {
       openPriceAlerts,
       recentPriceAlerts,
     ] = await Promise.all([
-      this.db.user.count({ where: { deletedAt: null } }),
-      this.db.user.count({ where: { status: "ACTIVE", deletedAt: null } }),
+      this.db.user.count({ where: { siteId, deletedAt: null } }),
       this.db.user.count({
-        where: { createdAt: { gte: today }, deletedAt: null },
+        where: { siteId, status: "ACTIVE", deletedAt: null },
       }),
       this.db.user.count({
-        where: { createdAt: { gte: sevenDays }, deletedAt: null },
+        where: { siteId, createdAt: { gte: today }, deletedAt: null },
       }),
-      this.db.order.count(),
-      this.db.order.count({
-        where: { status: { in: ["PENDING", "PROCESSING", "IN_PROGRESS"] } },
+      this.db.user.count({
+        where: { siteId, createdAt: { gte: sevenDays }, deletedAt: null },
       }),
-      this.db.order.count({ where: { status: "COMPLETED" } }),
+      this.db.order.count({ where: { siteId } }),
       this.db.order.count({
-        where: { status: { in: ["FAILED", "CANCELED"] } },
+        where: {
+          siteId,
+          status: { in: ["PENDING", "PROCESSING", "IN_PROGRESS"] },
+        },
+      }),
+      this.db.order.count({ where: { siteId, status: "COMPLETED" } }),
+      this.db.order.count({
+        where: { siteId, status: { in: ["FAILED", "CANCELED"] } },
       }),
       this.db.order.aggregate({
+        where: { siteId },
         _sum: { charge: true, providerCost: true, profit: true },
       }),
       this.db.deposit.aggregate({
-        where: { status: "PAID" },
+        where: { siteId, status: "PAID" },
         _sum: { netAmount: true },
       }),
-      this.db.deposit.count({ where: { status: "PENDING" } }),
-      this.db.ticket.count({ where: { status: { not: "CLOSED" } } }),
-      this.db.provider.count({ where: { status: "ACTIVE", deletedAt: null } }),
-      this.db.provider.count({
-        where: { status: { not: "ACTIVE" }, deletedAt: null },
+      this.db.deposit.count({ where: { siteId, status: "PENDING" } }),
+      this.db.ticket.count({ where: { siteId, status: { not: "CLOSED" } } }),
+      siteId === ROOT_SITE_ID
+        ? this.db.provider.count({
+            where: { status: "ACTIVE", deletedAt: null },
+          })
+        : 0,
+      siteId === ROOT_SITE_ID
+        ? this.db.provider.count({
+            where: { status: { not: "ACTIVE" }, deletedAt: null },
+          })
+        : 0,
+      this.db.service.count({
+        where: { siteId, active: true, deletedAt: null },
       }),
-      this.db.service.count({ where: { active: true, deletedAt: null } }),
-      this.db.service.count({ where: { active: false, deletedAt: null } }),
+      this.db.service.count({
+        where: { siteId, active: false, deletedAt: null },
+      }),
       this.db.order.findMany({
-        where: { createdAt: { gte: sevenDays } },
+        where: { siteId, createdAt: { gte: sevenDays } },
         select: {
           createdAt: true,
           charge: true,
@@ -446,6 +497,7 @@ export class PrismaAuthStore implements AuthStore {
         orderBy: { createdAt: "asc" },
       }),
       this.db.order.findMany({
+        where: { siteId },
         select: {
           id: true,
           status: true,
@@ -456,10 +508,10 @@ export class PrismaAuthStore implements AuthStore {
         orderBy: { createdAt: "desc" },
         take: 8,
       }),
-      this.db.priceAlert
+      this.db.priceAlert && siteId === ROOT_SITE_ID
         ? this.db.priceAlert.count({ where: { status: "OPEN" } })
         : 0,
-      this.db.priceAlert
+      this.db.priceAlert && siteId === ROOT_SITE_ID
         ? this.db.priceAlert.findMany({
             where: { status: "OPEN" },
             select: { id: true, type: true, severity: true, title: true },

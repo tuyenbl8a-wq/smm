@@ -1,3 +1,4 @@
+import { ROOT_SITE_ID } from "../tenant/context.js";
 export class SupportError extends Error {
   constructor(
     readonly code: string,
@@ -17,7 +18,7 @@ const message = (v: unknown) => {
 };
 export class SupportService {
   constructor(private db: any) {}
-  async adminInbox(query: any) {
+  async adminInbox(query: any, siteId = ROOT_SITE_ID) {
     const rawStatus = String(query.status ?? "").trim(),
       status = ["", "undefined", "null"].includes(rawStatus)
         ? undefined
@@ -30,6 +31,7 @@ export class SupportService {
     const rawSearch = String(query.search ?? "").trim(),
       search = ["undefined", "null"].includes(rawSearch) ? "" : rawSearch;
     const where = {
+      siteId,
       ...(status ? { status } : {}),
       ...(search
         ? {
@@ -58,11 +60,16 @@ export class SupportService {
       items: items.map((x: any) => ({ ...x, id: String(x.id) })),
     };
   }
-  async adminStatus(actorId: string, id: bigint, status: string) {
+  async adminStatus(
+    actorId: string,
+    id: bigint,
+    status: string,
+    siteId: string,
+  ) {
     if (!["OPEN", "ANSWERED", "CUSTOMER_REPLY", "CLOSED"].includes(status))
       throw new SupportError("STATUS_INVALID", "Invalid status");
     return this.db.$transaction(async (tx: any) => {
-      const before = await tx.ticket.findUnique({ where: { id } });
+      const before = await tx.ticket.findFirst({ where: { id, siteId } });
       if (!before)
         throw new SupportError("TICKET_NOT_FOUND", "Ticket not found");
       const item = await tx.ticket.update({
@@ -82,13 +89,14 @@ export class SupportService {
       return item;
     });
   }
-  async create(userId: string, input: any) {
+  async create(userId: string, input: any, siteId = ROOT_SITE_ID) {
     const subject = String(input.subject ?? "").trim();
     if (subject.length < 3 || subject.length > 255)
       throw new SupportError("SUBJECT_INVALID", "Invalid subject");
     return this.db.$transaction(async (tx: any) => {
       const ticket = await tx.ticket.create({
         data: {
+          siteId,
           userId,
           subject,
           category: String(input.category ?? "GENERAL").slice(0, 80),
@@ -106,16 +114,18 @@ export class SupportService {
       return { ...ticket, id: String(ticket.id) };
     });
   }
-  async list(userId: string) {
+  async list(userId: string, siteId = ROOT_SITE_ID) {
     const rows = await this.db.ticket.findMany({
-      where: { userId },
+      where: { userId, siteId },
       orderBy: { updatedAt: "desc" },
       take: 100,
     });
     return rows.map((x: any) => ({ ...x, id: String(x.id) }));
   }
-  async detail(userId: string, id: bigint, isStaff = false) {
-    const t = await this.db.ticket.findUnique({ where: { id } });
+  async detail(userId: string, id: bigint, isStaff = false, siteId?: string) {
+    const t = await this.db.ticket.findFirst({
+      where: { id, ...(siteId ? { siteId } : {}) },
+    });
     if (!t || (!isStaff && t.userId !== userId))
       throw new SupportError("TICKET_NOT_FOUND", "Ticket not found");
     const messages = await this.db.ticketMessage.findMany({
@@ -124,9 +134,17 @@ export class SupportService {
     });
     return { ...t, id: String(t.id), messages };
   }
-  async reply(userId: string, id: bigint, input: any, isStaff = false) {
+  async reply(
+    userId: string,
+    id: bigint,
+    input: any,
+    isStaff = false,
+    siteId?: string,
+  ) {
     return this.db.$transaction(async (tx: any) => {
-      const ticket = await tx.ticket.findUnique({ where: { id } });
+      const ticket = await tx.ticket.findFirst({
+        where: { id, ...(siteId ? { siteId } : {}) },
+      });
       if (!ticket || (!isStaff && ticket.userId !== userId))
         throw new SupportError("TICKET_NOT_FOUND", "Ticket not found");
       const item = await tx.ticketMessage.create({
@@ -144,6 +162,7 @@ export class SupportService {
       if (isStaff && !input.internal)
         await tx.notification.create({
           data: {
+            siteId: ticket.siteId,
             userId: ticket.userId,
             channel: "IN_APP",
             type: "TICKET_REPLY",
@@ -155,9 +174,9 @@ export class SupportService {
       return item;
     });
   }
-  async markRead(userId: string, id: string) {
+  async markRead(userId: string, id: string, siteId = ROOT_SITE_ID) {
     const x = await this.db.notification.updateMany({
-      where: { id, userId },
+      where: { id, userId, siteId },
       data: { readAt: new Date() },
     });
     if (!x.count)
@@ -167,23 +186,23 @@ export class SupportService {
       );
     return { read: true };
   }
-  async markAllRead(userId: string) {
+  async markAllRead(userId: string, siteId = ROOT_SITE_ID) {
     const result = await this.db.notification.updateMany({
-      where: { userId, readAt: null },
+      where: { userId, siteId, readAt: null },
       data: { readAt: new Date() },
     });
     return { read: result.count };
   }
-  async unreadCount(userId: string) {
+  async unreadCount(userId: string, siteId = ROOT_SITE_ID) {
     return {
       unread: await this.db.notification.count({
-        where: { userId, readAt: null },
+        where: { userId, siteId, readAt: null },
       }),
     };
   }
-  notifications(userId: string) {
+  notifications(userId: string, siteId = ROOT_SITE_ID) {
     return this.db.notification.findMany({
-      where: { userId },
+      where: { userId, siteId },
       orderBy: { createdAt: "desc" },
       take: 100,
     });
@@ -198,8 +217,11 @@ export class SupportService {
       size: number;
     },
     isStaff = false,
+    siteId = ROOT_SITE_ID,
   ) {
-    const ticket = await this.db.ticket.findUnique({ where: { id: ticketId } });
+    const ticket = await this.db.ticket.findFirst({
+      where: { id: ticketId, siteId },
+    });
     if (!ticket || (!isStaff && ticket.userId !== userId))
       throw new SupportError("TICKET_NOT_FOUND", "Ticket not found");
     return this.db.attachment.create({
@@ -213,12 +235,17 @@ export class SupportService {
       },
     });
   }
-  async attachment(userId: string, id: string, isStaff = false) {
+  async attachment(
+    userId: string,
+    id: string,
+    isStaff = false,
+    siteId = ROOT_SITE_ID,
+  ) {
     const item = await this.db.attachment.findUnique({ where: { id } });
     if (!item)
       throw new SupportError("ATTACHMENT_NOT_FOUND", "Attachment not found");
-    const ticket = await this.db.ticket.findUnique({
-      where: { id: item.ticketId },
+    const ticket = await this.db.ticket.findFirst({
+      where: { id: item.ticketId, siteId },
     });
     if (!ticket || (!isStaff && ticket.userId !== userId))
       throw new SupportError("ATTACHMENT_NOT_FOUND", "Attachment not found");
