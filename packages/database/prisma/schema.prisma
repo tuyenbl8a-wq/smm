@@ -35,6 +35,15 @@ enum PanelSubscriptionStatus {
   CANCELED
 }
 
+enum PanelRentalIntentStatus {
+  PENDING_DNS
+  PAYMENT_REQUIRED
+  ROUTING_REQUIRED
+  ACTIVATED
+  CANCELED
+  EXPIRED
+}
+
 enum UserStatus {
   PENDING
   ACTIVE
@@ -223,7 +232,21 @@ model Permission {
   description String? @db.VarChar(255)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  panelRentalPlans PanelRentalPlanPermission[]
+  disabledForSites SiteDisabledPermission[]
   @@map("permissions")
+}
+
+model SiteDisabledPermission {
+  siteId       String @map("site_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([siteId, permissionId])
+  @@index([permissionId])
+  @@map("site_disabled_permissions")
 }
 model UserRole {
   userId String @map("user_id") @db.Uuid
@@ -834,7 +857,7 @@ model DailyReportSnapshot {
   newUsers Int @default(0) @map("new_users")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-  @@unique([date, timezone])
+  @@unique([siteId, date, timezone])
   @@index([timezone, date])
   @@map("daily_report_snapshots")
 }
@@ -1082,6 +1105,8 @@ model SiteDomain {
   status            SiteDomainStatus @default(PENDING)
   isPrimary         Boolean          @default(false) @map("is_primary")
   verificationToken String           @map("verification_token") @db.VarChar(128)
+  providerZoneId     String?          @unique @map("provider_zone_id") @db.VarChar(160)
+  assignedNameservers Json?           @map("assigned_nameservers")
   verifiedAt        DateTime?        @map("verified_at") @db.Timestamptz(3)
   createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -1108,10 +1133,48 @@ model PanelRentalPlan {
   active            Boolean  @default(true)
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  permissions       PanelRentalPlanPermission[]
 
   @@unique([sellerSiteId, code])
   @@index([sellerSiteId, active])
   @@map("panel_rental_plans")
+}
+
+model PanelRentalPlanPermission {
+  planId       String   @map("plan_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  plan         PanelRentalPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([planId, permissionId])
+  @@index([permissionId])
+  @@map("panel_rental_plan_permissions")
+}
+
+model PanelRentalIntent {
+  id                  String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sellerSiteId        String                  @map("seller_site_id") @db.Uuid
+  renterUserId        String                  @map("renter_user_id") @db.Uuid
+  planId              String                  @map("plan_id") @db.Uuid
+  name                String                  @db.VarChar(160)
+  slug                String                  @db.VarChar(80)
+  hostname            String                  @unique @db.VarChar(253)
+  providerZoneId      String?                 @unique @map("provider_zone_id") @db.VarChar(160)
+  assignedNameservers Json                    @map("assigned_nameservers")
+  status              PanelRentalIntentStatus @default(PENDING_DNS)
+  autoRenew           Boolean                 @default(false) @map("auto_renew")
+  requestKey          String                  @unique @map("request_key") @db.VarChar(128)
+  activationKey       String                  @unique @map("activation_key") @db.VarChar(128)
+  activatedSiteId     String?                 @map("activated_site_id") @db.Uuid
+  expiresAt           DateTime                @map("expires_at") @db.Timestamptz(3)
+  createdAt           DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([sellerSiteId, renterUserId, status])
+  @@index([status, expiresAt])
+  @@map("panel_rental_intents")
 }
 
 model PanelSubscription {
@@ -1139,6 +1202,8 @@ model SiteServiceRule {
   siteId        String      @map("site_id") @db.Uuid
   serviceId     String      @map("service_id") @db.Uuid
   active        Boolean     @default(true)
+  displayName   String?     @map("display_name") @db.VarChar(240)
+  displayDescription String? @map("display_description") @db.Text
   pricingMode   PricingMode @map("pricing_mode")
   fixedRate     Decimal?    @map("fixed_rate") @db.Decimal(20, 8)
   markupPercent Decimal?    @map("markup_percent") @db.Decimal(9, 6)

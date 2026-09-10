@@ -1,6 +1,7 @@
 import { decimalInput, moneyUnits, resolveCustomerRate } from "./pricing.js";
 import { BulkPricingService } from "./bulk-pricing.js";
 import { repriceMappedServices } from "./repricing.js";
+import { ROOT_SITE_ID } from "../tenant/context.js";
 
 export class CatalogError extends Error {
   constructor(
@@ -30,11 +31,14 @@ const safeImageUrl = (value: unknown, limit = 2048): string | null => {
   if (!result) return null;
   try {
     const url = new URL(result);
-    if (!['https:', 'http:'].includes(url.protocol) || result.length > limit)
+    if (!["https:", "http:"].includes(url.protocol) || result.length > limit)
       throw new Error();
     return result;
   } catch {
-    throw new CatalogError('IMAGE_URL_INVALID', 'Link ảnh phải là URL HTTP hoặc HTTPS hợp lệ');
+    throw new CatalogError(
+      "IMAGE_URL_INVALID",
+      "Link ảnh phải là URL HTTP hoặc HTTPS hợp lệ",
+    );
   }
 };
 const mutationReason = (value: unknown): string => {
@@ -110,6 +114,7 @@ export class CatalogService {
 
   /** A deliberately small, read-only catalogue for unauthenticated marketing pages. */
   async publicCatalog(query: {
+    siteId: string;
     page: number;
     limit: number;
     search?: string;
@@ -153,9 +158,32 @@ export class CatalogService {
       categories = categories.filter(
         (item: any) => item.slug === slug(query.category),
       );
+    const siteRules =
+      query.siteId === ROOT_SITE_ID
+        ? []
+        : await this.db.siteServiceRule.findMany({
+            where: { siteId: query.siteId, active: true },
+            select: {
+              serviceId: true,
+              displayName: true,
+              displayDescription: true,
+              fixedRate: true,
+              markupPercent: true,
+              fixedProfit: true,
+              minProfit: true,
+              minOverride: true,
+              maxOverride: true,
+            },
+          });
+    const ruleMap = new Map(
+      siteRules.map((rule: any) => [rule.serviceId, rule]),
+    );
     const where = {
       active: true,
       deletedAt: null,
+      ...(query.siteId === ROOT_SITE_ID
+        ? { siteId: query.siteId }
+        : { id: { in: siteRules.map((rule: any) => rule.serviceId) } }),
       categoryId: { in: categories.map((category: any) => category.id) },
       ...(query.search
         ? {
@@ -201,7 +229,9 @@ export class CatalogService {
       total,
       pages: Math.ceil(total / limit),
       categories,
-      services,
+      services: services.map((service: any) =>
+        this.applySiteRule(service, ruleMap.get(service.id)),
+      ),
     };
   }
 
@@ -257,6 +287,7 @@ export class CatalogService {
   async customerCatalog(
     userId: string,
     query: {
+      siteId: string;
       page: number;
       limit: number;
       category?: string;
@@ -300,9 +331,32 @@ export class CatalogService {
           ? (platformMap.get(item.platformId) ?? null)
           : null,
       }));
+    const siteRules =
+      query.siteId === ROOT_SITE_ID
+        ? []
+        : await this.db.siteServiceRule.findMany({
+            where: { siteId: query.siteId, active: true },
+            select: {
+              serviceId: true,
+              displayName: true,
+              displayDescription: true,
+              fixedRate: true,
+              markupPercent: true,
+              fixedProfit: true,
+              minProfit: true,
+              minOverride: true,
+              maxOverride: true,
+            },
+          });
+    const siteRuleMap = new Map(
+      siteRules.map((rule: any) => [rule.serviceId, rule]),
+    );
     const where = {
       active: true,
       deletedAt: null,
+      ...(query.siteId === ROOT_SITE_ID
+        ? { siteId: query.siteId }
+        : { id: { in: siteRules.map((rule: any) => rule.serviceId) } }),
       categoryId: { in: categories.map((category: any) => category.id) },
       ...(query.search
         ? {
@@ -310,8 +364,8 @@ export class CatalogService {
           }
         : {}),
     };
-    const user = await this.db.user.findUnique({
-      where: { id: userId },
+    const user = await this.db.user.findFirst({
+      where: { id: userId, siteId: query.siteId },
       select: { priceGroupId: true },
     });
     const [total, services, rules, group] = await Promise.all([
@@ -350,7 +404,11 @@ export class CatalogService {
         : [],
       user?.priceGroupId
         ? this.db.priceGroup.findFirst({
-            where: { id: user.priceGroupId, active: true },
+            where: {
+              id: user.priceGroupId,
+              siteId: query.siteId,
+              active: true,
+            },
           })
         : null,
     ]);
@@ -378,18 +436,204 @@ export class CatalogService {
       services: services.map((service: any) => {
         const source: any = costMap.get(service.id);
         const rule: any = ruleMap.get(service.id);
-        return {
-          ...service,
-          serviceNumber: String(service.serviceNumber),
-          rate: resolveCustomerRate({
-            service: source,
-            group,
-            override: rule,
-            providerCost: source.providerCost,
-          }),
-        };
+        return this.applySiteRule(
+          {
+            ...service,
+            serviceNumber: String(service.serviceNumber),
+            rate: resolveCustomerRate({
+              service: source,
+              group,
+              override: rule,
+              providerCost: source.providerCost,
+            }),
+          },
+          siteRuleMap.get(service.id),
+        );
       }),
     };
+  }
+
+  private applySiteRule(service: any, rule: any) {
+    if (!rule) return service;
+    const base = moneyUnits(service.rate);
+    const percent = BigInt(
+      String(rule.markupPercent ?? 0).split(".")[0] || "0",
+    );
+    const fixed = moneyUnits(rule.fixedProfit ?? 0);
+    const minimum = moneyUnits(rule.minProfit ?? 0);
+    const rate =
+      rule.fixedRate != null
+        ? String(rule.fixedRate)
+        : moneyText(
+            base +
+              (base * percent) / 100n +
+              (fixed > minimum ? fixed : minimum),
+          );
+    return {
+      ...service,
+      name: rule.displayName ?? service.name,
+      description: rule.displayDescription ?? service.description,
+      rate,
+      min: rule.minOverride ?? service.min,
+      max: rule.maxOverride ?? service.max,
+    };
+  }
+
+  async tenantAdminOverview(siteId: string) {
+    if (siteId === ROOT_SITE_ID) return this.adminOverview(false);
+    const rules = await this.db.siteServiceRule.findMany({
+      where: { siteId },
+      orderBy: { updatedAt: "desc" },
+    });
+    const services = await this.db.service.findMany({
+      where: {
+        id: { in: rules.map((rule: any) => rule.serviceId) },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        serviceNumber: true,
+        name: true,
+        description: true,
+        min: true,
+        max: true,
+        rate: true,
+        active: true,
+        categoryId: true,
+      },
+    });
+    const serviceMap = new Map(
+      services.map((service: any) => [service.id, service]),
+    );
+    return {
+      services: rules.flatMap((rule: any) => {
+        const service: any = serviceMap.get(rule.serviceId);
+        return service
+          ? [
+              {
+                ...this.applySiteRule(service, rule),
+                active: rule.active && service.active,
+              },
+            ]
+          : [];
+      }),
+      providers: [],
+      providerServices: [],
+      mappings: [],
+      priceHistory: [],
+    };
+  }
+
+  async tenantServiceEditor(siteId: string, serviceId: string) {
+    const [rule, service] = await Promise.all([
+      this.db.siteServiceRule.findUnique({
+        where: { siteId_serviceId: { siteId, serviceId } },
+      }),
+      this.db.service.findFirst({ where: { id: serviceId, deletedAt: null } }),
+    ]);
+    if (!rule || !service)
+      throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
+    return {
+      service: {
+        ...this.applySiteRule(service, rule),
+        active: rule.active && service.active,
+      },
+      tenantOverride: {
+        displayName: rule.displayName,
+        displayDescription: rule.displayDescription,
+        active: rule.active,
+        pricingMode: rule.pricingMode,
+        fixedRate: rule.fixedRate == null ? null : String(rule.fixedRate),
+        markupPercent:
+          rule.markupPercent == null ? null : String(rule.markupPercent),
+      },
+      mappings: [],
+      providerServices: [],
+      providers: [],
+      pricing: [],
+    };
+  }
+
+  async updateTenantService(
+    actorId: string,
+    siteId: string,
+    serviceId: string,
+    input: any,
+    capabilities: { presentation: boolean; pricing: boolean; toggle: boolean },
+  ) {
+    const presentationRequested =
+      input.name !== undefined || input.description !== undefined;
+    const pricingRequested =
+      input.fixedRate !== undefined || input.markupPercent !== undefined;
+    const toggleRequested = input.active !== undefined;
+    if (presentationRequested && !capabilities.presentation)
+      throw new CatalogError(
+        "PERMISSION_DENIED",
+        "Presentation permission required",
+      );
+    if (pricingRequested && !capabilities.pricing)
+      throw new CatalogError(
+        "PERMISSION_DENIED",
+        "Pricing permission required",
+      );
+    if (toggleRequested && !capabilities.toggle)
+      throw new CatalogError("PERMISSION_DENIED", "Toggle permission required");
+    if (!presentationRequested && !pricingRequested && !toggleRequested)
+      throw new CatalogError(
+        "TENANT_SERVICE_FIELDS_INVALID",
+        "No tenant-editable fields supplied",
+      );
+    return this.db.$transaction(async (tx: any) => {
+      const before = await tx.siteServiceRule.findUnique({
+        where: { siteId_serviceId: { siteId, serviceId } },
+      });
+      if (!before)
+        throw new CatalogError(
+          "SERVICE_NOT_FOUND",
+          "Assigned service not found",
+        );
+      const data: any = {
+        ...(input.name !== undefined ? { displayName: name(input.name) } : {}),
+        ...(input.description !== undefined
+          ? {
+              displayDescription:
+                String(input.description).trim().slice(0, 5000) || null,
+            }
+          : {}),
+        ...(input.active !== undefined
+          ? { active: input.active === true }
+          : {}),
+        ...(input.fixedRate !== undefined
+          ? {
+              pricingMode: "FIXED",
+              fixedRate: decimalInput(input.fixedRate),
+              markupPercent: null,
+            }
+          : {}),
+        ...(input.markupPercent !== undefined
+          ? {
+              pricingMode: "COST_PLUS_PERCENT",
+              markupPercent: decimalInput(input.markupPercent, true),
+              fixedRate: null,
+            }
+          : {}),
+      };
+      const updated = await tx.siteServiceRule.update({
+        where: { siteId_serviceId: { siteId, serviceId } },
+        data,
+      });
+      await this.audit(
+        tx,
+        actorId,
+        "TENANT_SERVICE_UPDATE",
+        "site_service_rule",
+        updated.id,
+        before,
+        updated,
+        siteId,
+      );
+      return updated;
+    });
   }
 
   async adminOverview(includePricing = true) {
@@ -715,7 +959,12 @@ export class CatalogService {
             }
           : {}),
         ...(input.defaultMarkupPercent !== undefined
-          ? { defaultMarkupPercent: decimalInput(input.defaultMarkupPercent, true) }
+          ? {
+              defaultMarkupPercent: decimalInput(
+                input.defaultMarkupPercent,
+                true,
+              ),
+            }
           : {}),
         ...(input.defaultFixedProfit !== undefined
           ? { defaultFixedProfit: decimalInput(input.defaultFixedProfit, true) }
@@ -1034,7 +1283,9 @@ export class CatalogService {
       name: name(input.name).slice(0, 120),
       slug: slug(input.slug).slice(0, 140),
       icon: safeImageUrl(input.icon, 255),
-      description: input.description ? String(input.description).trim().slice(0, 5000) : null,
+      description: input.description
+        ? String(input.description).trim().slice(0, 5000)
+        : null,
       sortOrder: integer(input.sortOrder ?? 0, "sortOrder"),
       active: input.active !== false,
     };
@@ -1070,7 +1321,12 @@ export class CatalogService {
           ...(input.icon !== undefined
             ? { icon: safeImageUrl(input.icon, 255) }
             : {}),
-          ...(input.description !== undefined ? { description: String(input.description).trim().slice(0, 5000) || null } : {}),
+          ...(input.description !== undefined
+            ? {
+                description:
+                  String(input.description).trim().slice(0, 5000) || null,
+              }
+            : {}),
           ...(input.sortOrder !== undefined
             ? { sortOrder: integer(input.sortOrder, "sortOrder") }
             : {}),
@@ -1135,7 +1391,12 @@ export class CatalogService {
         ...(input.sortOrder !== undefined
           ? { sortOrder: integer(input.sortOrder, "sortOrder") }
           : {}),
-        ...(input.description !== undefined ? { description: String(input.description).trim().slice(0, 5000) || null } : {}),
+        ...(input.description !== undefined
+          ? {
+              description:
+                String(input.description).trim().slice(0, 5000) || null,
+            }
+          : {}),
         ...(input.icon !== undefined ? { icon: safeImageUrl(input.icon) } : {}),
       };
       const item = await tx.serviceCategory.update({ where: { id }, data });
@@ -1688,9 +1949,11 @@ export class CatalogService {
     resourceId: string,
     before: any,
     after: any,
+    siteId = ROOT_SITE_ID,
   ) {
     return tx.auditLog.create({
       data: {
+        siteId,
         actorId,
         action,
         resource,

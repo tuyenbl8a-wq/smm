@@ -70,14 +70,16 @@ export async function applyOrderTargetRefund(
   const amount = moneyFromUnits(delta),
     targetText = moneyFromUnits(target);
   const rows = await tx.$queryRawUnsafe(
-    `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
+    `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid AND "site_id"=$3::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
     amount,
     order.userId,
+    order.siteId,
   );
   if (!rows?.[0]) throw new Error("WALLET_NOT_FOUND");
   await tx.walletTransaction.create({
     data: {
       walletId: rows[0].id,
+      siteId: order.siteId,
       userId: order.userId,
       type: "REFUND",
       amount,
@@ -133,12 +135,16 @@ export function zonedDayBounds(date: string, timezone: string) {
 
 export class DailySnapshotService {
   constructor(private db: any) {}
-  async build(date: string, timezone = "Asia/Ho_Chi_Minh") {
+  async build(
+    date: string,
+    timezone = "Asia/Ho_Chi_Minh",
+    siteId = "00000000-0000-4000-8000-000000000001",
+  ) {
     const { start, end } = zonedDayBounds(date, timezone),
       range = { gte: start, lt: end };
     const [orders, deposits, users] = await Promise.all([
       this.db.order.aggregate({
-        where: { createdAt: range },
+        where: { siteId, createdAt: range },
         _sum: {
           charge: true,
           providerCost: true,
@@ -148,14 +154,18 @@ export class DailySnapshotService {
         _count: true,
       }),
       this.db.deposit.aggregate({
-        where: { status: "PAID", paidAt: range },
+        where: { siteId, status: "PAID", paidAt: range },
         _sum: { netAmount: true },
       }),
-      this.db.user.count({ where: { createdAt: range } }),
+      this.db.user.count({ where: { siteId, createdAt: range } }),
     ]);
     const [failedOrders, partialOrders] = await Promise.all([
-      this.db.order.count({ where: { createdAt: range, status: "FAILED" } }),
-      this.db.order.count({ where: { createdAt: range, status: "PARTIAL" } }),
+      this.db.order.count({
+        where: { siteId, createdAt: range, status: "FAILED" },
+      }),
+      this.db.order.count({
+        where: { siteId, createdAt: range, status: "PARTIAL" },
+      }),
     ]);
     const data = {
       revenue: String(orders._sum.charge ?? 0),
@@ -170,15 +180,30 @@ export class DailySnapshotService {
     };
     return this.db.dailyReportSnapshot.upsert({
       where: {
-        date_timezone: { date: new Date(`${date}T00:00:00Z`), timezone },
+        siteId_date_timezone: {
+          siteId,
+          date: new Date(`${date}T00:00:00Z`),
+          timezone,
+        },
       },
-      create: { date: new Date(`${date}T00:00:00Z`), timezone, ...data },
+      create: {
+        siteId,
+        date: new Date(`${date}T00:00:00Z`),
+        timezone,
+        ...data,
+      },
       update: data,
     });
   }
-  trend(timezone: string, from: string, to: string) {
+  trend(
+    timezone: string,
+    from: string,
+    to: string,
+    siteId = "00000000-0000-4000-8000-000000000001",
+  ) {
     return this.db.dailyReportSnapshot.findMany({
       where: {
+        siteId,
         timezone,
         date: {
           gte: new Date(`${from}T00:00:00Z`),
@@ -192,19 +217,51 @@ export class DailySnapshotService {
 }
 
 /** Refund every contractual panel edge using the immutable order-time snapshot. */
-export async function applySettlementTargetRefund(tx:any,order:any,orderTargetValue:unknown,description:string):Promise<void>{
-  const orderTarget=moneyToUnits(orderTargetValue),charge=moneyToUnits(order.charge);
-  if(orderTarget>charge)throw new Error("REFUND_EXCEEDS_CHARGE");
+export async function applySettlementTargetRefund(
+  tx: any,
+  order: any,
+  orderTargetValue: unknown,
+  description: string,
+): Promise<void> {
+  const orderTarget = moneyToUnits(orderTargetValue),
+    charge = moneyToUnits(order.charge);
+  if (orderTarget > charge) throw new Error("REFUND_EXCEEDS_CHARGE");
   if (!tx.orderSiteSettlement) return;
-  const settlements=await tx.orderSiteSettlement.findMany({where:{orderId:order.id}});
-  for(const settlement of settlements){
-    const edgeCharge=moneyToUnits(settlement.upstreamCharge),target=charge===0n?0n:(edgeCharge*orderTarget)/charge,existing=moneyToUnits(settlement.refundedAmount);
-    if(target<existing)throw new Error("REFUND_BELOW_EXISTING");
-    if(target===existing)continue;
-    const amount=moneyFromUnits(target-existing),targetText=moneyFromUnits(target);
-    const rows=await tx.$queryRawUnsafe(`UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid AND "site_id"=$3::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,amount,settlement.payerUserId,settlement.parentSiteId);
-    if(!rows?.[0])throw new Error("WALLET_NOT_FOUND");
-    await tx.walletTransaction.create({data:{siteId:settlement.parentSiteId,walletId:rows[0].id,userId:settlement.payerUserId,type:"REFUND",amount,balanceBefore:rows[0].before,balanceAfter:rows[0].after,referenceId:order.publicId,idempotencyKey:`settlement-refund:${order.publicId}:${settlement.childSiteId}:to:${targetText}`,description}});
-    await tx.orderSiteSettlement.update({where:{id:settlement.id},data:{refundedAmount:targetText}});
+  const settlements = await tx.orderSiteSettlement.findMany({
+    where: { orderId: order.id },
+  });
+  for (const settlement of settlements) {
+    const edgeCharge = moneyToUnits(settlement.upstreamCharge),
+      target = charge === 0n ? 0n : (edgeCharge * orderTarget) / charge,
+      existing = moneyToUnits(settlement.refundedAmount);
+    if (target < existing) throw new Error("REFUND_BELOW_EXISTING");
+    if (target === existing) continue;
+    const amount = moneyFromUnits(target - existing),
+      targetText = moneyFromUnits(target);
+    const rows = await tx.$queryRawUnsafe(
+      `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid AND "site_id"=$3::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
+      amount,
+      settlement.payerUserId,
+      settlement.parentSiteId,
+    );
+    if (!rows?.[0]) throw new Error("WALLET_NOT_FOUND");
+    await tx.walletTransaction.create({
+      data: {
+        siteId: settlement.parentSiteId,
+        walletId: rows[0].id,
+        userId: settlement.payerUserId,
+        type: "REFUND",
+        amount,
+        balanceBefore: rows[0].before,
+        balanceAfter: rows[0].after,
+        referenceId: order.publicId,
+        idempotencyKey: `settlement-refund:${order.publicId}:${settlement.childSiteId}:to:${targetText}`,
+        description,
+      },
+    });
+    await tx.orderSiteSettlement.update({
+      where: { id: settlement.id },
+      data: { refundedAmount: targetText },
+    });
   }
 }

@@ -156,14 +156,82 @@ test("canonical staff permissions remain distinct from commercial price tiers", 
   );
 });
 
+test("child service edits persist only tenant overrides and never mutate the master service", async () => {
+  let serviceUpdated = false;
+  let overrideData: any;
+  const db: any = {
+    $transaction: async (fn: any) => fn(db),
+    siteServiceRule: {
+      findUnique: async () => ({
+        id: "rule",
+        siteId: "child",
+        serviceId: "service",
+      }),
+      update: async ({ data }: any) => {
+        overrideData = data;
+        return { id: "rule", siteId: "child", serviceId: "service", ...data };
+      },
+    },
+    service: {
+      update: async () => {
+        serviceUpdated = true;
+      },
+    },
+    auditLog: { create: async ({ data }: any) => data },
+  };
+  const catalog = new CatalogService(db);
+  await catalog.updateTenantService(
+    "child-admin",
+    "child",
+    "service",
+    { name: "Tên bán riêng", markupPercent: "15", active: false },
+    { presentation: true, pricing: true, toggle: true },
+  );
+  assert.equal(serviceUpdated, false);
+  assert.deepEqual(overrideData, {
+    displayName: "Tên bán riêng",
+    active: false,
+    pricingMode: "COST_PLUS_PERCENT",
+    markupPercent: "15.00000000",
+    fixedRate: null,
+  });
+});
+
+test("child service capabilities cannot create/import providers or edit unauthorized fields", async () => {
+  const catalog = new CatalogService({});
+  await assert.rejects(
+    () =>
+      catalog.updateTenantService(
+        "admin",
+        "child",
+        "service",
+        { name: "x" },
+        { presentation: false, pricing: true, toggle: true },
+      ),
+    (error: any) => error.code === "PERMISSION_DENIED",
+  );
+  await assert.rejects(
+    () =>
+      catalog.updateTenantService(
+        "admin",
+        "child",
+        "service",
+        { providerId: "foreign" },
+        { presentation: true, pricing: true, toggle: true },
+      ),
+    (error: any) => error.code === "TENANT_SERVICE_FIELDS_INVALID",
+  );
+});
+
 test("customer catalog is scoped to active categories and never exposes provider cost", async () => {
   const category = { id: "category-1", name: "Social", slug: "social" };
   let serviceWhere: any;
   const db = {
     serviceCategory: { findMany: async () => [category] },
     user: {
-      findUnique: async ({ where }: any) => {
+      findFirst: async ({ where }: any) => {
         assert.equal(where.id, "customer-1");
+        assert.equal(where.siteId, "00000000-0000-4000-8000-000000000001");
         return { priceGroupId: "group-1" };
       },
     },
@@ -213,6 +281,7 @@ test("customer catalog is scoped to active categories and never exposes provider
     },
   };
   const result = await new CatalogService(db).customerCatalog("customer-1", {
+    siteId: "00000000-0000-4000-8000-000000000001",
     page: 1,
     limit: 20,
   });
@@ -331,9 +400,77 @@ test("public catalog returns only explicitly selected safe fields", async () => 
     },
   };
   const result = await new CatalogService(db).publicCatalog({
+    siteId: "00000000-0000-4000-8000-000000000001",
     page: 1,
     limit: 12,
   });
   assert.equal(result.categories[0].platform.name, "TikTok");
   assert.equal((result.services[0] as any).providerCost, undefined);
+});
+
+test("child catalog exposes only explicitly inherited services with site overrides", async () => {
+  const child = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  let serviceWhere: any;
+  const inherited = {
+    serviceId: "allowed-service",
+    fixedRate: "12.00000000",
+    markupPercent: null,
+    fixedProfit: null,
+    minProfit: "0",
+    minOverride: 25,
+    maxOverride: 500,
+  };
+  const db: any = {
+    serviceCategory: {
+      findMany: async () => [
+        { id: "category", name: "Social", slug: "social", platformId: null },
+      ],
+    },
+    platform: { findMany: async () => [] },
+    siteServiceRule: {
+      findMany: async ({ where }: any) => {
+        assert.deepEqual(where, { siteId: child, active: true });
+        return [inherited];
+      },
+    },
+    service: {
+      count: async ({ where }: any) => ((serviceWhere = where), 1),
+      findMany: async ({ where, select }: any) => {
+        if (select?.providerCost)
+          return [
+            {
+              id: "allowed-service",
+              providerCost: "5",
+              rate: "10",
+              pricingMode: "FIXED",
+              defaultMarkupPercent: "0",
+              defaultFixedProfit: "0",
+              defaultMinProfit: "0",
+            },
+          ];
+        serviceWhere = where;
+        return [
+          {
+            id: "allowed-service",
+            serviceNumber: 1001n,
+            categoryId: "category",
+            name: "Allowed",
+            rate: "10",
+            min: 1,
+            max: 1000,
+          },
+        ];
+      },
+    },
+    user: { findFirst: async () => ({ priceGroupId: null }) },
+  };
+  const result = await new CatalogService(db).customerCatalog("child-user", {
+    siteId: child,
+    page: 1,
+    limit: 20,
+  });
+  assert.deepEqual(serviceWhere.id, { in: ["allowed-service"] });
+  assert.equal(result.services[0].rate, "12.00000000");
+  assert.equal(result.services[0].min, 25);
+  assert.equal(result.services[0].max, 500);
 });

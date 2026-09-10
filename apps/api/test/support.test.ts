@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ROOT_SITE_ID } from "../src/tenant/context.js";
 import { SupportService } from "../src/support/service.js";
 test("ticket list is scoped to customer", async () => {
   let where: any;
@@ -7,7 +8,10 @@ test("ticket list is scoped to customer", async () => {
     ticket: { findMany: async (q: any) => ((where = q.where), []) },
   };
   await new SupportService(db).list("u");
-  assert.deepEqual(where, { userId: "u" });
+  assert.deepEqual(where, {
+    userId: "u",
+    siteId: "00000000-0000-4000-8000-000000000001",
+  });
 });
 test("attachments enforce MIME and size", () => {
   const s = new SupportService({});
@@ -44,8 +48,13 @@ test("notification unread operations stay scoped to the customer", async () => {
   });
   assert.deepEqual(await service.unreadCount("customer"), { unread: 2 });
   assert.deepEqual(await service.markAllRead("customer"), { read: 2 });
-  assert.deepEqual(calls[0].where, { userId: "customer", readAt: null });
-  assert.deepEqual(calls[1].where, { userId: "customer", readAt: null });
+  const expected = {
+    userId: "customer",
+    siteId: "00000000-0000-4000-8000-000000000001",
+    readAt: null,
+  };
+  assert.deepEqual(calls[0].where, expected);
+  assert.deepEqual(calls[1].where, expected);
 });
 
 test("private attachment access enforces ticket ownership while allowing staff", async () => {
@@ -59,7 +68,12 @@ test("private attachment access enforces ticket ownership while allowing staff",
         mime: "application/pdf",
       }),
     },
-    ticket: { findUnique: async () => ({ id: 1n, userId: "owner" }) },
+    ticket: {
+      findFirst: async ({ where }: any) => {
+        assert.deepEqual(where, { id: 1n, siteId: ROOT_SITE_ID });
+        return { id: 1n, userId: "owner" };
+      },
+    },
   });
   await assert.rejects(
     () => service.attachment("other", "a"),

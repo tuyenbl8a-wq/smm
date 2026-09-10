@@ -67,15 +67,17 @@ export class PaymentSettingsService {
   }
 
   /** Returns only recipient fields needed by a customer for one selected method. */
-  async publicRecipient(id: string) {
-    const row = await this.db.paymentMethod.findUnique({
-      where: { id },
+  async publicRecipient(id: string, siteId: string) {
+    const row = await this.db.paymentMethod.findFirst({
+      where: { id, siteId },
       select: { providerType: true, configEncrypted: true },
     });
     if (!row?.configEncrypted) return null;
     const type = String(row.providerType).toUpperCase();
     if (!["MANUAL", "VIETQR", "CASSO"].includes(type)) return null;
-    const config = JSON.parse(decryptSecret(row.configEncrypted, this.encryptionKey));
+    const config = JSON.parse(
+      decryptSecret(row.configEncrypted, this.encryptionKey),
+    );
     return {
       bankName: String(config.bankName ?? ""),
       bankBin: String(config.bankBin ?? ""),
@@ -166,16 +168,18 @@ export class PaymentSettingsService {
     return (required[providerType] ?? []).filter((key) => !config[key]);
   }
 
-  async methods(includeInactive = true) {
+  async methods(siteId: string, includeInactive = true) {
     const rows = await this.db.paymentMethod.findMany({
-      where: includeInactive ? {} : { active: true },
+      where: { siteId, ...(includeInactive ? {} : { active: true }) },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     });
     return rows.map((row: any) => this.publicMethod(row));
   }
 
-  async testMethod(id: string) {
-    const row = await this.db.paymentMethod.findUnique({ where: { id } });
+  async testMethod(id: string, siteId: string) {
+    const row = await this.db.paymentMethod.findFirst({
+      where: { id, siteId },
+    });
     if (!row) throw new Error("PAYMENT_METHOD_NOT_FOUND");
     const config = row.configEncrypted
       ? JSON.parse(decryptSecret(row.configEncrypted, this.encryptionKey))
@@ -217,7 +221,12 @@ export class PaymentSettingsService {
     };
   }
 
-  async saveMethod(actorId: string, id: string | null, input: any) {
+  async saveMethod(
+    actorId: string,
+    siteId: string,
+    id: string | null,
+    input: any,
+  ) {
     const providerType = String(input.providerType ?? "").toUpperCase();
     if (!["MANUAL", "VIETQR", "CASSO", "BINANCE"].includes(providerType))
       throw new Error("PAYMENT_PROVIDER_TYPE_INVALID");
@@ -261,7 +270,7 @@ export class PaymentSettingsService {
       );
     return this.db.$transaction(async (tx: any) => {
       const existing = id
-        ? await tx.paymentMethod.findUnique({ where: { id } })
+        ? await tx.paymentMethod.findFirst({ where: { id, siteId } })
         : null;
       if (id && !existing) throw new Error("PAYMENT_METHOD_NOT_FOUND");
       let configEncrypted = existing?.configEncrypted ?? null;
@@ -283,6 +292,7 @@ export class PaymentSettingsService {
           `PAYMENT_METHOD_MISSING_${missing.join("_").toUpperCase()}`,
         );
       const data = {
+        siteId,
         code: String(input.code ?? existing?.code ?? "")
           .trim()
           .toUpperCase()
@@ -317,6 +327,7 @@ export class PaymentSettingsService {
         : await tx.paymentMethod.create({ data });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: existing ? "PAYMENT_METHOD_UPDATE" : "PAYMENT_METHOD_CREATE",
           resource: "PaymentMethod",
@@ -337,9 +348,11 @@ export class PaymentSettingsService {
     });
   }
 
-  async archiveMethod(actorId: string, id: string) {
+  async archiveMethod(actorId: string, siteId: string, id: string) {
     return this.db.$transaction(async (tx: any) => {
-      const before = await tx.paymentMethod.findUnique({ where: { id } });
+      const before = await tx.paymentMethod.findFirst({
+        where: { id, siteId },
+      });
       if (!before) throw new Error("PAYMENT_METHOD_NOT_FOUND");
       const item = await tx.paymentMethod.update({
         where: { id },
@@ -347,6 +360,7 @@ export class PaymentSettingsService {
       });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "PAYMENT_METHOD_ARCHIVE",
           resource: "payment_method",

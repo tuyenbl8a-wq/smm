@@ -442,59 +442,63 @@ export const legacyThemeAliases: Record<string, ThemeId> = {
 };
 
 export type ThemeCompositionScope = "landing" | "auth" | "customer";
-type Composition = Record<ThemeCompositionScope, string[]>;
-/** Authored element hierarchies shared by runtime and preview; these are not CSS variant labels. */
+type Composition = Record<ThemeCompositionScope, string>;
+/**
+ * Authored page architectures shared by runtime and preview. These names describe
+ * real layouts; they are applied to the existing page shell instead of wrapping
+ * the complete document in inert elements.
+ */
 export const referenceThemeCompositions: Partial<Record<ThemeId, Composition>> =
   {
     SOFT_BEIGE_PREMIUM: {
-      landing: ["main", "article", "section"],
-      auth: ["main", "aside", "article", "section"],
-      customer: ["main", "section", "article", "section"],
+      landing: "beige-editorial-estate",
+      auth: "beige-hospitality-suite",
+      customer: "beige-executive-ledger",
     },
     JAPANESE_ZEN: {
-      landing: ["main", "section", "aside", "section"],
-      auth: ["main", "article", "section", "aside"],
-      customer: ["main", "aside", "section", "article"],
+      landing: "zen-garden-pavilion",
+      auth: "zen-shoji-retreat",
+      customer: "zen-quiet-ledger",
     },
     DARK_LUXURY: {
-      landing: ["main", "header", "article", "footer"],
-      auth: ["main", "section", "article", "footer"],
-      customer: ["main", "header", "section", "aside"],
+      landing: "noir-monument-gallery",
+      auth: "noir-private-suite",
+      customer: "noir-executive-console",
     },
     PREMIUM_CORPORATE: {
-      landing: ["main", "nav", "section", "article"],
-      auth: ["main", "header", "section", "article", "footer"],
-      customer: ["main", "nav", "article", "aside"],
+      landing: "corporate-architectural-split",
+      auth: "corporate-trust-portal",
+      customer: "corporate-kpi-board",
     },
     CYBER_NEON: {
-      landing: ["main", "aside", "section", "nav", "article"],
-      auth: ["main", "nav", "article", "section"],
-      customer: ["main", "aside", "article", "footer"],
+      landing: "neon-metropolis-stage",
+      auth: "neon-identity-portal",
+      customer: "neon-telemetry-grid",
     },
     GLASSMORPHISM: {
-      landing: ["main", "section", "figure", "article"],
-      auth: ["main", "figure", "section", "article"],
-      customer: ["main", "section", "figure", "aside"],
+      landing: "glass-orbital-showcase",
+      auth: "glass-floating-gateway",
+      customer: "glass-prismatic-workspace",
     },
     EMERALD_BUSINESS: {
-      landing: ["main", "header", "section", "aside", "footer"],
-      auth: ["main", "aside", "section", "footer"],
-      customer: ["main", "nav", "section", "footer"],
+      landing: "emerald-maritime-briefing",
+      auth: "emerald-secure-harbor",
+      customer: "emerald-operations-deck",
     },
     SOCIAL_CREATOR: {
-      landing: ["main", "article", "aside", "figure"],
-      auth: ["main", "section", "aside", "figure"],
-      customer: ["main", "header", "article", "figure"],
+      landing: "creator-collage-campaign",
+      auth: "creator-studio-pass",
+      customer: "creator-performance-studio",
     },
     EDITORIAL_BRUTALIST: {
-      landing: ["main", "nav", "article", "section", "footer"],
-      auth: ["main", "header", "article", "aside"],
-      customer: ["main", "nav", "aside", "article", "footer"],
+      landing: "brutalist-poster-grid",
+      auth: "brutalist-access-sheet",
+      customer: "brutalist-data-newsroom",
     },
     AI_FUTURISTIC: {
-      landing: ["main", "header", "nav", "section", "aside"],
-      auth: ["main", "nav", "section", "aside", "footer"],
-      customer: ["main", "header", "aside", "section", "footer"],
+      landing: "ai-neural-orbit",
+      auth: "ai-cognitive-gateway",
+      customer: "ai-intelligence-console",
     },
   };
 export function renderReferenceComposition(
@@ -502,14 +506,7 @@ export function renderReferenceComposition(
   scope: ThemeCompositionScope,
   inner: string,
 ) {
-  const tags = referenceThemeCompositions[theme]?.[scope];
-  return tags
-    ? tags.reduceRight(
-        (content, tag, index) =>
-          `<${tag} data-composition-layer="${index}">${content}</${tag}>`,
-        inner,
-      )
-    : inner;
+  return referenceRenderers[theme]?.[scope]?.(inner) ?? inner;
 }
 
 const dark = new Set([
@@ -590,10 +587,14 @@ const declarations = themeDefinitions
 export const runtimeThemeScript = (
   api: string,
   scope: "public" | "auth" | "customer",
-) =>
-  `(()=>{const allowed=new Set(${JSON.stringify(themeIds)}),aliases=${JSON.stringify(legacyThemeAliases)},structures=${JSON.stringify(themeStructure)},compositions=${JSON.stringify(referenceThemeCompositions)},scope=${JSON.stringify(scope)},compositionScope=scope==='public'?'landing':scope,fallback='DARK_LUXURY',compose=theme=>{const old=document.querySelector('[data-theme-runtime-root]');if(old){const original=old.querySelector('[data-original-content]');old.replaceWith(...original.children)}const tags=compositions[theme]?.[compositionScope];if(!tags)return;const original=document.createElement('div');original.dataset.originalContent='';while(document.body.firstChild)original.append(document.body.firstChild);let node=original;[...tags].reverse().forEach((tag,index)=>{const wrapper=document.createElement(tag);wrapper.dataset.compositionLayer=String(tags.length-index-1);wrapper.append(node);node=wrapper});node.dataset.themeRuntimeRoot='';document.body.append(node)},setTheme=id=>{const normalized=aliases[id]||id,selected=allowed.has(normalized)?normalized:fallback;document.documentElement.dataset.theme=selected;const variants=structures[selected];Object.entries(variants).forEach(([key,value])=>document.documentElement.dataset[key]=value);compose(selected);return selected},safeUrl=value=>{if(typeof value!=='string')return null;try{const url=new URL(value,location.origin);return url.protocol==='http:'||url.protocol==='https:'?url.href:null}catch{return null}};setTheme(fallback);fetch(${JSON.stringify(api)}+'/api/v1/public/settings',{credentials:'include'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const s=j.data||{},key='theme'+scope[0].toUpperCase()+scope.slice(1),id=s.themeMode==='SEPARATE'?s[key]:s.themeGlobal;setTheme(id);const o=s.themeOptions||{};if(['compact','comfortable','spacious'].includes(o.density))document.documentElement.dataset.density=o.density;if(['small','medium','large'].includes(o.radius))document.documentElement.dataset.radius=o.radius;const overrides=s.themeOverrides||{},colorKeys=new Set(['primary','secondary','accent','background','surface','text','muted','border','success','warning','danger']);Object.entries(overrides.colors||{}).forEach(([key,value])=>{if(colorKeys.has(key)&&typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))document.documentElement.style.setProperty('--theme-'+key,value)});const c={...(s.themeContent||{}),...(overrides.content||{})},apply=()=>{document.querySelectorAll('[data-theme-content]').forEach(el=>{const v=c[el.dataset.themeContent];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-list]').forEach((el,i)=>{const v=c.featureBullets?.[i];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-href]').forEach(el=>{const href=safeUrl(c[el.dataset.themeHref]);if(href)el.setAttribute('href',href);else el.removeAttribute('href')})};apply();new MutationObserver(apply).observe(document.body,{childList:true,subtree:true})}).catch(()=>setTheme(fallback))})();`;
+) => {
+  const compositionScope = scope === "public" ? "landing" : scope;
+  const shells = runtimeReferenceShells(compositionScope);
+  return `(()=>{const allowed=new Set(${JSON.stringify(themeIds)}),aliases=${JSON.stringify(legacyThemeAliases)},structures=${JSON.stringify(themeStructure)},renderedShells=${JSON.stringify(shells)},scope=${JSON.stringify(scope)},compositionScope=${JSON.stringify(compositionScope)},fallback='DARK_LUXURY',compose=theme=>{const selector=compositionScope==='landing'?'.hero':compositionScope==='auth'?'.auth':'.customer',shell=document.querySelector(selector),markup=renderedShells[theme];if(!shell||!markup)return;shell.querySelectorAll(':scope > .theme-navigation,:scope > .theme-story,:scope > .theme-offer,:scope > .theme-cta,:scope > .auth-navigation,:scope > .auth-visual,:scope > .auth-form-region,:scope > .auth-assurance,:scope > .dashboard-navigation,:scope > .dashboard-wallet,:scope > .dashboard-kpis,:scope > .dashboard-orders').forEach(x=>x.remove());const template=document.createElement('template');template.innerHTML=markup;const rendered=template.content.firstElementChild;shell.dataset.renderer=rendered.dataset.renderer;rendered.querySelectorAll(':scope > nav,:scope > section,:scope > aside,:scope > footer').forEach(region=>shell.prepend(region.cloneNode(true)))},setTheme=id=>{const normalized=aliases[id]||id,selected=allowed.has(normalized)?normalized:fallback;document.documentElement.dataset.theme=selected;const variants=structures[selected];Object.entries(variants).forEach(([key,value])=>document.documentElement.dataset[key]=value);compose(selected);return selected},safeUrl=value=>{if(typeof value!=='string')return null;try{const url=new URL(value,location.origin);return url.protocol==='http:'||url.protocol==='https:'?url.href:null}catch{return null}};setTheme(fallback);fetch(${JSON.stringify(api)}+'/api/v1/public/settings',{credentials:'include'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const s=j.data||{},key='theme'+scope[0].toUpperCase()+scope.slice(1),id=s.themeMode==='SEPARATE'?s[key]:s.themeGlobal;setTheme(id);const o=s.themeOptions||{};if(['compact','comfortable','spacious'].includes(o.density))document.documentElement.dataset.density=o.density;if(['small','medium','large'].includes(o.radius))document.documentElement.dataset.radius=o.radius;const overrides=s.themeOverrides||{},colorKeys=new Set(['primary','secondary','accent','background','surface','text','muted','border','success','warning','danger']);Object.entries(overrides.colors||{}).forEach(([key,value])=>{if(colorKeys.has(key)&&typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))document.documentElement.style.setProperty('--theme-'+key,value)});const c={...(s.themeContent||{}),...(overrides.content||{})},apply=()=>{document.querySelectorAll('[data-theme-content]').forEach(el=>{const v=c[el.dataset.themeContent];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-list]').forEach((el,i)=>{const v=c.featureBullets?.[i];if(typeof v==='string'&&el.textContent!==v)el.textContent=v});document.querySelectorAll('[data-theme-href]').forEach(el=>{const href=safeUrl(c[el.dataset.themeHref]);if(href)el.setAttribute('href',href);else el.removeAttribute('href')})};apply();new MutationObserver(apply).observe(document.body,{childList:true,subtree:true})}).catch(()=>setTheme(fallback))})();`;
+};
 
 export const themeStyles = `${declarations}
+.theme-navigation,.theme-story,.theme-offer,.theme-cta,.auth-navigation,.auth-visual,.auth-form-region,.auth-assurance,.dashboard-navigation,.dashboard-wallet,.dashboard-kpis,.dashboard-orders{position:relative;z-index:2;border:1px solid var(--theme-border);background:color-mix(in srgb,var(--theme-surface) 88%,transparent);color:var(--theme-text)}:is(.theme-navigation,.theme-story,.theme-offer,.theme-cta,.auth-navigation,.auth-visual,.auth-form-region,.auth-assurance,.dashboard-navigation,.dashboard-wallet,.dashboard-kpis,.dashboard-orders)>*{display:block;margin:0;width:100%;background:none;color:inherit}.theme-navigation{display:flex;justify-content:space-between;gap:20px;width:min(1180px,calc(100% - 40px));margin:0 auto 18px;padding:12px 18px}.theme-navigation>*{display:flex;justify-content:space-between;gap:20px}.theme-story{width:min(1180px,calc(100% - 40px));margin:auto;padding:18px 22px;border-left:4px solid var(--theme-primary)}.theme-story strong{font-size:clamp(1.4rem,3vw,2.5rem)}.theme-story p{margin:5px 0;color:var(--theme-muted)}.theme-offer{position:absolute;right:4%;top:25%;max-width:320px;padding:18px}.theme-cta{position:absolute;right:4%;bottom:5%;padding:13px 18px}.auth-navigation,.auth-assurance{position:absolute;left:4%;z-index:3;padding:10px 16px}.auth-navigation{top:4%}.auth-assurance{bottom:4%}.auth-visual{position:absolute;left:4%;bottom:16%;width:38%;padding:22px}.auth-form-region{position:absolute;right:4%;top:8%;width:34%;padding:20px}.dashboard-navigation{position:fixed;left:18px;top:76px;padding:10px;writing-mode:vertical-rl}.dashboard-wallet,.dashboard-kpis,.dashboard-orders{position:fixed;right:24px;z-index:4;padding:12px 16px;max-width:260px}.dashboard-wallet{top:92px}.dashboard-kpis{top:190px}.dashboard-orders{bottom:24px}:root[data-theme="EDITORIAL_BRUTALIST"] :is(.theme-navigation,.theme-story,.theme-offer,.theme-cta,.auth-navigation,.auth-visual,.auth-form-region,.auth-assurance,.dashboard-navigation,.dashboard-wallet,.dashboard-kpis,.dashboard-orders){border:3px solid #111;border-radius:0;box-shadow:6px 6px 0 #111}:root[data-theme="GLASSMORPHISM"] :is(.theme-navigation,.theme-story,.theme-offer,.theme-cta,.auth-navigation,.auth-visual,.auth-form-region,.auth-assurance,.dashboard-navigation,.dashboard-wallet,.dashboard-kpis,.dashboard-orders){backdrop-filter:blur(20px);background:#ffffff55}:root[data-theme="CYBER_NEON"] :is(.theme-navigation,.theme-story,.theme-offer,.theme-cta,.auth-navigation,.auth-visual,.auth-form-region,.auth-assurance,.dashboard-navigation,.dashboard-wallet,.dashboard-kpis,.dashboard-orders),:root[data-theme="AI_FUTURISTIC"] :is(.theme-navigation,.theme-story,.theme-offer,.theme-cta,.auth-navigation,.auth-visual,.auth-form-region,.auth-assurance,.dashboard-navigation,.dashboard-wallet,.dashboard-kpis,.dashboard-orders){box-shadow:0 0 22px color-mix(in srgb,var(--theme-primary) 45%,transparent)}@media(max-width:760px){.theme-offer,.theme-cta,.auth-form-region,.dashboard-navigation,.dashboard-wallet,.dashboard-kpis,.dashboard-orders{position:relative;inset:auto;width:auto;max-width:none;margin:10px 14px}.auth-visual{position:relative;inset:auto;width:auto;margin:80px 14px 10px}.auth-navigation,.auth-assurance{left:14px}.theme-navigation,.theme-story{width:calc(100% - 28px)}}
 :root{--theme-bg:#090a0c;--theme-surface:#111827;--theme-border:#f5c97855;--theme-text:#f8fafc;--theme-muted:#a9b4c6;--theme-primary:#f5c978;--theme-secondary:#8f7350;--theme-radius:12px;--theme-shadow:0 18px 46px #0005;--theme-font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
 :root[data-radius="small"]{--theme-radius:6px}:root[data-radius="large"]{--theme-radius:24px}:root[data-density="compact"]{--theme-density:.82}
 html[data-theme] body{background:var(--theme-bg);color:var(--theme-text);font-family:var(--theme-font)}html[data-theme] .panel,html[data-theme] .card,html[data-theme] .auth-card,html[data-theme] .dashboard{background:color-mix(in srgb,var(--theme-surface) 94%,transparent);border-color:var(--theme-border);border-radius:var(--theme-radius);box-shadow:var(--theme-shadow)}html[data-theme] .sidebar,html[data-theme] .topbar,html[data-theme] .header{background:color-mix(in srgb,var(--theme-surface) 90%,transparent);border-color:var(--theme-border)}html[data-theme] .button,html[data-theme] .sidebar nav a.active{background:linear-gradient(135deg,var(--theme-primary),var(--theme-secondary));color:#fff;border-color:transparent}html[data-theme] input,html[data-theme] select,html[data-theme] textarea{background:var(--theme-surface);border-color:var(--theme-border);color:var(--theme-text)}html[data-theme] .meta,html[data-theme] small,html[data-theme] .lead{color:var(--theme-muted)}html[data-theme] .gradient,html[data-theme] .price{background:linear-gradient(110deg,var(--theme-primary),var(--theme-secondary));-webkit-background-clip:text;color:transparent}html[data-theme] .eyebrow{color:var(--theme-primary);border-color:var(--theme-border)}html[data-theme] .eyebrow:before{background:var(--theme-primary)}
@@ -636,3 +637,7 @@ html[data-theme] body{background:var(--theme-bg);color:var(--theme-text);font-fa
 :root[data-theme="SOFT_BEIGE_PREMIUM"] .customer{grid-template-columns:230px 1fr;background:#f4ecdf}:root[data-theme="SOFT_BEIGE_PREMIUM"] .sidebar{margin:12px 0 12px 12px;border:1px solid #c3aa88;border-radius:10px;background:#fffaf3;box-shadow:none}:root[data-theme="SOFT_BEIGE_PREMIUM"] .sidebar nav a{border-radius:6px;color:#594b3e}:root[data-theme="SOFT_BEIGE_PREMIUM"] .sidebar nav a.active{background:#eee0ca;color:#282119;border-left:3px solid #9b713d}:root[data-theme="SOFT_BEIGE_PREMIUM"] .topbar{margin:12px;border:1px solid #c3aa88;border-radius:10px;background:#fffaf3}:root[data-theme="SOFT_BEIGE_PREMIUM"] .customer-content{padding:18px 28px 40px}:root[data-theme="SOFT_BEIGE_PREMIUM"] .page-head{border-bottom:1px solid #c6ad8d;padding-bottom:14px}:root[data-theme="SOFT_BEIGE_PREMIUM"] .welcome{background:linear-gradient(105deg,#2d251e,#594534)!important;color:#fff6e8;border:0!important}:root[data-theme="SOFT_BEIGE_PREMIUM"] .metric-grid{grid-template-columns:repeat(4,1fr)}:root[data-theme="SOFT_BEIGE_PREMIUM"] .metric-card{background:#fffaf3;border:1px solid #cdb99e;border-radius:8px;box-shadow:none}:root[data-theme="SOFT_BEIGE_PREMIUM"] .metric-card:before{content:"♢";display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:#eee0c8;color:#8c6337}:root[data-theme="SOFT_BEIGE_PREMIUM"] .quick.panel{border-style:dashed!important}:root[data-theme="SOFT_BEIGE_PREMIUM"] .quick-grid a{background:#f1e5d3;color:#47392d;border:1px solid #ccb596}
 @media(max-width:800px){:root[data-theme="SOFT_BEIGE_PREMIUM"] .header{margin:7px;width:calc(100% - 14px)}:root[data-theme="SOFT_BEIGE_PREMIUM"] .hero{padding-top:25px}:root[data-theme="SOFT_BEIGE_PREMIUM"] .hero-grid{grid-template-columns:1fr;min-height:0}:root[data-theme="SOFT_BEIGE_PREMIUM"] .hero-grid>div:first-child{padding:34px 22px;border-right:1px solid #b6956d;border-radius:10px 10px 0 0}:root[data-theme="SOFT_BEIGE_PREMIUM"] .preview{min-height:380px;border-radius:0 0 10px 10px}:root[data-theme="SOFT_BEIGE_PREMIUM"] .cards{grid-template-columns:1fr}:root[data-theme="SOFT_BEIGE_PREMIUM"] .auth{display:block;margin:8px}:root[data-theme="SOFT_BEIGE_PREMIUM"] .auth-copy{display:none}:root[data-theme="SOFT_BEIGE_PREMIUM"] .auth-card{padding:70px 7%}:root[data-theme="SOFT_BEIGE_PREMIUM"] .customer{grid-template-columns:1fr}:root[data-theme="SOFT_BEIGE_PREMIUM"] .sidebar{margin:0}:root[data-theme="SOFT_BEIGE_PREMIUM"] .metric-grid{grid-template-columns:1fr 1fr}}
 `;
+import {
+  referenceRenderers,
+  runtimeReferenceShells,
+} from "./reference-theme-renderers.js";

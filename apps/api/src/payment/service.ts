@@ -1,3 +1,4 @@
+import { ROOT_SITE_ID } from "../tenant/context.js";
 import { randomBytes } from "node:crypto";
 import { normalizeAmount } from "../wallet/service.js";
 import { vietQrUrl } from "./vietqr.js";
@@ -41,7 +42,10 @@ export class DepositService {
       accountName: process.env.BANK_ACCOUNT_NAME ?? "",
     },
     private providers: Record<string, PaymentProvider> = {},
-    private recipientForMethod?: (id: string) => Promise<{
+    private recipientForMethod?: (
+      id: string,
+      siteId: string,
+    ) => Promise<{
       bankName: string;
       bankBin: string;
       account: string;
@@ -80,10 +84,24 @@ export class DepositService {
           `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
           `payment-limit:${paymentMethodId}:${dayStart.toISOString().slice(0, 10)}`,
         );
-      const user = siteId && tx.user ? await tx.user.findUnique({ where: { id: userId }, select: { siteId: true } }) : null;
+      const user =
+        siteId && tx.user
+          ? await tx.user.findUnique({
+              where: { id: userId },
+              select: { siteId: true },
+            })
+          : null;
       const tenantId = siteId ?? user?.siteId;
-      if (siteId && (!user || user.siteId !== siteId)) throw new PaymentError("TENANT_MISMATCH", "User does not belong to this site");
-      const method = tenantId ? await tx.paymentMethod.findFirst({ where: { id: paymentMethodId, siteId: tenantId } }) : await tx.paymentMethod.findUnique({ where: { id: paymentMethodId } });
+      if (siteId && (!user || user.siteId !== siteId))
+        throw new PaymentError(
+          "TENANT_MISMATCH",
+          "User does not belong to this site",
+        );
+      const method = tenantId
+        ? await tx.paymentMethod.findFirst({
+            where: { id: paymentMethodId, siteId: tenantId },
+          })
+        : await tx.paymentMethod.findUnique({ where: { id: paymentMethodId } });
       if (!method || !method.active)
         throw new PaymentError(
           "METHOD_UNAVAILABLE",
@@ -178,7 +196,9 @@ export class DepositService {
     }
   }
   async detail(userId: string, id: string, siteId?: string) {
-    let x = await this.db.deposit.findFirst({ where: { id, userId, ...(siteId ? { siteId } : {}) } });
+    let x = await this.db.deposit.findFirst({
+      where: { id, userId, ...(siteId ? { siteId } : {}) },
+    });
     if (!x) throw new PaymentError("DEPOSIT_NOT_FOUND", "Deposit not found");
     if (x.status === "PENDING" && x.expiresAt <= new Date()) {
       await this.db.deposit.updateMany({
@@ -190,7 +210,9 @@ export class DepositService {
         },
         data: { status: "EXPIRED" },
       });
-      x = await this.db.deposit.findFirst({ where: { id, userId, ...(siteId ? { siteId } : {}) } });
+      x = await this.db.deposit.findFirst({
+        where: { id, userId, ...(siteId ? { siteId } : {}) },
+      });
     }
     const paymentMethod = await this.db.paymentMethod.findUnique({
       where: { id: x.paymentMethodId },
@@ -200,9 +222,13 @@ export class DepositService {
         String(paymentMethod?.providerType).toUpperCase(),
       ),
       selected = this.recipientForMethod
-        ? await this.recipientForMethod(x.paymentMethodId)
+        ? await this.recipientForMethod(
+            x.paymentMethodId,
+            siteId ?? ROOT_SITE_ID,
+          )
         : null,
-      fallback = typeof this.bank === "function" ? await this.bank() : this.bank,
+      fallback =
+        typeof this.bank === "function" ? await this.bank() : this.bank,
       bank = selected ?? {
         bankName: fallback.name,
         bankBin: fallback.bin,
@@ -258,21 +284,32 @@ export class DepositService {
       take: 100,
     });
   }
-  async adminOperate(actorId: string, id: string, action: unknown, reasonValue: unknown) {
+  async adminOperate(
+    actorId: string,
+    id: string,
+    action: unknown,
+    reasonValue: unknown,
+    siteId = ROOT_SITE_ID,
+  ) {
     const operation = String(action ?? "").toUpperCase();
     const reason = String(reasonValue ?? "").trim();
     if (reason.length < 3)
       throw new PaymentError("REASON_REQUIRED", "Reason is required");
     if (!["APPROVE", "REJECT", "REVIEW"].includes(operation))
-      throw new PaymentError("DEPOSIT_ACTION_INVALID", "Invalid deposit action");
+      throw new PaymentError(
+        "DEPOSIT_ACTION_INVALID",
+        "Invalid deposit action",
+      );
     return this.db.$transaction(async (tx: any) => {
       const rows = tx.$queryRawUnsafe
         ? await tx.$queryRawUnsafe(
-            `SELECT * FROM "deposits" WHERE "id" = $1::uuid FOR UPDATE`,
+            `SELECT * FROM "deposits" WHERE "id" = $1::uuid AND "site_id" = $2::uuid FOR UPDATE`,
             id,
+            siteId,
           )
         : [];
-      const deposit = rows[0] ?? (await tx.deposit.findUnique({ where: { id } }));
+      const deposit =
+        rows[0] ?? (await tx.deposit.findFirst({ where: { id, siteId } }));
       if (!deposit)
         throw new PaymentError("DEPOSIT_NOT_FOUND", "Deposit not found");
       const current = String(deposit.status);
@@ -283,37 +320,97 @@ export class DepositService {
         });
         if (existing) {
           if (current !== "PAID")
-            throw new PaymentError("DEPOSIT_STATE_CONFLICT", "Deposit state conflicts with existing credit");
+            throw new PaymentError(
+              "DEPOSIT_STATE_CONFLICT",
+              "Deposit state conflicts with existing credit",
+            );
           return { deposit, walletTransaction: existing, idempotent: true };
         }
         if (!["PENDING", "MANUAL_REVIEW"].includes(current))
-          throw new PaymentError("DEPOSIT_TRANSITION_INVALID", "Deposit cannot be approved from its current status");
-        const amount = String(deposit.credited_amount ?? deposit.creditedAmount);
+          throw new PaymentError(
+            "DEPOSIT_TRANSITION_INVALID",
+            "Deposit cannot be approved from its current status",
+          );
+        const amount = String(
+          deposit.credited_amount ?? deposit.creditedAmount,
+        );
         const walletRows = await tx.$queryRawUnsafe(
-          `UPDATE "wallets" SET "balance" = "balance" + $1::numeric, "version" = "version" + 1, "updated_at" = CURRENT_TIMESTAMP WHERE "user_id" = $2::uuid RETURNING "id", "balance" - $1::numeric AS "balanceBefore", "balance" AS "balanceAfter"`,
+          `UPDATE "wallets" SET "balance" = "balance" + $1::numeric, "version" = "version" + 1, "updated_at" = CURRENT_TIMESTAMP WHERE "user_id" = $2::uuid AND "site_id" = $3::uuid RETURNING "id", "balance" - $1::numeric AS "balanceBefore", "balance" AS "balanceAfter"`,
           amount,
           deposit.user_id ?? deposit.userId,
+          siteId,
         );
         const wallet = walletRows[0];
-        if (!wallet) throw new PaymentError("WALLET_NOT_FOUND", "Wallet not found");
+        if (!wallet)
+          throw new PaymentError("WALLET_NOT_FOUND", "Wallet not found");
         const userId = deposit.user_id ?? deposit.userId;
-        const ledger = await tx.walletTransaction.create({ data: { walletId: wallet.id, userId, type: "DEPOSIT", amount, balanceBefore: wallet.balanceBefore, balanceAfter: wallet.balanceAfter, referenceId: id, idempotencyKey: key, description: reason.slice(0, 500), metadata: { depositId: id, approvedBy: actorId } } });
-        const updated = await tx.deposit.update({ where: { id }, data: { status: "PAID", paidAt: new Date() } });
-        await tx.auditLog.create({ data: { actorId, action: "DEPOSIT_APPROVE", resource: "deposit", resourceId: id, before: { status: current }, after: { status: "PAID", reason, walletTransactionId: ledger.id } } });
-        return { deposit: updated, walletTransaction: ledger, idempotent: false };
+        const ledger = await tx.walletTransaction.create({
+          data: {
+            siteId,
+            walletId: wallet.id,
+            userId,
+            type: "DEPOSIT",
+            amount,
+            balanceBefore: wallet.balanceBefore,
+            balanceAfter: wallet.balanceAfter,
+            referenceId: id,
+            idempotencyKey: key,
+            description: reason.slice(0, 500),
+            metadata: { depositId: id, approvedBy: actorId },
+          },
+        });
+        const updated = await tx.deposit.update({
+          where: { id },
+          data: { status: "PAID", paidAt: new Date() },
+        });
+        await tx.auditLog.create({
+          data: {
+            siteId,
+            actorId,
+            action: "DEPOSIT_APPROVE",
+            resource: "deposit",
+            resourceId: id,
+            before: { status: current },
+            after: { status: "PAID", reason, walletTransactionId: ledger.id },
+          },
+        });
+        return {
+          deposit: updated,
+          walletTransaction: ledger,
+          idempotent: false,
+        };
       }
       if (!["PENDING", "MANUAL_REVIEW"].includes(current))
-        throw new PaymentError("DEPOSIT_TRANSITION_INVALID", "Deposit cannot be changed from its current status");
+        throw new PaymentError(
+          "DEPOSIT_TRANSITION_INVALID",
+          "Deposit cannot be changed from its current status",
+        );
       const next = operation === "REJECT" ? "CANCELED" : "MANUAL_REVIEW";
       if (current === next)
-        throw new PaymentError("DEPOSIT_TRANSITION_INVALID", "Deposit already has this status");
-      const updated = await tx.deposit.update({ where: { id }, data: { status: next } });
-      await tx.auditLog.create({ data: { actorId, action: operation === "REJECT" ? "DEPOSIT_REJECT" : "DEPOSIT_REVIEW", resource: "deposit", resourceId: id, before: { status: current }, after: { status: next, reason } } });
+        throw new PaymentError(
+          "DEPOSIT_TRANSITION_INVALID",
+          "Deposit already has this status",
+        );
+      const updated = await tx.deposit.update({
+        where: { id },
+        data: { status: next },
+      });
+      await tx.auditLog.create({
+        data: {
+          siteId,
+          actorId,
+          action: operation === "REJECT" ? "DEPOSIT_REJECT" : "DEPOSIT_REVIEW",
+          resource: "deposit",
+          resourceId: id,
+          before: { status: current },
+          after: { status: next, reason },
+        },
+      });
       return { deposit: updated };
     });
   }
 
-  async adminHistory(query: any = {}) {
+  async adminHistory(query: any = {}, siteId = ROOT_SITE_ID) {
     const rawStatus = String(query.status ?? "").trim(),
       status = ["", "undefined", "null"].includes(rawStatus)
         ? undefined
@@ -349,6 +446,7 @@ export class DepositService {
         .trim()
         .slice(0, 128),
       where = {
+        siteId,
         ...(status ? { status } : {}),
         ...(query.method ? { paymentMethodId: String(query.method) } : {}),
         ...(query.user ? { userId: String(query.user) } : {}),
@@ -377,10 +475,14 @@ export class DepositService {
     return Promise.all(
       rows.map(async (row: any) => ({
         ...row,
-        user: await this.db.user.findUnique({
-          where: { id: row.userId },
-          select: { id: true, userNumber: true, email: true, username: true },
-        }).then((user: any) => user ? { ...user, userNumber: String(user.userNumber) } : null),
+        user: await this.db.user
+          .findUnique({
+            where: { id: row.userId },
+            select: { id: true, userNumber: true, email: true, username: true },
+          })
+          .then((user: any) =>
+            user ? { ...user, userNumber: String(user.userNumber) } : null,
+          ),
         paymentMethod: await this.db.paymentMethod.findUnique({
           where: { id: row.paymentMethodId },
           select: { code: true, name: true },

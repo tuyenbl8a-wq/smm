@@ -14,6 +14,16 @@ class FakeDb {
   audits: any[] = [];
   chain = Promise.resolve();
   wallet = {
+    findFirst: async ({ where }: any) =>
+      where.siteId === "00000000-0000-4000-8000-000000000001" &&
+      this.balances.has(where.userId)
+        ? {
+            id: `wallet-${where.userId}`,
+            balance: this.text(this.balances.get(where.userId)!),
+            currency: "USD",
+            updatedAt: new Date(),
+          }
+        : null,
     findUnique: async ({ where }: any) =>
       this.balances.has(where.userId)
         ? {
@@ -75,7 +85,14 @@ class FakeDb {
           this.audits.push(data);
         },
       },
-      $queryRawUnsafe: async (_sql: string, signed: string, userId: string) => {
+      $queryRawUnsafe: async (
+        sql: string,
+        signed: string,
+        userId: string,
+        siteId: string,
+      ) => {
+        assert.match(sql, /"site_id" = \$3::uuid/);
+        if (siteId !== "00000000-0000-4000-8000-000000000001") return [];
         const current = this.balances.get(userId);
         if (current === undefined) return [];
         const delta = this.units(signed);
@@ -103,6 +120,7 @@ class FakeDb {
   }
 }
 const mutation = (overrides: Record<string, unknown> = {}) => ({
+  siteId: "00000000-0000-4000-8000-000000000001",
   userId: "user-a",
   amount: "2.5",
   type: "ADMIN_ADD" as const,
@@ -184,6 +202,13 @@ test("idempotency retries do not double credit and conflicts are rejected", asyn
   assert.equal((await service.summary("user-a")).balance, "12.50000000");
   await assert.rejects(
     () => service.mutate(mutation({ amount: "3" })),
+    /another operation/,
+  );
+  await assert.rejects(
+    () =>
+      service.mutate(
+        mutation({ siteId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }),
+      ),
     /another operation/,
   );
 });

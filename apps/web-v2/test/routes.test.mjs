@@ -29,6 +29,10 @@ const adminOperations = await readFile(
   new URL("../dist/admin-operations.js", import.meta.url),
   "utf8",
 );
+const adminUx = await readFile(
+  new URL("../dist/admin-ux.js", import.meta.url),
+  "utf8",
+);
 test("public experience includes real catalog, navigation and responsive UI", () => {
   assert.match(page, /api\/v1\/public\/catalog/);
   assert.match(page, /DỊCH VỤ CỦA CHÚNG TÔI/);
@@ -557,6 +561,11 @@ test("panel customer and admin routes are wired", () => {
     "/admin/panel-subscriptions",
   ])
     assert.match(admin, new RegExp(path.replaceAll("/", "\\/")));
+  assert.ok(customer.indexOf("ĐẶT HÀNG") < customer.indexOf("THUÊ PANEL"));
+  assert.doesNotMatch(customer, /ns[12]\.dichvu1st\.com/);
+  assert.match(customer, /result\.nameservers/);
+  assert.match(customer, /Không cần cấu hình CNAME hoặc TXT/);
+  assert.match(customer, /auto-renew/);
 });
 test("same-origin API proxy is constrained to API paths and fixed config target", () => {
   assert.match(main, /path\.startsWith\("\/api\/"\)/);
@@ -862,9 +871,10 @@ test("final reference pair completes exactly ten unique three-scope architecture
   assert.match(admin, /\.thumb-stage/);
 });
 
-test("reference themes have 10x3 rendered structural fingerprints shared with runtime", async () => {
-  const { referenceThemeCompositions, renderReferenceComposition } =
-    await import("../dist/themes.js");
+test("reference themes provide 30 concrete renderers without document wrappers", async () => {
+  const { renderReferenceComposition } = await import("../dist/themes.js");
+  const { referenceRenderers, isMeaningfulReferenceRender } =
+    await import("../dist/reference-theme-renderers.js");
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const ids = [
     "SOFT_BEIGE_PREMIUM",
@@ -880,34 +890,88 @@ test("reference themes have 10x3 rendered structural fingerprints shared with ru
   ];
   for (const scope of ["landing", "auth", "customer"]) {
     const fingerprints = new Set();
+    const domArchitectures = new Set();
     for (const id of ids) {
-      const expected = referenceThemeCompositions[id][scope];
+      const shell =
+        scope === "landing" ? "hero" : scope === "auth" ? "auth" : "customer";
       const direct = renderReferenceComposition(
         id,
         scope,
-        "<button>safe</button>",
+        `<div class="${shell}"><button>safe</button></div>`,
       );
       const html = fullPageThemePreview("", id, scope);
-      const hierarchy = [
-        ...html.matchAll(
-          /<(main|header|nav|section|article|aside|figure|footer) data-composition-layer="\d+">/g,
-        ),
-      ].map((x) => x[1]);
-      assert.deepEqual(hierarchy.slice(0, expected.length), expected);
-      assert.match(direct, /data-composition-layer="0"/);
-      fingerprints.add(hierarchy.slice(0, expected.length).join(">"));
-      assert.doesNotMatch(html, /demoDashboard|DỮ LIỆU XEM TRƯỚC|TÃ|Ä‘/);
+      assert.match(direct, /data-renderer="[^"]+"/);
+      assert.match(html, /data-renderer="[^"]+"/);
+      const renderer = /data-renderer="([^"]+)"/.exec(html)?.[1];
+      assert.equal(isMeaningfulReferenceRender(html, scope), true);
+      const regionClasses =
+        scope === "landing"
+          ? ["theme-navigation", "theme-story", "theme-offer", "theme-cta"]
+          : scope === "auth"
+            ? [
+                "auth-navigation",
+                "auth-visual",
+                "auth-form-region",
+                "auth-assurance",
+              ]
+            : [
+                "dashboard-navigation",
+                "dashboard-wallet",
+                "dashboard-kpis",
+                "dashboard-orders",
+              ];
+      const regions = regionClasses.map((className) => {
+        const content = new RegExp(
+          `class="${className}">([\\s\\S]*?)<\\/`,
+        ).exec(html)?.[1];
+        return content
+          ?.replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+      });
+      assert.equal(
+        regions.every((region) => region && region.length >= 8),
+        true,
+      );
+      assert.doesNotMatch(
+        html,
+        /data-composition-layer|data-theme-runtime-root|data-original-content/,
+      );
+      fingerprints.add(`${renderer}|${regions.join("|")}`);
+      const authoredDom = regionClasses
+        .map(
+          (className) =>
+            new RegExp(
+              `<(?:nav|section|aside|footer) class="${className}">([\\s\\S]*?)<\\/(?:nav|section|aside|footer)>`,
+            ).exec(html)?.[1] ?? "",
+        )
+        .join("")
+        .replace(/[^<]*(<[^>]+>)[^<]*/g, "$1")
+        .replace(/\s(?:class|href)="[^"]*"/g, "");
+      domArchitectures.add(authoredDom);
     }
     assert.equal(
       fingerprints.size,
       10,
-      scope + " structures must be 10/10 unique",
+      scope + " architectures must be 10/10 unique",
+    );
+    assert.equal(
+      domArchitectures.size,
+      10,
+      scope + " must use ten different nested DOM compositions",
     );
   }
-  assert.match(
-    await readFile(new URL("../dist/themes.js", import.meta.url), "utf8"),
-    /data-theme-runtime-root/,
+  const oldEmptyHack = `<div class="hero"><nav class="theme-navigation"></nav><section class="theme-story"></section><aside class="theme-offer"></aside><footer class="theme-cta"></footer></div>`;
+  assert.equal(isMeaningfulReferenceRender(oldEmptyHack, "landing"), false);
+  assert.equal(
+    new Set(ids.flatMap((id) => Object.values(referenceRenderers[id]))).size,
+    30,
   );
+  const runtime = await readFile(
+    new URL("../dist/themes.js", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(runtime, /while\s*\(document\.body\.firstChild\)/);
 });
 
 test("admin forms and operational orders expose polished real contracts", () => {
@@ -935,4 +999,101 @@ test("admin forms and operational orders expose polished real contracts", () => 
   ])
     assert.match(admin, new RegExp(token));
   assert.match(admin, /Đã sao chép.*mã đơn NCC/);
+});
+
+test("acceptance UI audit covers every requested admin and customer surface", () => {
+  const adminPaths = [
+    "/admin/staff",
+    "/admin/platforms",
+    "/admin/categories",
+    "/admin/services",
+    "/admin/providers",
+    "/admin/price-groups",
+    "/admin/pricing",
+    "/admin/payment-methods",
+    "/admin/settings",
+    "/admin/panel-plans",
+    "/admin/panels",
+    "/admin/panel-subscriptions",
+    "/admin/orders",
+  ];
+  const customerPaths = [
+    "/dashboard",
+    "/orders/new",
+    "/orders/bulk",
+    "/orders",
+    "/services",
+    "/wallet",
+    "/deposit",
+    "/transactions",
+    "/panel-plans",
+    "/panels",
+    "/affiliate",
+    "/api",
+    "/support",
+    "/notifications",
+    "/account",
+  ];
+  for (const path of adminPaths)
+    assert.match(admin, new RegExp(path.replaceAll("/", "\\/")));
+  for (const path of customerPaths)
+    assert.match(customer, new RegExp(path.replaceAll("/", "\\/")));
+  const allUi = page + components + customer + client + admin + adminOperations;
+  assert.doesNotMatch(allUi, /TÃ|Ä‘|Ã©|Â /);
+  assert.match(admin, /\.switch-input\{appearance:none;width:44px/);
+  assert.match(admin, /payment-editor.*overflow:hidden/);
+  assert.match(admin, /modal-body.*overflow-y:auto/);
+  assert.match(admin, /overflow-wrap:break-word/);
+  assert.match(admin, /@media\(max-width:780px\)/);
+  assert.match(customer, /role="alert"/);
+  assert.match(client, /PAYMENT_REQUIRED/);
+});
+
+test("customer router owns the panel rental activation UUID route", async () => {
+  const source = await readFile(
+    new URL("../src/customer.ts", import.meta.url),
+    "utf8",
+  );
+  const server = await readFile(
+    new URL("../src/main.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /\^\\\/panels\\\/activate\\\//);
+  assert.match(source, /panelActivation/);
+  assert.match(source, /\/api\/v1\/customer\/panel-rentals\//);
+  assert.equal(
+    server.includes("/^\\/panels\\/activate\\/[0-9a-f-]{36}$/"),
+    true,
+  );
+});
+
+test("API proxy signs the validated browser tenant host instead of forwarding spoofable input", async () => {
+  const server = await readFile(
+    new URL("../src/main.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(server, /browserHost\(request\.headers\.host\)/);
+  assert.match(server, /createHmac\("sha256", proxySecret\)/);
+  assert.match(server, /"x-smm-tenant-host": tenantHost/);
+  assert.match(server, /"x-smm-tenant-timestamp": timestamp/);
+  assert.match(server, /"x-smm-tenant-signature": signature/);
+  assert.doesNotMatch(server, /headers:\s*\{\s*host:\s*validatedHost/);
+});
+
+test("panel plan editor round-trips grouped granular permissionCodes separately from flags", () => {
+  assert.match(adminUx, /panelPermissionGroups/);
+  assert.match(adminUx, /name:'permissionCodes'/);
+  assert.match(adminUx, /Quyền quản trị của gói/);
+  assert.match(adminOperations, /fd\.getAll\(f\.name\)/);
+  assert.match(
+    adminOperations,
+    /Array\.isArray\(value\)&&value\.includes\(o\.value\)/,
+  );
+  for (const flag of [
+    "allowCustomDomain",
+    "allowPanelResale",
+    "allowApi",
+    "allowThemes",
+  ])
+    assert.match(adminUx, new RegExp(flag));
 });

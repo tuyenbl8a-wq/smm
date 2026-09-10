@@ -268,7 +268,12 @@ export async function settleReferral(tx: any, order: any) {
   const affiliate = await tx.affiliate.findUnique({
     where: { id: referral.affiliateId },
   });
-  if (!affiliate?.active || affiliate.userId === order.userId) return null;
+  if (
+    !affiliate?.active ||
+    affiliate.siteId !== order.siteId ||
+    affiliate.userId === order.userId
+  )
+    return null;
   const netProfit = money(order.profit) - money(order.refundedAmount ?? "0");
   if (netProfit <= 0n) return null;
   const amount = (netProfit * money(affiliate.commissionRate)) / (100n * SCALE);
@@ -281,9 +286,10 @@ export async function settleReferral(tx: any, order: any) {
   });
   if (existing) return existing;
   const rows = await tx.$queryRawUnsafe(
-    `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
+    `UPDATE "wallets" SET "balance"="balance"+$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid AND "site_id"=$3::uuid RETURNING "id","balance"-$1::numeric AS "before","balance" AS "after"`,
     decimal(amount),
     affiliate.userId,
+    affiliate.siteId,
   );
   const commission = await tx.affiliateCommission.create({
     data: {
@@ -298,6 +304,7 @@ export async function settleReferral(tx: any, order: any) {
   await tx.walletTransaction.create({
     data: {
       walletId: rows[0].id,
+      siteId: affiliate.siteId,
       userId: affiliate.userId,
       type: "AFFILIATE",
       amount: decimal(amount),
