@@ -76,7 +76,7 @@ test("active Casso method webhook token is used by the real webhook handler", as
     auditLog: { create: async () => undefined },
   };
   db.$transaction = async (fn: any) => fn(tx);
-  await service.saveMethod("admin", null, {
+  await service.saveMethod("admin", "site", null, {
     code: "casso",
     name: "Casso",
     providerType: "CASSO",
@@ -123,7 +123,7 @@ test("payment method secrets are encrypted, masked and audited", async () => {
       auditLog: { create: async ({ data }: any) => audits.push(data) },
     });
   const service = new PaymentSettingsService(db, "test-encryption-key"),
-    saved: any = await service.saveMethod("admin", null, {
+    saved: any = await service.saveMethod("admin", "site", null, {
       code: "casso-vnd",
       name: "Chuyển khoản tự động",
       providerType: "CASSO",
@@ -166,7 +166,7 @@ test("adapter validation rejects active methods with missing required setup", as
   const service = new PaymentSettingsService(db, "test-encryption-key");
   await assert.rejects(
     () =>
-      service.saveMethod("admin", null, {
+      service.saveMethod("admin", "site", null, {
         code: "vietqr",
         name: "VietQR",
         providerType: "VIETQR",
@@ -203,7 +203,7 @@ test("manual adapter discards unrelated API and webhook fields", async () => {
       }),
   };
   const service = new PaymentSettingsService(db, "test-encryption-key");
-  await service.saveMethod("admin", null, {
+  await service.saveMethod("admin", "site", null, {
     code: "manual",
     name: "Chuyển khoản",
     providerType: "MANUAL",
@@ -244,7 +244,7 @@ test("payment method validation enforces safe limits", async () => {
   );
   await assert.rejects(
     () =>
-      service.saveMethod("admin", null, {
+      service.saveMethod("admin", "site", null, {
         code: "manual",
         name: "Manual",
         providerType: "MANUAL",
@@ -256,4 +256,30 @@ test("payment method validation enforces safe limits", async () => {
       }),
     /PAYMENT_LIMIT_INVALID/,
   );
+});
+
+test("payment and bank methods are strictly isolated by tenant siteId", async () => {
+  const queries: any[] = [];
+  const db: any = {
+    paymentMethod: {
+      findMany: async ({ where }: any) => {
+        queries.push(where);
+        return [];
+      },
+      findFirst: async ({ where }: any) => {
+        queries.push(where);
+        return null;
+      },
+    },
+  };
+  const service = new PaymentSettingsService(db, "test-encryption-key");
+  await service.methods("root");
+  await service.methods("panel-a");
+  await service.methods("child-b");
+  await service.publicRecipient("method-a", "panel-a");
+  assert.deepEqual(
+    queries.map((where) => where.siteId),
+    ["root", "panel-a", "child-b", "panel-a"],
+  );
+  assert.equal(queries[3].id, "method-a");
 });

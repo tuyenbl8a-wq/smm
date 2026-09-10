@@ -11,6 +11,22 @@ const CHILD_SERVICE_PERMISSIONS = [
   "services.pricing.manage",
   "services.toggle",
 ] as const;
+const RESERVED_PANEL_SLUGS = new Set([
+  "www",
+  "api",
+  "admin",
+  "app",
+  "mail",
+  "smtp",
+  "ftp",
+  "root",
+  "support",
+  "status",
+  "cdn",
+  "static",
+  "assets",
+  "dichvu1st",
+]);
 
 async function grantChildServicePermissions(tx: any, userId: string) {
   const permissions = await tx.permission.findMany({
@@ -176,11 +192,6 @@ export class PanelService {
       throw new TenantError("PANEL_SUSPENDED", "Seller panel unavailable");
     if (!plan || !renter)
       throw new TenantError("PANEL_PLAN_UNAVAILABLE", "Plan unavailable");
-    if (!plan.allowCustomDomain)
-      throw new TenantError(
-        "CUSTOM_DOMAIN_NOT_ALLOWED",
-        "Plan does not allow custom domains",
-      );
     const depth = parent.depth + 1;
     if (depth > plan.maxDepth)
       throw new TenantError("PANEL_MAX_DEPTH", "Maximum depth reached");
@@ -189,12 +200,57 @@ export class PanelService {
     });
     if (count >= plan.maxDirectChildren)
       throw new TenantError("PANEL_CHILD_LIMIT", "Direct child limit reached");
-    const hostname = normalizeHostname(String(input.domain));
-    const panelSlug = slug(input.slug ?? hostname.split(".")[0]);
+    const customDomain = String(input.domain ?? "").trim()
+      ? normalizeHostname(String(input.domain))
+      : null;
+    if (customDomain && !plan.allowCustomDomain)
+      throw new TenantError(
+        "CUSTOM_DOMAIN_NOT_ALLOWED",
+        "Plan does not allow custom domains",
+      );
+    const panelSlug = slug(
+      input.slug ?? customDomain?.split(".")[0] ?? input.name,
+    );
+    if (RESERVED_PANEL_SLUGS.has(panelSlug))
+      throw new TenantError("PANEL_SLUG_RESERVED", "Reserved panel subdomain");
+    const systemHostname = `${panelSlug}.dichvu1st.com`;
+    const [claimed, pendingSlug] = await Promise.all([
+      this.db.siteDomain?.findFirst
+        ? this.db.siteDomain.findFirst({
+            where: { hostname: systemHostname },
+            select: { id: true },
+          })
+        : null,
+      this.db.panelRentalIntent.findFirst
+        ? this.db.panelRentalIntent.findFirst({
+            where: {
+              slug: panelSlug,
+              status: {
+                in: [
+                  "PENDING_DNS",
+                  "PAYMENT_REQUIRED",
+                  "ROUTING_REQUIRED",
+                  "ACTIVATED",
+                ],
+              },
+              expiresAt: { gt: new Date() },
+            },
+            select: { id: true },
+          })
+        : null,
+    ]);
+    if (claimed || pendingSlug)
+      throw new TenantError(
+        "PANEL_SUBDOMAIN_TAKEN",
+        "Panel subdomain is already used",
+      );
+    const hostname = customDomain ?? systemHostname;
     const name = String(input.name ?? "").trim();
     if (name.length < 2 || name.length > 160)
       throw new TenantError("PANEL_NAME_INVALID", "Invalid panel name");
-    const zone = await this.dns.createZone(hostname);
+    const zone = customDomain
+      ? await this.dns.createZone(hostname)
+      : { zoneId: null, nameservers: [], created: false };
     try {
       const intent = await this.db.panelRentalIntent.create({
         data: {
@@ -206,7 +262,7 @@ export class PanelService {
           hostname,
           providerZoneId: zone.zoneId,
           assignedNameservers: zone.nameservers,
-          status: "PENDING_DNS",
+          status: customDomain ? "PENDING_DNS" : "PENDING_DNS",
           autoRenew: Boolean(input.autoRenew),
           requestKey,
           activationKey: `panel-activate:${randomUUID()}`,
@@ -215,7 +271,7 @@ export class PanelService {
       });
       return this.intentResult(intent);
     } catch (error) {
-      if (zone.created)
+      if (zone.created && zone.zoneId)
         await this.dns.deleteZone(zone.zoneId).catch(() => undefined);
       throw error;
     }
@@ -247,10 +303,12 @@ export class PanelService {
         "PANEL_RENTAL_EXPIRED",
         "Panel rental request expired",
       );
-    const [zoneStatus, assigned] = await Promise.all([
-      this.dns.getZoneStatus(initial.providerZoneId),
-      this.dns.getAssignedNameservers(initial.providerZoneId),
-    ]);
+    const [zoneStatus, assigned]: [string, string[]] = initial.providerZoneId
+      ? await Promise.all([
+          this.dns.getZoneStatus(initial.providerZoneId),
+          this.dns.getAssignedNameservers(initial.providerZoneId),
+        ])
+      : ["ACTIVE", []];
     const expected = this.nameserversOf(initial.assignedNameservers);
     if (
       zoneStatus !== "ACTIVE" ||
@@ -365,7 +423,7 @@ export class PanelService {
         data: {
           siteId,
           hostname: intent.hostname,
-          type: "CUSTOM",
+          type: intent.providerZoneId ? "CUSTOM" : "SUBDOMAIN",
           status: "VERIFIED",
           isPrimary: true,
           verificationToken: randomUUID(),
@@ -374,6 +432,19 @@ export class PanelService {
           assignedNameservers: intent.assignedNameservers,
         },
       });
+      const systemHostname = `${intent.slug}.dichvu1st.com`;
+      if (systemHostname !== intent.hostname)
+        await tx.siteDomain.create({
+          data: {
+            siteId,
+            hostname: systemHostname,
+            type: "SUBDOMAIN",
+            status: "VERIFIED",
+            isPrimary: false,
+            verificationToken: randomUUID(),
+            verifiedAt: now,
+          },
+        });
       await tx.panelSubscription.create({
         data: {
           siteId,
@@ -428,10 +499,11 @@ export class PanelService {
     // External routing only happens after the debit and pending site are durably
     // committed. A provider/second-transaction failure leaves a retryable state;
     // subsequent Verify calls do not charge again and routing is idempotent.
-    await this.dns.ensurePanelRouting(
-      result.intent.providerZoneId,
-      result.intent.hostname,
-    );
+    if (result.intent.providerZoneId)
+      await this.dns.ensurePanelRouting(
+        result.intent.providerZoneId,
+        result.intent.hostname,
+      );
     return this.db.$transaction(async (tx: any) => {
       await tx.$executeRawUnsafe?.(
         "SELECT pg_advisory_xact_lock(hashtext($1))",
@@ -869,6 +941,7 @@ export class PanelManagementService {
   }
   async adminPanels(query: URLSearchParams) {
     const search = query.get("search")?.trim(),
+      numericSearch = search?.replace(/^#/, ""),
       status = query.get("status") || undefined,
       depth = query.get("depth");
     let related: string[] = [];
@@ -899,6 +972,7 @@ export class PanelManagementService {
     }
     const sites = await this.db.site.findMany({
       where: {
+        parentSiteId: { not: null },
         ...(status ? { status } : {}),
         ...(depth !== null && depth !== "" ? { depth: Number(depth) } : {}),
         ...(search
@@ -907,8 +981,8 @@ export class PanelManagementService {
                 { name: { contains: search, mode: "insensitive" } },
                 { slug: { contains: search, mode: "insensitive" } },
                 { id: { in: related } },
-                ...(/^\d+$/.test(search)
-                  ? [{ siteNumber: BigInt(search) }]
+                ...(/^\d+$/.test(numericSearch ?? "")
+                  ? [{ siteNumber: BigInt(numericSearch!) }]
                   : []),
               ],
             }
@@ -931,7 +1005,7 @@ export class PanelManagementService {
     });
     return Promise.all(
       sites.map(async (site: any) => {
-        const [owner, domain, subscription] = await Promise.all([
+        const [owner, domain, subscription, parent] = await Promise.all([
           site.ownerUserId
             ? this.db.user.findUnique({
                 where: { id: site.ownerUserId },
@@ -948,18 +1022,252 @@ export class PanelManagementService {
             select: {
               status: true,
               expiresAt: true,
-              plan: { select: { name: true, code: true } },
+              plan: {
+                select: {
+                  name: true,
+                  code: true,
+                  permissions: {
+                    select: { permission: { select: { code: true } } },
+                  },
+                },
+              },
             },
           }),
+          this.db.site.findUnique({
+            where: { id: site.parentSiteId },
+            select: { siteNumber: true, name: true },
+          }),
         ]);
+        const permissionCodes =
+          subscription?.plan?.permissions?.map(
+            (row: any) => row.permission.code,
+          ) ?? [];
         return {
           ...site,
           owner,
+          parent,
           primaryDomain: domain?.hostname ?? null,
-          subscription,
+          type: permissionCodes.includes("providers.manage")
+            ? "PANELS"
+            : "CHILDPANELS",
+          subscription: subscription
+            ? {
+                ...subscription,
+                plan: { ...subscription.plan, permissionCodes },
+              }
+            : null,
         };
       }),
     );
+  }
+  private async panelByReference(reference: string) {
+    const normalized = reference.replace(/^#/, "");
+    const panel = await this.db.site.findFirst({
+      where: {
+        parentSiteId: { not: null },
+        ...(/^\d+$/.test(normalized)
+          ? { siteNumber: BigInt(normalized) }
+          : { id: normalized }),
+      },
+    });
+    if (!panel) throw new TenantError("PANEL_NOT_FOUND", "Panel not found");
+    return panel;
+  }
+  async adminPanel(reference: string) {
+    const panel = await this.panelByReference(reference);
+    const [domains, owner, parent, subscription, disabled] = await Promise.all([
+      this.db.siteDomain.findMany({ where: { siteId: panel.id } }),
+      this.db.user.findFirst({
+        where: { id: panel.ownerUserId, siteId: panel.id },
+        select: { id: true, username: true, email: true },
+      }),
+      this.db.site.findUnique({
+        where: { id: panel.parentSiteId },
+        select: { id: true, siteNumber: true, name: true },
+      }),
+      this.db.panelSubscription.findFirst({
+        where: { siteId: panel.id },
+        orderBy: { createdAt: "desc" },
+      }),
+      this.db.siteDisabledPermission.findMany({ where: { siteId: panel.id } }),
+    ]);
+    const plan = subscription
+      ? await this.adminPlan(subscription.sellerSiteId, subscription.planId)
+      : null;
+    const disabledPermissions = disabled.length
+      ? await this.db.permission.findMany({
+          where: { id: { in: disabled.map((row: any) => row.permissionId) } },
+          select: { code: true },
+        })
+      : [];
+    return {
+      ...panel,
+      panelNumber: String(panel.siteNumber),
+      type: plan?.permissionCodes.includes("providers.manage")
+        ? "PANELS"
+        : "CHILDPANELS",
+      owner,
+      parent,
+      plan,
+      subscription,
+      domains,
+      systemDomain:
+        domains.find((domain: any) => domain.type === "SUBDOMAIN")?.hostname ??
+        null,
+      primaryDomain:
+        domains.find((domain: any) => domain.isPrimary)?.hostname ?? null,
+      disabledPermissionCodes: disabledPermissions.map((row: any) => row.code),
+      effectivePermissionCodes: (plan?.permissionCodes ?? []).filter(
+        (code: string) =>
+          !disabledPermissions.some((row: any) => row.code === code),
+      ),
+    };
+  }
+  async changePlan(
+    actorId: string,
+    reference: string,
+    newPlanId: string,
+    reason: unknown,
+  ) {
+    const explanation = String(reason ?? "").trim();
+    if (explanation.length < 3)
+      throw new TenantError(
+        "REASON_REQUIRED",
+        "Plan change reason is required",
+      );
+    const panel = await this.panelByReference(reference);
+    return this.db.$transaction(async (tx: any) => {
+      const subscription = await tx.panelSubscription.findFirst({
+        where: { siteId: panel.id, status: { in: ["ACTIVE", "PAST_DUE"] } },
+        orderBy: { createdAt: "desc" },
+      });
+      if (!subscription)
+        throw new TenantError(
+          "SUBSCRIPTION_NOT_FOUND",
+          "Subscription not found",
+        );
+      const plan = await tx.panelRentalPlan.findFirst({
+        where: {
+          id: newPlanId,
+          sellerSiteId: subscription.sellerSiteId,
+          active: true,
+        },
+      });
+      if (!plan)
+        throw new TenantError("PLAN_NOT_FOUND", "Panel plan not found");
+      const updated = await tx.panelSubscription.update({
+        where: { id: subscription.id },
+        data: { planId: plan.id },
+      });
+      await tx.auditLog.create({
+        data: {
+          siteId: panel.id,
+          actorId,
+          action: "PANEL_PLAN_CHANGE",
+          resource: "PanelSubscription",
+          resourceId: subscription.id,
+          before: { planId: subscription.planId },
+          after: {
+            oldPlanId: subscription.planId,
+            newPlanId: plan.id,
+            reason: explanation,
+          },
+        },
+      });
+      return updated;
+    });
+  }
+  async setPermissionOverrides(
+    actorId: string,
+    reference: string,
+    disabledCodes: unknown,
+  ) {
+    if (!Array.isArray(disabledCodes))
+      throw new TenantError(
+        "PANEL_PERMISSIONS_INVALID",
+        "disabledPermissionCodes must be an array",
+      );
+    const panel = await this.adminPanel(reference);
+    const codes = [...new Set(disabledCodes.map(String))];
+    if (codes.some((code) => !panel.plan?.permissionCodes.includes(code)))
+      throw new TenantError(
+        "PANEL_PERMISSION_EXCEEDS_PLAN",
+        "Override exceeds plan ceiling",
+      );
+    return this.db.$transaction(async (tx: any) => {
+      const permissions = codes.length
+        ? await tx.permission.findMany({ where: { code: { in: codes } } })
+        : [];
+      if (permissions.length !== codes.length)
+        throw new TenantError("PANEL_PERMISSION_UNKNOWN", "Unknown permission");
+      await tx.siteDisabledPermission.deleteMany({
+        where: { siteId: panel.id },
+      });
+      if (permissions.length)
+        await tx.siteDisabledPermission.createMany({
+          data: permissions.map((permission: any) => ({
+            siteId: panel.id,
+            permissionId: permission.id,
+          })),
+        });
+      await tx.auditLog.create({
+        data: {
+          siteId: panel.id,
+          actorId,
+          action: "PANEL_PERMISSION_OVERRIDE",
+          resource: "Site",
+          resourceId: panel.id,
+          after: { disabledPermissionCodes: codes },
+        },
+      });
+      return { disabledPermissionCodes: codes };
+    });
+  }
+  async setPanelStatus(
+    actorId: string,
+    reference: string,
+    active: unknown,
+    reason: unknown,
+  ) {
+    const explanation = String(reason ?? "").trim();
+    if (explanation.length < 3)
+      throw new TenantError(
+        "REASON_REQUIRED",
+        "Status change reason is required",
+      );
+    if (typeof active !== "boolean")
+      throw new TenantError("PANEL_STATUS_INVALID", "active must be boolean");
+    const panel = await this.panelByReference(reference);
+    return this.db.$transaction(async (tx: any) => {
+      const subscription = await tx.panelSubscription.findFirst({
+        where: { siteId: panel.id },
+        orderBy: { createdAt: "desc" },
+      });
+      await tx.site.update({
+        where: { id: panel.id },
+        data: { status: active ? "ACTIVE" : "SUSPENDED" },
+      });
+      if (subscription)
+        await tx.panelSubscription.update({
+          where: { id: subscription.id },
+          data: { status: active ? "ACTIVE" : "SUSPENDED" },
+        });
+      await tx.auditLog.create({
+        data: {
+          siteId: panel.id,
+          actorId,
+          action: active ? "PANEL_ACTIVATE" : "PANEL_SUSPEND",
+          resource: "Site",
+          resourceId: panel.id,
+          before: { status: panel.status },
+          after: {
+            status: active ? "ACTIVE" : "SUSPENDED",
+            reason: explanation,
+          },
+        },
+      });
+      return { siteId: panel.id, status: active ? "ACTIVE" : "SUSPENDED" };
+    });
   }
   async adminPlans(siteId: string) {
     const rows = await this.db.panelRentalPlan.findMany({
@@ -982,10 +1290,10 @@ export class PanelManagementService {
     });
     return Promise.all(
       rows.map(async (row: any) => {
-        const [site, sellerSite, plan, renter] = await Promise.all([
+        const [site, sellerSite, plan, renter, domain] = await Promise.all([
           this.db.site.findUnique({
             where: { id: row.siteId },
-            select: { siteNumber: true, name: true },
+            select: { siteNumber: true, name: true, ownerUserId: true },
           }),
           this.db.site.findUnique({
             where: { id: row.sellerSiteId },
@@ -993,14 +1301,43 @@ export class PanelManagementService {
           }),
           this.db.panelRentalPlan.findUnique({
             where: { id: row.planId },
-            select: { code: true, name: true },
+            select: {
+              code: true,
+              name: true,
+              permissions: {
+                select: { permission: { select: { code: true } } },
+              },
+            },
           }),
           this.db.user.findUnique({
             where: { id: row.renterUserId },
             select: { username: true, email: true },
           }),
+          this.db.siteDomain.findFirst({
+            where: { siteId: row.siteId, isPrimary: true },
+            select: { hostname: true },
+          }),
         ]);
-        return { ...row, site, sellerSite, plan, renter };
+        const owner = site?.ownerUserId
+          ? await this.db.user.findFirst({
+              where: { id: site.ownerUserId, siteId: row.siteId },
+              select: { username: true, email: true },
+            })
+          : null;
+        const permissionCodes =
+          plan?.permissions?.map((entry: any) => entry.permission.code) ?? [];
+        return {
+          ...row,
+          site,
+          sellerSite,
+          plan: plan ? { ...plan, permissionCodes } : null,
+          renter,
+          owner,
+          primaryDomain: domain?.hostname ?? null,
+          type: permissionCodes.includes("providers.manage")
+            ? "PANELS"
+            : "CHILDPANELS",
+        };
       }),
     );
   }

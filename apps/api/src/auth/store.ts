@@ -354,13 +354,28 @@ export class PrismaAuthStore implements AuthStore {
     ]);
     if (!site || !subscription)
       return { ownerUserId: site?.ownerUserId ?? null, permissionCodes: [] };
-    const links = await this.db.panelRentalPlanPermission.findMany({
-      where: { planId: subscription.planId },
-      select: { permissionId: true },
-    });
+    const [links, disabled] = await Promise.all([
+      this.db.panelRentalPlanPermission.findMany({
+        where: { planId: subscription.planId },
+        select: { permissionId: true },
+      }),
+      this.db.siteDisabledPermission?.findMany
+        ? this.db.siteDisabledPermission.findMany({
+            where: { siteId },
+            select: { permissionId: true },
+          })
+        : [],
+    ]);
+    const disabledIds = new Set(disabled.map((row: any) => row.permissionId));
     const permissions = links.length
       ? await this.db.permission.findMany({
-          where: { id: { in: links.map((link: any) => link.permissionId) } },
+          where: {
+            id: {
+              in: links
+                .map((link: any) => link.permissionId)
+                .filter((id: string) => !disabledIds.has(id)),
+            },
+          },
           select: { code: true },
         })
       : [];

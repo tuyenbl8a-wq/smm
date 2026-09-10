@@ -205,7 +205,7 @@ test("activation persists provider metadata before routing and activates afterwa
     affiliate: { create: async () => undefined },
     siteDomain: {
       create: async ({ data }: any) => {
-        domainData = data;
+        if (data.providerZoneId) domainData = data;
       },
     },
     panelSubscription: { create: async () => undefined },
@@ -519,5 +519,101 @@ test("legacy panel owner repair is idempotent and never touches billing ledger",
   assert.equal(
     grantedPermissions.every((grant) => grant.userId === "child-owner"),
     true,
+  );
+});
+
+test("rental without a custom domain reserves a unique system subdomain without Cloudflare", async () => {
+  const provider = dns();
+  let created: any;
+  const db: any = {
+    panelRentalIntent: {
+      findUnique: async () => null,
+      findFirst: async () => null,
+      create: async ({ data }: any) => (created = { ...intent, ...data }),
+    },
+    siteDomain: { findFirst: async () => null },
+    site: {
+      findUnique: async () => ({ id: "seller", status: "ACTIVE", depth: 0 }),
+      count: async () => 0,
+    },
+    panelRentalPlan: {
+      findFirst: async () => ({
+        id: "plan",
+        active: true,
+        allowCustomDomain: false,
+        maxDepth: 2,
+        maxDirectChildren: 5,
+      }),
+    },
+    user: { findFirst: async () => ({ id: "user" }) },
+  };
+  const result = await new PanelService(db, provider).rent(
+    "seller",
+    "user",
+    { planId: "plan", name: "Shop ABC", slug: "shopabc" },
+    "system-subdomain-1",
+  );
+  assert.equal(created.hostname, "shopabc.dichvu1st.com");
+  assert.equal(created.providerZoneId, null);
+  assert.deepEqual(result.nameservers, []);
+  assert.deepEqual(provider.calls, []);
+});
+
+test("custom domains remain blocked by a plan while duplicate and reserved subdomains fail closed", async () => {
+  let claimed = false;
+  const db: any = {
+    panelRentalIntent: {
+      findUnique: async () => null,
+      findFirst: async () => null,
+    },
+    siteDomain: {
+      findFirst: async () => (claimed ? { id: "existing" } : null),
+    },
+    site: {
+      findUnique: async () => ({ status: "ACTIVE", depth: 0 }),
+      count: async () => 0,
+    },
+    panelRentalPlan: {
+      findFirst: async () => ({
+        id: "plan",
+        active: true,
+        allowCustomDomain: false,
+        maxDepth: 2,
+        maxDirectChildren: 5,
+      }),
+    },
+    user: { findFirst: async () => ({ id: "user" }) },
+  };
+  const service = new PanelService(db, dns());
+  await assert.rejects(
+    () =>
+      service.rent(
+        "seller",
+        "user",
+        { planId: "plan", name: "Shop", domain: "shop.test" },
+        "custom-blocked-1",
+      ),
+    (e: any) => e.code === "CUSTOM_DOMAIN_NOT_ALLOWED",
+  );
+  await assert.rejects(
+    () =>
+      service.rent(
+        "seller",
+        "user",
+        { planId: "plan", name: "Admin", slug: "admin" },
+        "reserved-slug-1",
+      ),
+    (e: any) => e.code === "PANEL_SLUG_RESERVED",
+  );
+  claimed = true;
+  await assert.rejects(
+    () =>
+      service.rent(
+        "seller",
+        "user",
+        { planId: "plan", name: "Shop", slug: "shop" },
+        "duplicate-slug-1",
+      ),
+    (e: any) => e.code === "PANEL_SUBDOMAIN_TAKEN",
   );
 });

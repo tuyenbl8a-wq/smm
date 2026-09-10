@@ -233,7 +233,20 @@ model Permission {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   panelRentalPlans PanelRentalPlanPermission[]
+  disabledForSites SiteDisabledPermission[]
   @@map("permissions")
+}
+
+model SiteDisabledPermission {
+  siteId       String @map("site_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([siteId, permissionId])
+  @@index([permissionId])
+  @@map("site_disabled_permissions")
 }
 model UserRole {
   userId String @map("user_id") @db.Uuid
@@ -1148,7 +1161,7 @@ model PanelRentalIntent {
   name                String                  @db.VarChar(160)
   slug                String                  @db.VarChar(80)
   hostname            String                  @unique @db.VarChar(253)
-  providerZoneId      String                  @unique @map("provider_zone_id") @db.VarChar(160)
+  providerZoneId      String?                 @unique @map("provider_zone_id") @db.VarChar(160)
   assignedNameservers Json                    @map("assigned_nameservers")
   status              PanelRentalIntentStatus @default(PENDING_DNS)
   autoRenew           Boolean                 @default(false) @map("auto_renew")

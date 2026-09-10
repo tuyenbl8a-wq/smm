@@ -94,7 +94,7 @@ const server = createApiServer(
       {
         BINANCE: binanceProvider,
       },
-      (id) => paymentSettings.publicRecipient(id),
+      (id, siteId) => paymentSettings.publicRecipient(id, siteId),
     ),
     new SupportService(prisma),
     adminOperations,

@@ -163,7 +163,6 @@ export class AuthHandler {
       const rootOnlyAdminPrefixes = [
         "/api/v1/admin/providers",
         "/api/v1/admin/payment-settings",
-        "/api/v1/admin/payment-methods",
         "/api/v1/admin/coupons",
         "/api/v1/admin/referrals",
         "/api/v1/admin/system-status",
@@ -207,6 +206,61 @@ export class AuthHandler {
           return this.ok(response, {
             items: await this.panels.adminPanels(url.searchParams),
           });
+        const panelDetail =
+          /^\/api\/v1\/admin\/panels\/([0-9]+|[0-9a-f-]{36})$/.exec(path);
+        if (request.method === "GET" && panelDetail)
+          return this.ok(
+            response,
+            await this.panels.adminPanel(panelDetail[1]!),
+          );
+        const panelPlanChange =
+          /^\/api\/v1\/admin\/panels\/([0-9]+|[0-9a-f-]{36})\/plan$/.exec(path);
+        if (request.method === "PATCH" && panelPlanChange) {
+          this.csrf(request, auth.rawToken);
+          const body = await this.body(request);
+          return this.ok(
+            response,
+            await this.panels.changePlan(
+              auth.user.id,
+              panelPlanChange[1]!,
+              String(body.planId),
+              body.reason,
+            ),
+          );
+        }
+        const panelPermissions =
+          /^\/api\/v1\/admin\/panels\/([0-9]+|[0-9a-f-]{36})\/permissions$/.exec(
+            path,
+          );
+        if (request.method === "PATCH" && panelPermissions) {
+          this.csrf(request, auth.rawToken);
+          const body = await this.body(request);
+          return this.ok(
+            response,
+            await this.panels.setPermissionOverrides(
+              auth.user.id,
+              panelPermissions[1]!,
+              body.disabledPermissionCodes,
+            ),
+          );
+        }
+        const panelStatus =
+          /^\/api\/v1\/admin\/panels\/([0-9]+|[0-9a-f-]{36})\/status$/.exec(
+            path,
+          );
+        if (request.method === "PATCH" && panelStatus) {
+          this.csrf(request, auth.rawToken);
+          const body = await this.body(request);
+          return this.ok(
+            response,
+            await this.panels.setPanelStatus(
+              auth.user.id,
+              panelStatus[1]!,
+              body.active,
+              body.reason,
+            ),
+          );
+        }
         if (request.method === "GET" && path === "/api/v1/admin/panel-plans")
           return this.ok(response, {
             items: await this.panels.adminPlans(tenant.id),
@@ -929,6 +983,7 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.paymentSettings!.methods(
+            tenant.id,
             url.searchParams.get("includeInactive") !== "false",
           ),
         );
@@ -1813,6 +1868,7 @@ export class AuthHandler {
           response,
           await this.paymentSettings!.saveMethod(
             auth.user.id,
+            tenant.id,
             null,
             await this.body(request),
           ),
@@ -1832,7 +1888,10 @@ export class AuthHandler {
           );
         return this.ok(
           response,
-          await this.paymentSettings!.testMethod(paymentMethodTest[1]!),
+          await this.paymentSettings!.testMethod(
+            paymentMethodTest[1]!,
+            tenant.id,
+          ),
         );
       }
       if (request.method === "POST" && paymentMethodUpdate) {
@@ -1847,6 +1906,7 @@ export class AuthHandler {
           response,
           await this.paymentSettings!.saveMethod(
             auth.user.id,
+            tenant.id,
             paymentMethodUpdate[1]!,
             await this.body(request),
           ),
@@ -1864,6 +1924,7 @@ export class AuthHandler {
           response,
           await this.paymentSettings!.archiveMethod(
             auth.user.id,
+            tenant.id,
             paymentMethodUpdate[1]!,
           ),
         );

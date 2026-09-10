@@ -42,7 +42,10 @@ export class DepositService {
       accountName: process.env.BANK_ACCOUNT_NAME ?? "",
     },
     private providers: Record<string, PaymentProvider> = {},
-    private recipientForMethod?: (id: string) => Promise<{
+    private recipientForMethod?: (
+      id: string,
+      siteId: string,
+    ) => Promise<{
       bankName: string;
       bankBin: string;
       account: string;
@@ -219,7 +222,10 @@ export class DepositService {
         String(paymentMethod?.providerType).toUpperCase(),
       ),
       selected = this.recipientForMethod
-        ? await this.recipientForMethod(x.paymentMethodId)
+        ? await this.recipientForMethod(
+            x.paymentMethodId,
+            siteId ?? ROOT_SITE_ID,
+          )
         : null,
       fallback =
         typeof this.bank === "function" ? await this.bank() : this.bank,
