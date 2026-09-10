@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AppConfig } from "@smm/config";
 import type { AuthStore, AuthUser } from "./store.js";
+import { applyPanelEntitlement } from "./store.js";
 import { canAccessAdmin } from "../admin/dashboard.js";
 import { WalletError, type WalletService } from "../wallet/service.js";
 import { CatalogError, type CatalogService } from "../catalog/service.js";
@@ -207,7 +208,9 @@ export class AuthHandler {
             items: await this.panels.adminPanels(url.searchParams),
           });
         if (request.method === "GET" && path === "/api/v1/admin/panel-plans")
-          return this.ok(response, { items: await this.panels.adminPlans() });
+          return this.ok(response, {
+            items: await this.panels.adminPlans(tenant.id),
+          });
         if (
           request.method === "GET" &&
           path === "/api/v1/admin/panel-subscriptions"
@@ -226,6 +229,11 @@ export class AuthHandler {
         const plan = /^\/api\/v1\/admin\/panel-plans\/([0-9a-f-]{36})$/.exec(
           path,
         );
+        if (plan && request.method === "GET")
+          return this.ok(
+            response,
+            await this.panels.adminPlan(tenant.id, plan[1]!),
+          );
         if (plan && request.method === "PATCH") {
           this.csrf(request, auth.rawToken);
           return this.ok(
@@ -604,7 +612,26 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
-        return this.ok(response, await this.admin!.staff(tenant.id));
+        const result = await this.admin!.staff(tenant.id);
+        if (tenant.id !== ROOT_SITE_ID) {
+          const allowed = new Set(auth.access.permissions);
+          result.permissions = result.permissions.filter((permission: any) =>
+            allowed.has(permission.code),
+          );
+          result.items = result.items.map((item: any) => ({
+            ...item,
+            permissions: item.permissions.filter((code: string) =>
+              allowed.has(code),
+            ),
+            directPermissions: item.directPermissions.filter((code: string) =>
+              allowed.has(code),
+            ),
+            rolePermissions: item.rolePermissions.filter((code: string) =>
+              allowed.has(code),
+            ),
+          }));
+        }
+        return this.ok(response, result);
       }
       if (
         request.method === "GET" &&
@@ -2715,11 +2742,16 @@ export class AuthHandler {
     const user = await this.store.findUserById(session.userId, siteId);
     if (!user || user.status !== "ACTIVE" || user.siteId !== siteId)
       return null;
+    const access = await this.store.rolesAndPermissions(user.id);
+    const entitlement = this.store.panelEntitlements
+      ? await this.store.panelEntitlements(siteId)
+      : null;
+    const effectiveAccess = applyPanelEntitlement(user.id, access, entitlement);
     return {
       rawToken,
       session,
       user,
-      access: await this.store.rolesAndPermissions(user.id),
+      access: effectiveAccess,
     };
   }
   private async issueSession(
@@ -2735,6 +2767,10 @@ export class AuthHandler {
       ...this.meta(request),
       expiresAt: new Date(Date.now() + SESSION_SECONDS * 1000),
     });
+    const granted = await this.store.rolesAndPermissions(user.id);
+    const entitlement = this.store.panelEntitlements
+      ? await this.store.panelEntitlements(user.siteId)
+      : null;
     const csrf = csrfValue(rawToken, this.config.sessionSecret);
     const secure = this.config.environment === "production" ? "; Secure" : "";
     const domain = this.cookieDomain();
@@ -2747,7 +2783,7 @@ export class AuthHandler {
       {
         user: this.publicUser(user),
         sessionId: session.id,
-        access: await this.store.rolesAndPermissions(user.id),
+        access: applyPanelEntitlement(user.id, granted, entitlement),
       },
       status,
     );

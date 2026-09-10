@@ -32,6 +32,7 @@ async function grantChildServicePermissions(tx: any, userId: string) {
   });
 }
 import type { PanelDnsProvider } from "./panel-dns-provider.js";
+import { TENANT_PLAN_PERMISSION_CODES } from "./panel-permissions.js";
 const SCALE = 100_000_000n;
 const units = (v: unknown) => {
   const m = /^(\d{1,12})(?:\.(\d{1,8}))?$/.exec(String(v));
@@ -567,8 +568,8 @@ export class PanelManagementService {
     private readonly rental: PanelService,
     private readonly dns: PanelDnsProvider,
   ) {}
-  plans(siteId: string) {
-    return this.db.panelRentalPlan.findMany({
+  async plans(siteId: string) {
+    const rows = await this.db.panelRentalPlan.findMany({
       where: { sellerSiteId: siteId, active: true },
       orderBy: { price: "asc" },
       select: {
@@ -587,6 +588,7 @@ export class PanelManagementService {
         allowThemes: true,
       },
     });
+    return this.withPermissionCodes(rows);
   }
   async panels(siteId: string, userId: string) {
     const sites = await this.db.site.findMany({
@@ -959,8 +961,19 @@ export class PanelManagementService {
       }),
     );
   }
-  adminPlans() {
-    return this.db.panelRentalPlan.findMany({ orderBy: { createdAt: "desc" } });
+  async adminPlans(siteId: string) {
+    const rows = await this.db.panelRentalPlan.findMany({
+      where: { sellerSiteId: siteId },
+      orderBy: { createdAt: "desc" },
+    });
+    return this.withPermissionCodes(rows);
+  }
+  async adminPlan(siteId: string, id: string) {
+    const row = await this.db.panelRentalPlan.findFirst({
+      where: { id, sellerSiteId: siteId },
+    });
+    if (!row) throw new TenantError("PLAN_NOT_FOUND", "Panel plan not found");
+    return (await this.withPermissionCodes([row]))[0];
   }
   async adminSubscriptions() {
     const rows = await this.db.panelSubscription.findMany({
@@ -992,6 +1005,23 @@ export class PanelManagementService {
     );
   }
   async savePlan(siteId: string, input: any, id?: string) {
+    if (!Array.isArray(input.permissionCodes))
+      throw new TenantError(
+        "PLAN_PERMISSIONS_INVALID",
+        "permissionCodes must be an array",
+      );
+    const permissionCodes = [
+      ...new Set(input.permissionCodes.map((code: unknown) => String(code))),
+    ];
+    if (
+      permissionCodes.some(
+        (code) => !TENANT_PLAN_PERMISSION_CODES.includes(code as any),
+      )
+    )
+      throw new TenantError(
+        "PLAN_PERMISSION_UNSAFE",
+        "Permission is not tenant-safe",
+      );
     const data = {
       sellerSiteId: siteId,
       code: String(input.code).trim().toUpperCase(),
@@ -1016,8 +1046,64 @@ export class PanelManagementService {
       data.billingDays < 1
     )
       throw new TenantError("PLAN_INVALID", "Invalid panel plan");
-    return id
-      ? this.db.panelRentalPlan.update({ where: { id }, data })
-      : this.db.panelRentalPlan.create({ data });
+    return this.db.$transaction(async (tx: any) => {
+      if (
+        id &&
+        !(await tx.panelRentalPlan.findFirst({
+          where: { id, sellerSiteId: siteId },
+        }))
+      )
+        throw new TenantError("PLAN_NOT_FOUND", "Panel plan not found");
+      const permissions = await tx.permission.findMany({
+        where: { code: { in: permissionCodes } },
+        select: { id: true, code: true },
+      });
+      if (permissions.length !== permissionCodes.length)
+        throw new TenantError(
+          "PLAN_PERMISSION_UNKNOWN",
+          "Unknown permission code",
+        );
+      const plan = id
+        ? await tx.panelRentalPlan.update({ where: { id }, data })
+        : await tx.panelRentalPlan.create({ data });
+      await tx.panelRentalPlanPermission.deleteMany({
+        where: { planId: plan.id },
+      });
+      if (permissions.length)
+        await tx.panelRentalPlanPermission.createMany({
+          data: permissions.map((permission: any) => ({
+            planId: plan.id,
+            permissionId: permission.id,
+          })),
+        });
+      return { ...plan, permissionCodes };
+    });
+  }
+
+  private async withPermissionCodes(rows: any[]) {
+    const links = rows.length
+      ? await this.db.panelRentalPlanPermission.findMany({
+          where: { planId: { in: rows.map((row) => row.id) } },
+        })
+      : [];
+    const permissions = links.length
+      ? await this.db.permission.findMany({
+          where: {
+            id: { in: links.map((link: any) => link.permissionId) },
+          },
+          select: { id: true, code: true },
+        })
+      : [];
+    const codeById = new Map(
+      permissions.map((permission: any) => [permission.id, permission.code]),
+    );
+    return rows.map((row) => ({
+      ...row,
+      permissionCodes: links
+        .filter((link: any) => link.planId === row.id)
+        .map((link: any) => codeById.get(link.permissionId))
+        .filter(Boolean)
+        .sort(),
+    }));
   }
 }

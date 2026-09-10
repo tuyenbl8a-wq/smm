@@ -1,0 +1,45 @@
+export const CHILLPANEL_PERMISSION_CODES = [
+  "dashboard.view",
+  "orders.view",
+  "orders.manage",
+  "orders.sync",
+  "orders.refund",
+  "orders.retry",
+  "services.view",
+  "services.presentation.manage",
+  "services.pricing.manage",
+  "services.toggle",
+  "users.view",
+  "users.manage",
+  "users.balance.manage",
+  "users.pricing.manage",
+  "users.security.manage",
+  "payments.view",
+  "payments.manage",
+  "payments.approve",
+  "coupons.view",
+  "coupons.manage",
+  "support.view",
+  "support.manage",
+  "reports.view",
+  "reports.read",
+  "settings.view",
+  "settings.manage",
+  "staff.view",
+  "staff.manage",
+  "audit.view",
+  "wallet.manage",
+] as const;
+
+export const PANEL_250K_PERMISSION_CODES = [
+  ...CHILLPANEL_PERMISSION_CODES,
+  "services.create",
+  "services.import",
+  "providers.view",
+  "providers.manage",
+  "providers.sync",
+] as const;
+
+export const TENANT_PLAN_PERMISSION_CODES = [
+  ...new Set(PANEL_250K_PERMISSION_CODES),
+];

@@ -232,6 +232,7 @@ model Permission {
   description String? @db.VarChar(255)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  panelRentalPlans PanelRentalPlanPermission[]
   @@map("permissions")
 }
 model UserRole {
@@ -1119,10 +1120,24 @@ model PanelRentalPlan {
   active            Boolean  @default(true)
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  permissions       PanelRentalPlanPermission[]
 
   @@unique([sellerSiteId, code])
   @@index([sellerSiteId, active])
   @@map("panel_rental_plans")
+}
+
+model PanelRentalPlanPermission {
+  planId       String   @map("plan_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  plan         PanelRentalPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([planId, permissionId])
+  @@index([permissionId])
+  @@map("panel_rental_plan_permissions")
 }
 
 model PanelRentalIntent {

@@ -29,6 +29,10 @@ const adminOperations = await readFile(
   new URL("../dist/admin-operations.js", import.meta.url),
   "utf8",
 );
+const adminUx = await readFile(
+  new URL("../dist/admin-ux.js", import.meta.url),
+  "utf8",
+);
 test("public experience includes real catalog, navigation and responsive UI", () => {
   assert.match(page, /api\/v1\/public\/catalog/);
   assert.match(page, /DỊCH VỤ CỦA CHÚNG TÔI/);
@@ -1074,4 +1078,22 @@ test("API proxy signs the validated browser tenant host instead of forwarding sp
   assert.match(server, /"x-smm-tenant-timestamp": timestamp/);
   assert.match(server, /"x-smm-tenant-signature": signature/);
   assert.doesNotMatch(server, /headers:\s*\{\s*host:\s*validatedHost/);
+});
+
+test("panel plan editor round-trips grouped granular permissionCodes separately from flags", () => {
+  assert.match(adminUx, /panelPermissionGroups/);
+  assert.match(adminUx, /name:'permissionCodes'/);
+  assert.match(adminUx, /Quyền quản trị của gói/);
+  assert.match(adminOperations, /fd\.getAll\(f\.name\)/);
+  assert.match(
+    adminOperations,
+    /Array\.isArray\(value\)&&value\.includes\(o\.value\)/,
+  );
+  for (const flag of [
+    "allowCustomDomain",
+    "allowPanelResale",
+    "allowApi",
+    "allowThemes",
+  ])
+    assert.match(adminUx, new RegExp(flag));
 });

@@ -15,6 +15,21 @@ export interface AuthSession {
   expiresAt: Date;
   revokedAt: Date | null;
 }
+export function applyPanelEntitlement(
+  userId: string,
+  access: { roles: string[]; permissions: string[] },
+  entitlement: { ownerUserId: string | null; permissionCodes: string[] } | null,
+) {
+  if (!entitlement) return access;
+  const ceiling = new Set(entitlement.permissionCodes);
+  return {
+    roles: access.roles.filter((role) => role !== "SUPER_ADMIN"),
+    permissions:
+      entitlement.ownerUserId === userId
+        ? [...ceiling]
+        : access.permissions.filter((code) => ceiling.has(code)),
+  };
+}
 export interface CustomerDashboard {
   balance: string;
   currency: string;
@@ -119,6 +134,9 @@ export interface AuthStore {
   rolesAndPermissions(
     userId: string,
   ): Promise<{ roles: string[]; permissions: string[] }>;
+  panelEntitlements(
+    siteId: string,
+  ): Promise<{ ownerUserId: string | null; permissionCodes: string[] } | null>;
   recordLogin(input: {
     siteId: string;
     userId?: string;
@@ -316,6 +334,39 @@ export class PrismaAuthStore implements AuthStore {
     return {
       roles: roles.map((x: any) => x.code),
       permissions: permissions.map((x: any) => x.code),
+    };
+  }
+  async panelEntitlements(siteId: string) {
+    if (siteId === ROOT_SITE_ID) return null;
+    const [site, subscription] = await Promise.all([
+      this.db.site.findUnique({
+        where: { id: siteId },
+        select: { ownerUserId: true },
+      }),
+      this.db.panelSubscription.findFirst({
+        where: {
+          siteId,
+          status: { in: ["ACTIVE", "PAST_DUE"] },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { planId: true },
+      }),
+    ]);
+    if (!site || !subscription)
+      return { ownerUserId: site?.ownerUserId ?? null, permissionCodes: [] };
+    const links = await this.db.panelRentalPlanPermission.findMany({
+      where: { planId: subscription.planId },
+      select: { permissionId: true },
+    });
+    const permissions = links.length
+      ? await this.db.permission.findMany({
+          where: { id: { in: links.map((link: any) => link.permissionId) } },
+          select: { code: true },
+        })
+      : [];
+    return {
+      ownerUserId: site.ownerUserId,
+      permissionCodes: permissions.map((permission: any) => permission.code),
     };
   }
   recordLogin(input: any) {
