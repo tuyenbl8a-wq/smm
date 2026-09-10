@@ -73,14 +73,22 @@ export class TenantResolver {
       return this.db.site.findUniqueOrThrow({ where: { id: ROOT_SITE_ID } });
     const domain = await this.db.siteDomain.findFirst({
       where: { hostname, status: "VERIFIED" },
-      select: { site: true },
+      select: { siteId: true },
     });
-    if (!domain?.site)
+    if (!domain?.siteId)
       throw new TenantError(
         "TENANT_NOT_FOUND",
         "Unknown or unverified hostname",
       );
-    return domain.site;
+    const site = await this.db.site.findUnique({
+      where: { id: domain.siteId },
+    });
+    if (!site)
+      throw new TenantError(
+        "TENANT_NOT_FOUND",
+        "Unknown or unverified hostname",
+      );
+    return site;
   }
   async assertOperational(site: TenantSite): Promise<void> {
     let current: TenantSite | null = site,
