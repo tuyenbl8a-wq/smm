@@ -37,7 +37,7 @@ export class PanelExpiryWorker {
           data: {
             status: "ACTIVE",
             expiresAt,
-            graceUntil: new Date(expiresAt.getTime() + 7 * 86_400_000),
+            graceUntil: expiresAt,
           },
         });
         await tx.site.updateMany({
@@ -64,13 +64,18 @@ export class PanelExpiryWorker {
       const past = await tx.panelSubscription.findMany({
         where: { status: "ACTIVE", expiresAt: { lte: now } },
       });
-      for (const row of past)
+      for (const row of past) {
         await tx.panelSubscription.update({
           where: { id: row.id },
           data: { status: "PAST_DUE" },
         });
+        await tx.site.updateMany({
+          where: { id: row.siteId, parentSiteId: { not: null } },
+          data: { status: "SUSPENDED" },
+        });
+      }
       const suspended = await tx.panelSubscription.findMany({
-        where: { status: "PAST_DUE", graceUntil: { lte: now } },
+        where: { status: "PAST_DUE", expiresAt: { lte: now } },
       });
       for (const row of suspended) {
         await tx.panelSubscription.update({

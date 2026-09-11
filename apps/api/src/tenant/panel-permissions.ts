@@ -38,6 +38,7 @@ export const PANEL_250K_PERMISSION_CODES = [
   "providers.view",
   "providers.manage",
   "providers.sync",
+  "panels.resale.manage",
 ] as const;
 
 export const TENANT_PLAN_PERMISSION_CODES = [

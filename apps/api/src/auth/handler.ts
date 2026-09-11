@@ -161,9 +161,6 @@ export class AuthHandler {
           "Authentication required",
         );
       const rootOnlyAdminPrefixes = [
-        "/api/v1/admin/providers",
-        "/api/v1/admin/payment-settings",
-        "/api/v1/admin/coupons",
         "/api/v1/admin/referrals",
         "/api/v1/admin/system-status",
       ];
@@ -194,24 +191,31 @@ export class AuthHandler {
           );
       }
       if (this.panels && path.startsWith("/api/v1/admin/panel")) {
-        if (!auth.access.roles.includes("SUPER_ADMIN"))
+        if (
+          tenant.id === ROOT_SITE_ID &&
+          !auth.access.roles.includes("SUPER_ADMIN")
+        )
           return this.error(
             response,
             403,
             "PERMISSION_DENIED",
             "Permission denied",
           );
+        const sellerScope =
+          tenant.id === ROOT_SITE_ID
+            ? null
+            : await this.panels.assertResellerAccess(tenant.id);
         const url = new URL(request.url ?? path, this.config.apiUrl);
         if (request.method === "GET" && path === "/api/v1/admin/panels")
           return this.ok(response, {
-            items: await this.panels.adminPanels(url.searchParams),
+            items: await this.panels.adminPanels(url.searchParams, sellerScope),
           });
         const panelDetail =
           /^\/api\/v1\/admin\/panels\/([0-9]+|[0-9a-f-]{36})$/.exec(path);
         if (request.method === "GET" && panelDetail)
           return this.ok(
             response,
-            await this.panels.adminPanel(panelDetail[1]!),
+            await this.panels.adminPanel(panelDetail[1]!, sellerScope),
           );
         const panelPlanChange =
           /^\/api\/v1\/admin\/panels\/([0-9]+|[0-9a-f-]{36})\/plan$/.exec(path);
@@ -225,6 +229,7 @@ export class AuthHandler {
               panelPlanChange[1]!,
               String(body.planId),
               body.reason,
+              sellerScope,
             ),
           );
         }
@@ -241,6 +246,7 @@ export class AuthHandler {
               auth.user.id,
               panelPermissions[1]!,
               body.disabledPermissionCodes,
+              sellerScope,
             ),
           );
         }
@@ -258,6 +264,8 @@ export class AuthHandler {
               panelStatus[1]!,
               body.active,
               body.reason,
+              body.reasonCode,
+              sellerScope,
             ),
           );
         }
@@ -270,13 +278,18 @@ export class AuthHandler {
           path === "/api/v1/admin/panel-subscriptions"
         )
           return this.ok(response, {
-            items: await this.panels.adminSubscriptions(),
+            items: await this.panels.adminSubscriptions(sellerScope),
           });
         if (request.method === "POST" && path === "/api/v1/admin/panel-plans") {
           this.csrf(request, auth.rawToken);
           return this.ok(
             response,
-            await this.panels.savePlan(tenant.id, await this.body(request)),
+            await this.panels.savePlan(
+              tenant.id,
+              await this.body(request),
+              undefined,
+              auth.user.id,
+            ),
             201,
           );
         }
@@ -296,6 +309,7 @@ export class AuthHandler {
               tenant.id,
               await this.body(request),
               plan[1],
+              auth.user.id,
             ),
           );
         }

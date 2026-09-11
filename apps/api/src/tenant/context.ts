@@ -75,14 +75,17 @@ export class TenantResolver {
       where: { hostname, status: "VERIFIED" },
       select: { siteId: true },
     });
-    if (!domain?.siteId)
+    const siteId = domain?.siteId ?? domain?.site?.id;
+    if (!siteId)
       throw new TenantError(
         "TENANT_NOT_FOUND",
         "Unknown or unverified hostname",
       );
-    const site = await this.db.site.findUnique({
-      where: { id: domain.siteId },
-    });
+    const site =
+      domain.site ??
+      (await this.db.site.findUnique({
+        where: { id: siteId },
+      }));
     if (!site)
       throw new TenantError(
         "TENANT_NOT_FOUND",
@@ -100,6 +103,23 @@ export class TenantResolver {
           "Panel or an ancestor is unavailable",
         );
       if (current.parentSiteId === null) return;
+      if (this.db.panelSubscription?.findFirst) {
+        const subscription = await this.db.panelSubscription.findFirst({
+          where: { siteId: current.id },
+          orderBy: { createdAt: "desc" },
+          include: { plan: true },
+        });
+        if (
+          !subscription ||
+          subscription.status !== "ACTIVE" ||
+          new Date(subscription.expiresAt) <= new Date() ||
+          subscription.plan?.active === false
+        )
+          throw new TenantError(
+            "PANEL_SUBSCRIPTION_INACTIVE",
+            "Panel subscription is unavailable",
+          );
+      }
       if (++traversed > 64)
         throw new TenantError(
           "SITE_HIERARCHY_INVALID",
