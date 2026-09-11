@@ -176,6 +176,7 @@ test("reseller authorization is current, hard-denies Childpanels, and does not r
   let code = "PANEL_250K";
   let resale = true;
   let permission = true;
+  let planActive = true;
   const db: any = {
     site: {
       findUnique: async ({ where }: any) =>
@@ -187,7 +188,7 @@ test("reseller authorization is current, hard-denies Childpanels, and does not r
       findFirst: async () => ({
         planId: "plan",
         expiresAt: new Date(Date.now() + 60_000),
-        plan: { code, active: true, allowPanelResale: resale },
+        plan: { code, active: planActive, allowPanelResale: resale },
       }),
     },
     panelRentalPlanPermission: {
@@ -198,6 +199,9 @@ test("reseller authorization is current, hard-denies Childpanels, and does not r
   };
   const service = new PanelManagementService(db, {} as any, {} as any);
   assert.equal(await service.assertResellerAccess("seller"), "seller");
+  planActive = false;
+  assert.equal(await service.assertResellerAccess("seller"), "seller");
+  planActive = true;
   permission = false;
   await assert.rejects(
     () => service.assertResellerAccess("seller"),

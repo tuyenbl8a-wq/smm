@@ -112,8 +112,7 @@ export class TenantResolver {
         if (
           !subscription ||
           subscription.status !== "ACTIVE" ||
-          new Date(subscription.expiresAt) <= new Date() ||
-          subscription.plan?.active === false
+          new Date(subscription.expiresAt) <= new Date()
         )
           throw new TenantError(
             "PANEL_SUBSCRIPTION_INACTIVE",

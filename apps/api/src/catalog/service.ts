@@ -636,44 +636,60 @@ export class CatalogService {
     });
   }
 
-  async adminOverview(includePricing = true) {
-    const [
-      platforms,
-      categories,
-      services,
-      priceGroups,
-      priceRules,
-      providerServices,
-      providers,
-      mappings,
-      priceHistory,
-    ] = await Promise.all([
-      this.db.platform.findMany({
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+  async adminOverview(includePricing = true, siteId = ROOT_SITE_ID) {
+    const providers = await this.db.provider.findMany({
+      where: { siteId, deletedAt: null },
+      select: { id: true, name: true, status: true },
+      orderBy: { name: "asc" },
+    });
+    const [platforms, categories, services, priceGroups, providerServices] =
+      await Promise.all([
+        this.db.platform.findMany({
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        }),
+        this.db.serviceCategory.findMany({
+          where: { deletedAt: null },
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        }),
+        this.db.service.findMany({
+          where: { siteId, deletedAt: null },
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+          take: 5000,
+        }),
+        this.db.priceGroup.findMany({
+          where: { siteId },
+          orderBy: { name: "asc" },
+        }),
+        this.db.providerService.findMany({
+          where: {
+            providerId: { in: providers.map((provider: any) => provider.id) },
+            active: true,
+          },
+          orderBy: { name: "asc" },
+          take: 5000,
+        }),
+      ]);
+    const [priceRules, mappings, priceHistory] = await Promise.all([
+      this.db.priceRule.findMany({
+        where: {
+          serviceId: { in: services.map((service: any) => service.id) },
+          priceGroupId: { in: priceGroups.map((group: any) => group.id) },
+        },
+        take: 15000,
       }),
-      this.db.serviceCategory.findMany({
-        where: { deletedAt: null },
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      this.db.serviceMapping.findMany({
+        where: {
+          serviceId: { in: services.map((service: any) => service.id) },
+          providerServiceId: {
+            in: providerServices.map((service: any) => service.id),
+          },
+        },
+        take: 15000,
       }),
-      this.db.service.findMany({
-        where: { deletedAt: null },
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-        take: 5000,
-      }),
-      this.db.priceGroup.findMany({ orderBy: { name: "asc" } }),
-      this.db.priceRule.findMany({ take: 15000 }),
-      this.db.providerService.findMany({
-        where: { active: true },
-        orderBy: { name: "asc" },
-        take: 5000,
-      }),
-      this.db.provider.findMany({
-        where: { deletedAt: null },
-        select: { id: true, name: true, status: true },
-        orderBy: { name: "asc" },
-      }),
-      this.db.serviceMapping.findMany({ take: 15000 }),
       this.db.servicePriceHistory.findMany({
+        where: {
+          serviceId: { in: services.map((service: any) => service.id) },
+        },
         orderBy: { createdAt: "desc" },
         take: 100,
       }),
@@ -832,7 +848,17 @@ export class CatalogService {
     };
   }
 
-  async serviceSourcePreview(id: string, providerServiceId: string) {
+  async serviceSourcePreview(
+    id: string,
+    providerServiceId: string,
+    siteId = ROOT_SITE_ID,
+  ) {
+    const ownedService = await this.db.service.findFirst({
+      where: { id, siteId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!ownedService)
+      throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
     const [current, target] = await Promise.all([
       this.serviceEditor(id, true),
       this.db.providerService.findFirst({
@@ -845,7 +871,7 @@ export class CatalogService {
         "Provider service not found",
       );
     const provider = await this.db.provider.findFirst({
-      where: { id: target.providerId, deletedAt: null },
+      where: { id: target.providerId, siteId, deletedAt: null },
       select: { id: true, name: true, status: true },
     });
     if (!provider)

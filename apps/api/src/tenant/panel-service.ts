@@ -659,8 +659,7 @@ export class PanelManagementService {
       include: { plan: true },
     });
     if (
-      !subscription?.plan?.active ||
-      !subscription.plan.allowPanelResale ||
+      !subscription?.plan?.allowPanelResale ||
       subscription.plan.code === "CHILLPANEL"
     )
       throw new TenantError(

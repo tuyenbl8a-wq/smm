@@ -15,6 +15,7 @@ export async function repriceMappedServices(
   providerId: string,
   changedProviderServiceIds: string[],
   source = "provider-sync",
+  siteId?: string,
 ): Promise<RepriceSummary> {
   const alert = (data: {
     serviceId?: string;
@@ -46,7 +47,10 @@ export async function repriceMappedServices(
     ...new Set<string>(mappings.map((x: any) => String(x.serviceId))),
   ];
   for (const serviceId of serviceIds) {
-    const service = await tx.service.findUnique({ where: { id: serviceId } });
+    const service = siteId
+      ? await tx.service.findFirst({ where: { id: serviceId, siteId } })
+      : await tx.service.findUnique({ where: { id: serviceId } });
+    if (!service) continue;
     const candidates = await tx.serviceMapping.findMany({
       where: { serviceId, active: true },
       orderBy: { priority: "asc" },
@@ -69,12 +73,12 @@ export async function repriceMappedServices(
         "KEEP_ACTIVE";
       if (service.active && policy === "DISABLE_SERVICE")
         await tx.service.update({
-          where: { id: serviceId },
+          where: { id: serviceId, ...(siteId ? { siteId } : {}) },
           data: { active: false },
         });
       if (policy === "REQUIRE_REVIEW")
         await tx.service.update({
-          where: { id: serviceId },
+          where: { id: serviceId, ...(siteId ? { siteId } : {}) },
           data: { priceReviewStatus: "PRICE_REVIEW" },
         });
       summary.unavailable++;
@@ -163,7 +167,7 @@ export async function repriceMappedServices(
         };
       if (Object.keys(syncedFields).length)
         await tx.service.update({
-          where: { id: serviceId },
+          where: { id: serviceId, ...(siteId ? { siteId } : {}) },
           data: syncedFields,
         });
     }
@@ -180,7 +184,7 @@ export async function repriceMappedServices(
       moneyUnits(percent) > moneyUnits(service.maxAutomaticIncreasePercent)
     ) {
       await tx.service.update({
-        where: { id: serviceId },
+        where: { id: serviceId, ...(siteId ? { siteId } : {}) },
         data: { priceReviewStatus: "PRICE_REVIEW" },
       });
       summary.requiresReview++;
@@ -235,7 +239,10 @@ export async function repriceMappedServices(
         data.priceReviewStatus = "PRICE_REVIEW";
       else data.rate = newRate;
     } else data.rate = newRate;
-    await tx.service.update({ where: { id: serviceId }, data });
+    await tx.service.update({
+      where: { id: serviceId, ...(siteId ? { siteId } : {}) },
+      data,
+    });
     const floorRaised =
       moneyUnits(newRate) ===
       moneyUnits(newCost) + moneyUnits(service.defaultMinProfit ?? "0");

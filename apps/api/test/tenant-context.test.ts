@@ -57,9 +57,60 @@ test("suspended ancestor blocks descendant", async () => {
     /ancestor/,
   );
 });
+test("inactive sale plan does not stop an existing valid subscription", async () => {
+  const child = {
+    id: "child",
+    siteNumber: 100001n,
+    parentSiteId: ROOT_SITE_ID,
+    status: "ACTIVE",
+    depth: 1,
+  };
+  const resolver = new TenantResolver(
+    {
+      site: {
+        findUnique: async ({ where }: any) =>
+          where.id === ROOT_SITE_ID
+            ? { id: ROOT_SITE_ID, parentSiteId: null, status: "ACTIVE" }
+            : child,
+      },
+      panelSubscription: {
+        findFirst: async () => ({
+          status: "ACTIVE",
+          expiresAt: new Date(Date.now() + 60_000),
+          plan: { active: false },
+        }),
+      },
+    },
+    new Set(),
+  );
+  await resolver.assertOperational(child);
+});
+test("expired and suspended subscriptions remain unavailable", async () => {
+  const child = {
+    id: "child",
+    siteNumber: 100001n,
+    parentSiteId: ROOT_SITE_ID,
+    status: "ACTIVE",
+    depth: 1,
+  };
+  for (const subscription of [
+    { status: "ACTIVE", expiresAt: new Date(Date.now() - 1) },
+    { status: "SUSPENDED", expiresAt: new Date(Date.now() + 60_000) },
+  ]) {
+    const resolver = new TenantResolver(
+      { panelSubscription: { findFirst: async () => subscription } },
+      new Set(),
+    );
+    await assert.rejects(
+      () => resolver.assertOperational(child),
+      (error: any) => error.code === "PANEL_SUBSCRIPTION_INACTIVE",
+    );
+  }
+});
 test("accepts only signed fresh internal tenant forwarding", async () => {
   const child = {
     id: "child",
+    siteNumber: 100001n,
     parentSiteId: ROOT_SITE_ID,
     status: "ACTIVE",
     depth: 1,

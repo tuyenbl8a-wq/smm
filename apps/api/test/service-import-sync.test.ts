@@ -6,7 +6,9 @@ import {
 } from "../src/provider/service.js";
 import { repriceMappedServices } from "../src/catalog/repricing.js";
 
+const SITE_ID = "00000000-0000-4000-8000-000000000001";
 const provider = {
+  siteId: SITE_ID,
   id: "provider",
   name: "Nhà cung cấp A",
   apiUrl: "https://provider.example/api",
@@ -47,7 +49,10 @@ test("provider fetch is server-side, sanitized and paginated", async () => {
     "secret",
   );
   (service as any).adapter = () => ({ getServices: async () => records });
-  const result = await service.fetchServices("provider", { page: 1, limit: 1 });
+  const result = await service.fetchServices(SITE_ID, "provider", {
+    page: 1,
+    limit: 1,
+  });
   assert.equal(result.total, 2);
   assert.equal(result.items.length, 1);
   assert.equal((result.items[0] as any).raw, undefined);
@@ -63,6 +68,7 @@ test("repeat import actions normalize to SKIP, UPDATE or REMAP", () => {
 });
 
 test("import preview uses existing professional pricing for three default tiers", async () => {
+  const priceGroupQueries: any[] = [];
   const service = new ProviderService(
     {
       provider: { findFirst: async () => provider },
@@ -77,33 +83,36 @@ test("import preview uses existing professional pricing for three default tiers"
         findUnique: async () => ({ id: "platform", name: "Social" }),
       },
       priceGroup: {
-        findMany: async () => [
-          {
-            code: "CUSTOMER",
-            defaultMarkupPercent: "20",
-            defaultFixedProfit: "0",
-            defaultMinProfit: "0",
-          },
-          {
-            code: "AGENT",
-            defaultMarkupPercent: "10",
-            defaultFixedProfit: "0",
-            defaultMinProfit: "0",
-          },
-          {
-            code: "DISTRIBUTOR",
-            defaultMarkupPercent: "5",
-            defaultFixedProfit: "0",
-            defaultMinProfit: "0",
-          },
-        ],
+        findMany: async ({ where }: any) => (
+          priceGroupQueries.push(where),
+          [
+            {
+              code: "CUSTOMER",
+              defaultMarkupPercent: "20",
+              defaultFixedProfit: "0",
+              defaultMinProfit: "0",
+            },
+            {
+              code: "AGENT",
+              defaultMarkupPercent: "10",
+              defaultFixedProfit: "0",
+              defaultMinProfit: "0",
+            },
+            {
+              code: "DISTRIBUTOR",
+              defaultMarkupPercent: "5",
+              defaultFixedProfit: "0",
+              defaultMinProfit: "0",
+            },
+          ]
+        ),
       },
       providerService: { findMany: async () => [] },
     },
     "secret",
   );
   (service as any).adapter = () => ({ getServices: async () => records });
-  const result = await service.importPreview("provider", {
+  const result = await service.importPreview(SITE_ID, "provider", {
     externalIds: ["101"],
     categoryId: "category",
     overrides: {
@@ -116,6 +125,7 @@ test("import preview uses existing professional pricing for three default tiers"
   assert.equal(result.items[0]!.prices.CUSTOMER, "120.00000000");
   assert.equal(result.items[0]!.prices.AGENT, "110.00000000");
   assert.equal(result.items[0]!.prices.DISTRIBUTOR, "105.00000000");
+  assert.equal(priceGroupQueries[0]!.siteId, SITE_ID);
 });
 
 test("multi-service import is transactional, mapped, priced and audited", async () => {
@@ -151,7 +161,7 @@ test("multi-service import is transactional, mapped, priced and audited", async 
   };
   const service = new ProviderService(db, "secret");
   (service as any).adapter = () => ({ getServices: async () => records });
-  const result = await service.importApply("admin", "provider", {
+  const result = await service.importApply("admin", SITE_ID, "provider", {
     externalIds: ["101", "102"],
     categoryId: "category",
     syncAll: true,
@@ -164,6 +174,7 @@ test("multi-service import is transactional, mapped, priced and audited", async 
     failed: 0,
   });
   assert.equal(createdServices[0].rate, "120.00000000");
+  assert.equal(createdServices[0].siteId, SITE_ID);
   assert.equal(mappings.length, 2);
   assert.equal(mappings[0].syncAll, true);
   assert.equal(audits[0].action, "PROVIDER_SERVICE_IMPORT");
@@ -188,7 +199,7 @@ test("provider request failure never opens an import transaction", async () => {
   });
   await assert.rejects(
     () =>
-      service.importApply("admin", "provider", {
+      service.importApply("admin", SITE_ID, "provider", {
         externalIds: ["101"],
         categoryId: "category",
       }),
