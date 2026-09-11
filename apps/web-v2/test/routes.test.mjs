@@ -370,9 +370,9 @@ test("specialized admin renderer survives without generic overwrite", async () =
   );
   assert.deepEqual(calls, ["fallback"]);
 });
-test("twenty persistent runtime themes are available and safely allowlisted", async () => {
+test("eleven final runtime themes are available and safely allowlisted", async () => {
   const themes = await import("../dist/themes.js");
-  assert.equal(themes.themePresets.length, 20);
+  assert.equal(themes.themePresets.length, 11);
   assert.deepEqual(
     themes.themePresets.map((x) => x.id),
     themes.themeIds,
@@ -505,29 +505,23 @@ test("task 24 customer operations use protected real endpoints", () => {
 test("required theme architecture, safe preview and enum status contract", async () => {
   const themes = await import("../dist/themes.js");
   const required = [
-    "DARK_LUXURY",
-    "MINIMAL_LIGHT",
-    "CYBER_NEON",
-    "SOFT_PASTEL",
-    "NATURE_GREEN",
-    "GLASSMORPHISM",
-    "BOLD_COMMERCE",
-    "DASHBOARD_FOCUSED",
-    "CREATIVE_AGENCY",
-    "PREMIUM_CORPORATE",
-    "JAPANESE_ZEN",
-    "BLACK_GOLD_ELITE",
-    "AI_FUTURISTIC",
-    "EDITORIAL_BRUTALIST",
-    "SOCIAL_CREATOR",
-    "OCEAN_PROFESSIONAL",
     "AURORA_MODERN",
-    "EMERALD_BUSINESS",
-    "MIDNIGHT_SAAS",
-    "SOFT_BEIGE_PREMIUM",
+    "AI_COSMIC_FUTURE",
+    "CREATOR_POP",
+    "URBAN_LIME_BRUTAL",
+    "OCEAN_PREMIUM",
+    "ZEN_JAPANESE",
+    "BLACK_GOLD_LUXURY",
+    "PRISM_GLASS",
+    "BEIGE_EDITORIAL",
+    "BLUE_BUSINESS",
+    "CYBER_NEON_CITY",
   ];
   assert.deepEqual([...themes.themeIds], required);
-  assert.equal(new Set(themes.themePresets.map((x) => x.name)).size, 20);
+  assert.equal(themes.themeIds.length, 11);
+  assert.equal(new Set(themes.themeIds).size, 11);
+  assert.deepEqual(themes.legacyThemeAliases, {});
+  assert.equal(new Set(themes.themePresets.map((x) => x.name)).size, 11);
   for (const id of required) {
     const v = themes.themeStructure[id];
     for (const key of [
@@ -574,20 +568,24 @@ test("same-origin API proxy is constrained to API paths and fixed config target"
 });
 test("visual theme builder routes render real landing auth and customer architectures", async () => {
   const builder = await import("../dist/theme-builder.js");
+  for (const removed of ["DARK_LUXURY", "MINIMAL_LIGHT", "UNKNOWN_THEME"]) {
+    const fallback = builder.fullPageThemePreview("", removed, "landing");
+    assert.match(fallback, /data-theme="AURORA_MODERN"/);
+  }
   for (const [scope, token] of [
     ["landing", "hero-grid"],
     ["auth", "auth-card"],
     ["customer", "metric-grid"],
   ]) {
-    const html = builder.fullPageThemePreview("", "OCEAN_PROFESSIONAL", scope);
+    const html = builder.fullPageThemePreview("", "OCEAN_PREMIUM", scope);
     assert.match(html, new RegExp(token));
-    assert.match(html, /data-theme="OCEAN_PROFESSIONAL"/);
+    assert.match(html, /data-theme="OCEAN_PREMIUM"/);
     assert.doesNotMatch(html, /CustomerChào|AuthĐăng/);
   }
 });
 test("visual editor provides true device viewports, draft controls and safe structured bridge", async () => {
   const { themeEditorPage } = await import("../dist/theme-builder.js"),
-    html = themeEditorPage("BLACK_GOLD_ELITE");
+    html = themeEditorPage("BLACK_GOLD_LUXURY");
   for (const token of [
     "1440",
     "768px",
@@ -604,7 +602,7 @@ test("visual editor provides true device viewports, draft controls and safe stru
 });
 test("Soft Beige Premium has its own editorial architectures in every requested scope", async () => {
   const { themeStructure } = await import("../dist/themes.js");
-  assert.deepEqual(themeStructure.SOFT_BEIGE_PREMIUM, {
+  assert.deepEqual(themeStructure.BEIGE_EDITORIAL, {
     navigationVariant: "beige-boutique",
     heroVariant: "beige-editorial",
     authVariant: "beige-gallery",
@@ -617,17 +615,17 @@ test("Soft Beige Premium has its own editorial architectures in every requested 
   const { fullPageThemePreview, themeEditorPage } =
     await import("../dist/theme-builder.js");
   const pages = ["landing", "auth", "customer"].map((scope) =>
-    fullPageThemePreview("", "SOFT_BEIGE_PREMIUM", scope),
+    fullPageThemePreview("", "BEIGE_EDITORIAL", scope),
   );
   for (const html of pages) {
-    assert.match(html, /data-theme="SOFT_BEIGE_PREMIUM"/);
+    assert.match(html, /data-theme="BEIGE_EDITORIAL"/);
     assert.match(html, /Soft Beige Premium is an authored editorial system/);
     assert.doesNotMatch(html, /CustomerChào|AuthĐăng|TÃ|Ä‘/);
   }
   assert.match(pages[0], /data-hero-variant="beige-editorial"/);
   assert.match(pages[1], /data-auth-variant="beige-gallery"/);
   assert.match(pages[2], /data-dashboard-variant="beige-ledger"/);
-  const editor = themeEditorPage("SOFT_BEIGE_PREMIUM");
+  const editor = themeEditorPage("BEIGE_EDITORIAL");
   for (const token of [
     "landing",
     "auth",
@@ -642,7 +640,7 @@ test("four reference themes have independent three-scope architectures", async (
   const { themeStructure } = await import("../dist/themes.js");
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const expected = {
-    JAPANESE_ZEN: [
+    ZEN_JAPANESE: [
       "zen-pavilion",
       "ink-landscape",
       "shoji",
@@ -651,7 +649,7 @@ test("four reference themes have independent three-scope architectures", async (
       "zen-shelf",
       "ritual-flow",
     ],
-    DARK_LUXURY: [
+    BLACK_GOLD_LUXURY: [
       "luxury-gallery",
       "monument",
       "noir-suite",
@@ -660,7 +658,7 @@ test("four reference themes have independent three-scope architectures", async (
       "jewel-grid",
       "private-desk",
     ],
-    PREMIUM_CORPORATE: [
+    BLUE_BUSINESS: [
       "corporate-bar",
       "business-tower",
       "trust-split",
@@ -669,7 +667,7 @@ test("four reference themes have independent three-scope architectures", async (
       "solution-columns",
       "proposal-flow",
     ],
-    CYBER_NEON: [
+    CYBER_NEON_CITY: [
       "neon-command",
       "hologram-stage",
       "portal",
@@ -691,7 +689,7 @@ test("four reference themes have independent three-scope architectures", async (
     }
   }
   signatures.add(
-    Object.values(themeStructure.SOFT_BEIGE_PREMIUM).slice(0, 7).join("|"),
+    Object.values(themeStructure.BEIGE_EDITORIAL).slice(0, 7).join("|"),
   );
   assert.equal(
     signatures.size,
@@ -704,7 +702,7 @@ test("three new references render nine distinct and responsive interfaces", asyn
   const { fullPageThemePreview, themeEditorPage } =
     await import("../dist/theme-builder.js");
   const expected = {
-    GLASSMORPHISM: [
+    PRISM_GLASS: [
       "glass-orbit",
       "prism-pedestal",
       "crystal-suite",
@@ -713,16 +711,16 @@ test("three new references render nine distinct and responsive interfaces", asyn
       "glass-carousel",
       "floating-wizard",
     ],
-    EMERALD_BUSINESS: [
-      "emerald-boardroom",
-      "growth-briefing",
-      "executive-access",
-      "enterprise-rail",
-      "growth-command",
-      "capability-matrix",
-      "approval-desk",
+    OCEAN_PREMIUM: [
+      "ocean-command-deck",
+      "lighthouse-horizon",
+      "ocean-secure-access",
+      "nautical-rail",
+      "ocean-operations",
+      "voyage-service-grid",
+      "navigation-desk",
     ],
-    SOCIAL_CREATOR: [
+    CREATOR_POP: [
       "creator-marquee",
       "viral-collage",
       "creator-studio",
@@ -733,11 +731,11 @@ test("three new references render nine distinct and responsive interfaces", asyn
     ],
   };
   const firstFive = [
-    "SOFT_BEIGE_PREMIUM",
-    "JAPANESE_ZEN",
-    "DARK_LUXURY",
-    "PREMIUM_CORPORATE",
-    "CYBER_NEON",
+    "BEIGE_EDITORIAL",
+    "ZEN_JAPANESE",
+    "BLACK_GOLD_LUXURY",
+    "BLUE_BUSINESS",
+    "CYBER_NEON_CITY",
   ];
   const signatures = new Set(
     firstFive.map((id) =>
@@ -786,9 +784,9 @@ test("three new references render nine distinct and responsive interfaces", asyn
     "all three references and the completed first five must differ",
   );
   for (const copy of [
-    "Kính pha lê · lớp nổi phát sáng",
-    "Emerald đậm · tăng trưởng doanh nghiệp",
-    "Creator pop · hồng cam tím năng lượng",
+    "Kính mờ · lớp nổi lăng kính",
+    "Đại dương · vận hành cao cấp",
+    "Creator · hồng tím năng lượng",
   ])
     assert.ok(adminOperations.includes(copy));
   for (const thumb of ["thumb-glass", "thumb-business", "thumb-creator"])
@@ -799,19 +797,19 @@ test("final reference pair completes exactly ten unique three-scope architecture
   const { fullPageThemePreview, themeEditorPage } =
     await import("../dist/theme-builder.js");
   const references = [
-    "SOFT_BEIGE_PREMIUM",
-    "JAPANESE_ZEN",
-    "DARK_LUXURY",
-    "PREMIUM_CORPORATE",
-    "CYBER_NEON",
-    "GLASSMORPHISM",
-    "EMERALD_BUSINESS",
-    "SOCIAL_CREATOR",
-    "EDITORIAL_BRUTALIST",
-    "AI_FUTURISTIC",
+    "BEIGE_EDITORIAL",
+    "ZEN_JAPANESE",
+    "BLACK_GOLD_LUXURY",
+    "BLUE_BUSINESS",
+    "CYBER_NEON_CITY",
+    "PRISM_GLASS",
+    "OCEAN_PREMIUM",
+    "CREATOR_POP",
+    "URBAN_LIME_BRUTAL",
+    "AI_COSMIC_FUTURE",
   ];
   const expected = {
-    EDITORIAL_BRUTALIST: [
+    URBAN_LIME_BRUTAL: [
       "brutal-masthead",
       "concrete-spread",
       "poster-access",
@@ -820,7 +818,7 @@ test("final reference pair completes exactly ten unique three-scope architecture
       "manifesto-grid",
       "ticket-desk",
     ],
-    AI_FUTURISTIC: [
+    AI_COSMIC_FUTURE: [
       "ai-command",
       "neural-orbit",
       "cognitive-gateway",
@@ -863,10 +861,8 @@ test("final reference pair completes exactly ten unique three-scope architecture
     ),
   );
   assert.equal(signatures.size, 10);
-  assert.ok(adminOperations.includes("Đen trắng · lime biên tập mạnh"));
-  assert.ok(
-    adminOperations.includes("Trí tuệ nhân tạo · bảng điều khiển tương lai"),
-  );
+  assert.ok(adminOperations.includes("Đô thị · lime brutalist"));
+  assert.ok(adminOperations.includes("AI · quỹ đạo neural đa sắc"));
   assert.match(admin, /\.thumb-brutalist/);
   assert.match(admin, /\.thumb-stage/);
 });
@@ -877,16 +873,16 @@ test("reference themes provide 30 concrete renderers without document wrappers",
     await import("../dist/reference-theme-renderers.js");
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const ids = [
-    "SOFT_BEIGE_PREMIUM",
-    "JAPANESE_ZEN",
-    "DARK_LUXURY",
-    "PREMIUM_CORPORATE",
-    "CYBER_NEON",
-    "GLASSMORPHISM",
-    "EMERALD_BUSINESS",
-    "SOCIAL_CREATOR",
-    "EDITORIAL_BRUTALIST",
-    "AI_FUTURISTIC",
+    "BEIGE_EDITORIAL",
+    "ZEN_JAPANESE",
+    "BLACK_GOLD_LUXURY",
+    "BLUE_BUSINESS",
+    "CYBER_NEON_CITY",
+    "PRISM_GLASS",
+    "OCEAN_PREMIUM",
+    "CREATOR_POP",
+    "URBAN_LIME_BRUTAL",
+    "AI_COSMIC_FUTURE",
   ];
   for (const scope of ["landing", "auth", "customer"]) {
     const fingerprints = new Set();
