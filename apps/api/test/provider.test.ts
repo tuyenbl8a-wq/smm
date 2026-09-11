@@ -9,6 +9,10 @@ import {
 } from "../src/provider/adapter.js";
 import { ProviderService } from "../src/provider/service.js";
 
+const SITE_A = "00000000-0000-4000-8000-00000000000a";
+const SITE_B = "00000000-0000-4000-8000-00000000000b";
+const ROOT_SITE = "00000000-0000-4000-8000-000000000001";
+
 test("provider decimals normalize exact standard and scientific values", () => {
   assert.equal(normalizeProviderDecimal(12), "12");
   assert.equal(normalizeProviderDecimal(12.5), "12.5");
@@ -18,21 +22,12 @@ test("provider decimals normalize exact standard and scientific values", () => {
 
   // More than 8 decimal places are safely rounded instead of rejecting
   // the whole provider services response.
-  assert.equal(
-    normalizeProviderDecimal("0.08981234567"),
-    "0.08981235",
-  );
+  assert.equal(normalizeProviderDecimal("0.08981234567"), "0.08981235");
 
   // Provider service cost uses ceil so cost is never rounded downward.
-  assert.equal(
-    normalizeProviderDecimal("0.08981234101", "ceil"),
-    "0.08981235",
-  );
+  assert.equal(normalizeProviderDecimal("0.08981234101", "ceil"), "0.08981235");
 
-  assert.equal(
-    normalizeProviderDecimal("1.000000001", "ceil"),
-    "1.00000001",
-  );
+  assert.equal(normalizeProviderDecimal("1.000000001", "ceil"), "1.00000001");
 
   for (const invalid of [
     null,
@@ -126,7 +121,7 @@ test("provider sync upserts stable external identities without duplicates", asyn
 
   const db: any = {
     provider: {
-      findUnique: async () => ({
+      findFirst: async () => ({
         id: "p",
         apiUrl: "https://p",
         apiKeyEncrypted: "x",
@@ -137,10 +132,7 @@ test("provider sync upserts stable external identities without duplicates", asyn
     $transaction: async (fn: any) => fn(tx),
   };
 
-  const service = new ProviderService(
-    db,
-    "secret-secret-secret",
-  );
+  const service = new ProviderService(db, "secret-secret-secret");
 
   (service as any).adapter = () => ({
     getServices: async () => [
@@ -158,29 +150,28 @@ test("provider sync upserts stable external identities without duplicates", asyn
     ],
   });
 
-  assert.deepEqual(
-    await service.sync("admin", "p"),
-    {
-      received: 1,
-      created: 1,
-      updated: 0,
-    },
-  );
+  assert.deepEqual(await service.sync("admin", "site-a", "p"), {
+    received: 1,
+    created: 1,
+    updated: 0,
+  });
 
-  assert.deepEqual(
-    await service.sync("admin", "p"),
-    {
-      received: 1,
-      created: 0,
-      updated: 1,
-    },
-  );
+  assert.deepEqual(await service.sync("admin", "site-a", "p"), {
+    received: 1,
+    created: 0,
+    updated: 1,
+  });
 
   assert.equal(rows.size, 1);
 });
 test("provider create/update strictly validate scheduling and preserve blank secrets", async () => {
   const key = "01234567890123456789012345678901";
-  let stored: any = { id: "p1", name: "P", status: "ACTIVE", apiKeyEncrypted: encryptSecret("existing-secret", key) };
+  let stored: any = {
+    id: "p1",
+    name: "P",
+    status: "ACTIVE",
+    apiKeyEncrypted: encryptSecret("existing-secret", key),
+  };
   const audits: any[] = [];
   const tx: any = {
     provider: {
@@ -189,18 +180,123 @@ test("provider create/update strictly validate scheduling and preserve blank sec
     },
     auditLog: { create: async ({ data }: any) => (audits.push(data), data) },
   };
-  const db: any = { provider: { findUnique: async () => stored }, $transaction: async (fn: any) => fn(tx) };
+  const db: any = {
+    provider: { findFirst: async () => stored },
+    $transaction: async (fn: any) => fn(tx),
+  };
   for (const interval of [5, 10, 15, 30, 60]) {
-    const result = await new ProviderService(db, key).create("admin", { name: "Provider", apiUrl: "https://provider.test", apiKey: "secret-key", autoSyncEnabled: false, syncIntervalMinutes: interval });
+    const result = await new ProviderService(db, key).create(
+      "admin",
+      "site-a",
+      {
+        name: "Provider",
+        apiUrl: "https://provider.test",
+        apiKey: "secret-key",
+        autoSyncEnabled: false,
+        syncIntervalMinutes: interval,
+      },
+    );
     assert.deepEqual(result, { id: "p1", name: "Provider" });
     assert.equal(JSON.stringify(result).includes("apiKey"), false);
   }
   for (const interval of [0, -1, 1.5, NaN, Infinity, 6, 20, "5", "anything"])
-    await assert.rejects(() => new ProviderService(db, key).create("admin", { name: "Provider", apiUrl: "https://provider.test", apiKey: "secret-key", autoSyncEnabled: false, syncIntervalMinutes: interval }));
-  await assert.rejects(() => new ProviderService(db, key).update("admin", "p1", { autoSyncEnabled: "false" }));
+    await assert.rejects(() =>
+      new ProviderService(db, key).create("admin", "site-a", {
+        name: "Provider",
+        apiUrl: "https://provider.test",
+        apiKey: "secret-key",
+        autoSyncEnabled: false,
+        syncIntervalMinutes: interval,
+      }),
+    );
+  await assert.rejects(() =>
+    new ProviderService(db, key).update("admin", "site-a", "p1", {
+      autoSyncEnabled: "false",
+    }),
+  );
   const encrypted = stored.apiKeyEncrypted;
-  const result = await new ProviderService(db, key).update("admin", "p1", { apiKey: "", syncIntervalMinutes: 30 });
+  const result = await new ProviderService(db, key).update(
+    "admin",
+    "site-a",
+    "p1",
+    { apiKey: "", syncIntervalMinutes: 30 },
+  );
   assert.equal(stored.apiKeyEncrypted, encrypted);
   assert.equal(JSON.stringify(result).includes("apiKey"), false);
   assert.equal(JSON.stringify(audits).includes("existing-secret"), false);
+});
+
+test("interactive provider administration is tenant-scoped and never exposes credentials", async () => {
+  const key = "01234567890123456789012345678901";
+  const rows = [
+    {
+      id: "00000000-0000-4000-8000-000000000101",
+      siteId: SITE_A,
+      name: "Panel A NCC",
+      apiUrl: "https://a.test",
+      apiKeyEncrypted: encryptSecret("panel-a-secret", key),
+      timeoutMs: 1000,
+      balance: null,
+      deletedAt: null,
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000102",
+      siteId: SITE_B,
+      name: "Panel B NCC",
+      apiUrl: "https://b.test",
+      apiKeyEncrypted: encryptSecret("panel-b-secret", key),
+      timeoutMs: 1000,
+      balance: null,
+      deletedAt: null,
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000103",
+      siteId: ROOT_SITE,
+      name: "ROOT NCC",
+      apiUrl: "https://root.test",
+      apiKeyEncrypted: encryptSecret("root-secret", key),
+      timeoutMs: 1000,
+      balance: null,
+      deletedAt: null,
+    },
+  ];
+  const matches = (where: any, row: any) =>
+    Object.entries(where).every(([field, value]) =>
+      field === "deletedAt" ? row.deletedAt === value : row[field] === value,
+    );
+  const db: any = {
+    provider: {
+      findMany: async ({ where }: any) =>
+        rows.filter((row) => matches(where, row)),
+      findFirst: async ({ where }: any) =>
+        rows.find((row) => matches(where, row)) ?? null,
+    },
+    providerService: { findMany: async () => [] },
+    orderProviderLog: { findMany: async () => [] },
+  };
+  const service = new ProviderService(db, key);
+
+  const listed = await service.list(SITE_A);
+  assert.deepEqual(
+    listed.map((row: any) => row.id),
+    [rows[0]!.id],
+  );
+  assert.equal(JSON.stringify(listed).includes("apiKeyEncrypted"), false);
+  assert.equal(JSON.stringify(listed).includes("panel-a-secret"), false);
+  await assert.rejects(
+    () => service.detail(SITE_A, rows[1]!.id),
+    (error: any) => error.code === "PROVIDER_NOT_FOUND",
+  );
+  await assert.rejects(
+    () => service.detail(SITE_B, rows[0]!.id),
+    (error: any) => error.code === "PROVIDER_NOT_FOUND",
+  );
+  await assert.rejects(
+    () => service.detail(SITE_A, rows[2]!.id),
+    (error: any) => error.code === "PROVIDER_NOT_FOUND",
+  );
+  assert.deepEqual(
+    (await service.list(ROOT_SITE)).map((row: any) => row.id),
+    [rows[2]!.id],
+  );
 });

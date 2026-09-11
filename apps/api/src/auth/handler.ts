@@ -517,7 +517,10 @@ export class AuthHandler {
           await this.promotions!.referralSummary(auth.user.id),
         );
       if (request.method === "GET" && path === "/api/v1/admin/coupons") {
-        if (!canAccessAdmin(auth.access, "services.manage"))
+        if (
+          !canAccessAdmin(auth.access, "coupons.view") &&
+          !canAccessAdmin(auth.access, "coupons.manage")
+        )
           return this.error(
             response,
             403,
@@ -528,6 +531,7 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.promotions!.listCoupons(
+            tenant.id,
             query.searchParams.get("search") ?? "",
           ),
         );
@@ -1268,6 +1272,7 @@ export class AuthHandler {
           await this.catalog!.serviceSourcePreview(
             sourcePreview[1]!,
             String(body.providerServiceId ?? ""),
+            tenant.id,
           ),
         );
       }
@@ -1343,7 +1348,7 @@ export class AuthHandler {
           response,
           path.endsWith("/alerts")
             ? await this.catalog.pricingAlerts()
-            : await this.catalog.adminOverview(),
+            : await this.catalog.adminOverview(true, tenant.id),
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/providers") {
@@ -1358,7 +1363,7 @@ export class AuthHandler {
             "Permission denied",
           );
         if (!this.providers) throw new Error("Provider service unavailable");
-        return this.ok(response, await this.providers.list());
+        return this.ok(response, await this.providers.list(tenant.id));
       }
       const providerDetail =
           /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})$/.exec(path),
@@ -1383,6 +1388,7 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.providers!.fetchServices(
+            tenant.id,
             providerServices[1]!,
             Object.fromEntries(url.searchParams),
           ),
@@ -1403,6 +1409,7 @@ export class AuthHandler {
         return this.ok(
           response,
           await this.providers!.syncLogs(
+            tenant.id,
             providerSyncLogs[1]!,
             Number(url.searchParams.get("page") ?? "1"),
           ),
@@ -1421,7 +1428,7 @@ export class AuthHandler {
           );
         return this.ok(
           response,
-          await this.providers!.detail(providerDetail[1]!),
+          await this.providers!.detail(tenant.id, providerDetail[1]!),
         );
       }
       const adminWallet =
@@ -1971,11 +1978,16 @@ export class AuthHandler {
         const body = await this.body(request);
         return this.ok(
           response,
-          await this.promotions!.preview(auth.user.id, body.code, body.amount),
+          await this.promotions!.preview(
+            tenant.id,
+            auth.user.id,
+            body.code,
+            body.amount,
+          ),
         );
       }
       if (request.method === "POST" && path === "/api/v1/admin/coupons") {
-        if (!canAccessAdmin(auth.access, "services.manage"))
+        if (!canAccessAdmin(auth.access, "coupons.manage"))
           return this.error(
             response,
             403,
@@ -1986,6 +1998,7 @@ export class AuthHandler {
           response,
           await this.promotions!.saveCoupon(
             auth.user.id,
+            tenant.id,
             await this.body(request),
           ),
         );
@@ -2014,7 +2027,7 @@ export class AuthHandler {
         path,
       );
       if (request.method === "POST" && couponUpdate) {
-        if (!canAccessAdmin(auth.access, "services.manage"))
+        if (!canAccessAdmin(auth.access, "coupons.manage"))
           return this.error(
             response,
             403,
@@ -2025,6 +2038,7 @@ export class AuthHandler {
           response,
           await this.promotions!.saveCoupon(
             auth.user.id,
+            tenant.id,
             await this.body(request),
             couponUpdate[1]!,
           ),
@@ -2040,7 +2054,11 @@ export class AuthHandler {
           );
         return this.ok(
           response,
-          await this.promotions!.archiveCoupon(auth.user.id, couponUpdate[1]!),
+          await this.promotions!.archiveCoupon(
+            auth.user.id,
+            tenant.id,
+            couponUpdate[1]!,
+          ),
         );
       }
       if (request.method === "POST" && path === "/api/v1/customer/tickets")
@@ -2411,6 +2429,7 @@ export class AuthHandler {
           return this.ok(
             response,
             await this.providers.importPreview(
+              tenant.id,
               importPreview[1]!,
               await this.body(request),
             ),
@@ -2420,6 +2439,7 @@ export class AuthHandler {
             response,
             await this.providers.importApply(
               auth.user.id,
+              tenant.id,
               importApply[1]!,
               await this.body(request),
             ),
@@ -2427,7 +2447,11 @@ export class AuthHandler {
         if (path === "/api/v1/admin/providers")
           return this.ok(
             response,
-            await this.providers.create(auth.user.id, await this.body(request)),
+            await this.providers.create(
+              auth.user.id,
+              tenant.id,
+              await this.body(request),
+            ),
           );
         const update = /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})$/.exec(
           path,
@@ -2437,6 +2461,7 @@ export class AuthHandler {
             response,
             await this.providers.update(
               auth.user.id,
+              tenant.id,
               update[1]!,
               await this.body(request),
             ),
@@ -2449,8 +2474,8 @@ export class AuthHandler {
           return this.ok(
             response,
             action[2] === "test"
-              ? await this.providers.test(action[1]!)
-              : await this.providers.sync(auth.user.id, action[1]!),
+              ? await this.providers.test(tenant.id, action[1]!)
+              : await this.providers.sync(auth.user.id, tenant.id, action[1]!),
           );
       }
       const providerArchive =
@@ -2465,7 +2490,11 @@ export class AuthHandler {
           );
         return this.ok(
           response,
-          await this.providers!.archive(auth.user.id, providerArchive[1]!),
+          await this.providers!.archive(
+            auth.user.id,
+            tenant.id,
+            providerArchive[1]!,
+          ),
         );
       }
       if (
