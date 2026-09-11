@@ -70,7 +70,7 @@ test("numeric and UUID panel references return safe human-readable detail withou
     assert.equal(detail.panelNumber, "100001");
     assert.equal(detail.primaryDomain, "smmlike.site");
     assert.equal(detail.systemDomain, "shop.dichvu1st.com");
-    assert.equal(detail.type, "PANELS");
+    assert.equal(detail.type, "Panels");
     assert.equal("apiKey" in detail, false);
     assert.equal("configEncrypted" in detail, false);
   }
@@ -170,4 +170,74 @@ test("per-panel overrides can remove plan permissions but never add outside the 
       service.setPermissionOverrides("actor", "100001", ["providers.manage"]),
     (e: any) => e.code === "PANEL_PERMISSION_EXCEEDS_PLAN",
   );
+});
+
+test("reseller authorization is current, hard-denies Childpanels, and does not require SUPER_ADMIN", async () => {
+  let code = "PANEL_250K";
+  let resale = true;
+  let permission = true;
+  let planActive = true;
+  const db: any = {
+    site: {
+      findUnique: async ({ where }: any) =>
+        where.id === "seller"
+          ? { id: "seller", parentSiteId: "root", status: "ACTIVE" }
+          : { id: "root", parentSiteId: null, status: "ACTIVE" },
+    },
+    panelSubscription: {
+      findFirst: async () => ({
+        planId: "plan",
+        expiresAt: new Date(Date.now() + 60_000),
+        plan: { code, active: planActive, allowPanelResale: resale },
+      }),
+    },
+    panelRentalPlanPermission: {
+      findFirst: async () =>
+        permission ? { permissionId: "resale-permission" } : null,
+    },
+    siteDisabledPermission: { findFirst: async () => null },
+  };
+  const service = new PanelManagementService(db, {} as any, {} as any);
+  assert.equal(await service.assertResellerAccess("seller"), "seller");
+  planActive = false;
+  assert.equal(await service.assertResellerAccess("seller"), "seller");
+  planActive = true;
+  permission = false;
+  await assert.rejects(
+    () => service.assertResellerAccess("seller"),
+    (error: any) => error.code === "PANEL_RESALE_DENIED",
+  );
+  permission = true;
+  code = "CHILLPANEL";
+  await assert.rejects(
+    () => service.assertResellerAccess("seller"),
+    (error: any) => error.code === "PANEL_RESALE_DENIED",
+  );
+  code = "PANEL_250K";
+  resale = false;
+  await assert.rejects(
+    () => service.assertResellerAccess("seller"),
+    (error: any) => error.code === "PANEL_RESALE_DENIED",
+  );
+});
+
+test("numeric and UUID lookups apply direct seller scope in the database query", async () => {
+  const queries: any[] = [];
+  const db: any = {
+    site: {
+      findFirst: async ({ where }: any) => {
+        queries.push(where);
+        return null;
+      },
+    },
+  };
+  const service = new PanelManagementService(db, {} as any, {} as any);
+  for (const reference of ["100001", "11111111-1111-4111-8111-111111111111"])
+    await assert.rejects(() => service.adminPanel(reference, "seller"));
+  assert.deepEqual(
+    queries.map((where) => where.parentSiteId),
+    ["seller", "seller"],
+  );
+  assert.equal(queries[0].siteNumber, 100001n);
+  assert.equal(queries[1].id, "11111111-1111-4111-8111-111111111111");
 });

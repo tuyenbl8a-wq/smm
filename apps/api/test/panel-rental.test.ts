@@ -617,3 +617,35 @@ test("custom domains remain blocked by a plan while duplicate and reserved subdo
     (e: any) => e.code === "PANEL_SUBDOMAIN_TAKEN",
   );
 });
+
+test("inactive rental plans remain unavailable for new sales", async () => {
+  let planWhere: any;
+  const db: any = {
+    panelRentalIntent: { findUnique: async () => null },
+    site: {
+      findUnique: async () => ({ id: "seller", status: "ACTIVE", depth: 0 }),
+    },
+    panelRentalPlan: {
+      findFirst: async ({ where }: any) => ((planWhere = where), null),
+    },
+    user: {
+      findFirst: async () => ({
+        id: "renter",
+        siteId: "seller",
+        status: "ACTIVE",
+      }),
+    },
+  };
+  await assert.rejects(
+    () =>
+      new PanelService(db, dns()).rent(
+        "seller",
+        "renter",
+        { planId: "inactive-plan", name: "Panel" },
+        "inactive-plan-sale",
+      ),
+    (error: any) => error.code === "PANEL_PLAN_UNAVAILABLE",
+  );
+  assert.equal(planWhere.active, true);
+  assert.equal(planWhere.sellerSiteId, "seller");
+});

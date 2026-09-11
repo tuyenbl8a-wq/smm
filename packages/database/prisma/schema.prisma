@@ -447,7 +447,8 @@ model PaymentWebhook {
 }
 model Provider {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name String @unique @db.VarChar(120)
+  siteId String @map("site_id") @db.Uuid
+  name String @db.VarChar(120)
   apiUrl String @map("api_url") @db.VarChar(2048)
   apiKeyEncrypted String @map("api_key_encrypted") @db.Text
   encryptionKeyVersion Int @map("encryption_key_version")
@@ -467,6 +468,8 @@ model Provider {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([siteId, name], map: "providers_site_name_key")
+  @@index([siteId, status, priority], map: "providers_site_status_priority_idx")
   @@index([status, priority])
   @@index([autoSyncEnabled, nextSyncAt])
   @@map("providers")

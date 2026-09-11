@@ -158,7 +158,10 @@ test("initial migration creates every mapped model table", () => {
     )
     .join("\n");
   for (const table of schema.matchAll(/@@map\("([^"]+)"\)/g))
-    assert.match(migration, new RegExp(`CREATE TABLE (?:"${table[1]}"|${table[1]}(?:\\s|\\())`));
+    assert.match(
+      migration,
+      new RegExp(`CREATE TABLE (?:"${table[1]}"|${table[1]}(?:\\s|\\())`),
+    );
   assert.match(migration, /CREATE EXTENSION IF NOT EXISTS pgcrypto/);
   assert.match(migration, /FOREIGN KEY/);
 });
@@ -354,6 +357,29 @@ test("provider retry permission migration is additive and restricted to super ad
   assert.match(sql, /SUPER_ADMIN/);
   assert.match(sql, /ON CONFLICT/);
   assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
+});
+
+test("provider tenant ownership migration preserves and root-backfills providers", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260911130000_provider_tenant_ownership/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /ADD COLUMN "site_id" UUID NOT NULL/);
+  assert.match(migration, /00000000-0000-4000-8000-000000000001/);
+  assert.match(
+    migration,
+    /FOREIGN KEY \("site_id"\) REFERENCES "sites"\("id"\)/,
+  );
+  assert.match(
+    migration,
+    /UNIQUE INDEX "providers_site_name_key" ON "providers"\("site_id", "name"\)/,
+  );
+  assert.match(migration, /providers_site_status_priority_idx/);
+  assert.doesNotMatch(migration, /DELETE\s+FROM\s+"?providers"?/i);
+  assert.doesNotMatch(migration, /DROP\s+TABLE/i);
 });
 
 test("User price group stays a scalar foreign key without an implicit Prisma relation", () => {
