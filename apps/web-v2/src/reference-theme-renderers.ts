@@ -181,31 +181,31 @@ export const renderGlassCustomer: ReferenceRenderer = (html) =>
       `$1<nav class="dashboard-navigation"><figure>Floating menu</figure></nav><section class="dashboard-wallet"><figure><small>Tài chính</small><h2>Ví thanh khoản</h2></figure></section><aside class="dashboard-kpis"><figure><strong>Chỉ số đa sắc</strong><span> Cập nhật theo dữ liệu tài khoản</span></figure></aside><footer class="dashboard-orders"><figure><strong>Luồng đơn hàng</strong><a href="/orders"> Xem chi tiết →</a></figure></footer>`,
     );
 
-export const renderEmeraldLanding: ReferenceRenderer = (html) =>
+export const renderOceanLanding: ReferenceRenderer = (html) =>
   html
     .replace(
       'class="hero',
-      'data-renderer="emerald-harbor" class="hero emerald-harbor',
+      'data-renderer="ocean-lighthouse" class="hero ocean-lighthouse',
     )
     .replace(
       '<div class="container hero-grid">',
       `<nav class="theme-navigation"><blockquote><a href="#services">Hải trình thương hiệu</a><a href="#pricing">Bảng giá</a></blockquote></nav><section class="theme-story"><blockquote><strong>Vượt sóng vươn xa</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></blockquote></section><aside class="theme-offer"><blockquote><h2>Đội hình dịch vụ</h2><p>TikTok · Facebook · Instagram · YouTube</p></blockquote></aside><footer class="theme-cta"><blockquote><a href="/register">Khởi hành ngay →</a></blockquote></footer><div class="container hero-grid">`,
     );
-export const renderEmeraldAuth: ReferenceRenderer = (html) =>
+export const renderOceanAuth: ReferenceRenderer = (html) =>
   html
     .replace(
       'class="auth',
-      'data-renderer="emerald-secure-harbor" class="auth emerald-secure-harbor',
+      'data-renderer="ocean-secure-harbor" class="auth ocean-secure-harbor',
     )
     .replace(
       /(data-renderer="[^"]+" class="[^"]+">)/,
       `$1<nav class="auth-navigation"><blockquote>Cổng an toàn</blockquote></nav><section class="auth-visual"><blockquote><h1>Hải đăng dẫn lối</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></blockquote></section><aside class="auth-form-region"><blockquote><h2>Xác thực bảo mật</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></blockquote></aside><footer class="auth-assurance"><blockquote>Neo giữ niềm tin</blockquote></footer>`,
     );
-export const renderEmeraldCustomer: ReferenceRenderer = (html) =>
+export const renderOceanCustomer: ReferenceRenderer = (html) =>
   html
     .replace(
       'class="customer',
-      'data-renderer="emerald-operations" class="customer emerald-operations',
+      'data-renderer="ocean-operations" class="customer ocean-operations',
     )
     .replace(
       /(data-renderer="[^"]+" class="[^"]+">)/,
@@ -309,52 +309,52 @@ export const referenceRenderers: Record<
   string,
   Record<ReferenceScope, ReferenceRenderer>
 > = {
-  SOFT_BEIGE_PREMIUM: {
+  BEIGE_EDITORIAL: {
     landing: renderSoftBeigeLanding,
     auth: renderSoftBeigeAuth,
     customer: renderSoftBeigeCustomer,
   },
-  JAPANESE_ZEN: {
+  ZEN_JAPANESE: {
     landing: renderJapaneseZenLanding,
     auth: renderJapaneseZenAuth,
     customer: renderJapaneseZenCustomer,
   },
-  DARK_LUXURY: {
+  BLACK_GOLD_LUXURY: {
     landing: renderDarkLuxuryLanding,
     auth: renderDarkLuxuryAuth,
     customer: renderDarkLuxuryCustomer,
   },
-  PREMIUM_CORPORATE: {
+  BLUE_BUSINESS: {
     landing: renderPremiumCorporateLanding,
     auth: renderPremiumCorporateAuth,
     customer: renderPremiumCorporateCustomer,
   },
-  CYBER_NEON: {
+  CYBER_NEON_CITY: {
     landing: renderCyberNeonLanding,
     auth: renderCyberNeonAuth,
     customer: renderCyberNeonCustomer,
   },
-  GLASSMORPHISM: {
+  PRISM_GLASS: {
     landing: renderGlassLanding,
     auth: renderGlassAuth,
     customer: renderGlassCustomer,
   },
-  EMERALD_BUSINESS: {
-    landing: renderEmeraldLanding,
-    auth: renderEmeraldAuth,
-    customer: renderEmeraldCustomer,
+  OCEAN_PREMIUM: {
+    landing: renderOceanLanding,
+    auth: renderOceanAuth,
+    customer: renderOceanCustomer,
   },
-  SOCIAL_CREATOR: {
+  CREATOR_POP: {
     landing: renderCreatorLanding,
     auth: renderCreatorAuth,
     customer: renderCreatorCustomer,
   },
-  EDITORIAL_BRUTALIST: {
+  URBAN_LIME_BRUTAL: {
     landing: renderBrutalistLanding,
     auth: renderBrutalistAuth,
     customer: renderBrutalistCustomer,
   },
-  AI_FUTURISTIC: {
+  AI_COSMIC_FUTURE: {
     landing: renderAiLanding,
     auth: renderAiAuth,
     customer: renderAiCustomer,

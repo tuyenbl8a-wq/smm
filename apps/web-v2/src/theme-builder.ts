@@ -10,7 +10,7 @@ import {
 
 export type PreviewScope = "landing" | "auth" | "customer";
 const safeTheme = (value: string | null): ThemeId =>
-  themeIds.includes(value as ThemeId) ? (value as ThemeId) : "DARK_LUXURY";
+  themeIds.includes(value as ThemeId) ? (value as ThemeId) : "AURORA_MODERN";
 const safeScope = (value: string | null): PreviewScope =>
   value === "auth" || value === "customer" ? value : "landing";
 const stripRuntime = (html: string) =>
