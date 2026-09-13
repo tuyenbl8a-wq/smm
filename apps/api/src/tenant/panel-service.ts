@@ -645,13 +645,27 @@ export class PanelManagementService {
   async assertResellerAccess(siteId: string) {
     if (siteId === ROOT_SITE_ID) return null;
     let current = await this.db.site.findUnique({ where: { id: siteId } });
+    if (!current)
+      throw new TenantError("PANEL_UNAVAILABLE", "Panel is unavailable");
+    let traversed = 0;
     while (current) {
       if (current.status !== "ACTIVE")
         throw new TenantError("PANEL_UNAVAILABLE", "Panel is unavailable");
       if (!current.parentSiteId) break;
-      current = await this.db.site.findUnique({
+      if (++traversed > 64)
+        throw new TenantError(
+          "SITE_HIERARCHY_INVALID",
+          "Panel hierarchy is unavailable",
+        );
+      const parent = await this.db.site.findUnique({
         where: { id: current.parentSiteId },
       });
+      if (!parent)
+        throw new TenantError(
+          "SITE_HIERARCHY_INVALID",
+          "Panel hierarchy is unavailable",
+        );
+      current = parent;
     }
     const subscription = await this.db.panelSubscription.findFirst({
       where: { siteId, status: "ACTIVE", expiresAt: { gt: new Date() } },
@@ -686,6 +700,7 @@ export class PanelManagementService {
     return siteId;
   }
   async plans(siteId: string) {
+    await this.assertResellerAccess(siteId);
     const rows = await this.db.panelRentalPlan.findMany({
       where: { sellerSiteId: siteId, active: true },
       orderBy: { price: "asc" },
@@ -786,13 +801,18 @@ export class PanelManagementService {
       }),
     };
   }
-  rent(siteId: string, userId: string, input: any, key: string) {
+  async rent(siteId: string, userId: string, input: any, key: string) {
+    await this.assertResellerAccess(siteId);
     return this.rental.rent(siteId, userId, input, key);
   }
   rentalIntent(siteId: string, userId: string, id: string) {
     return this.rental.rentalIntent(siteId, userId, id);
   }
-  activate(siteId: string, userId: string, id: string) {
+  async activate(siteId: string, userId: string, id: string) {
+    // Activation is the point at which funds are captured and a child tenant is
+    // created. Re-check the seller's current entitlement so an intent created
+    // before a suspension, expiry, plan conversion, or override cannot be used.
+    await this.assertResellerAccess(siteId);
     return this.rental.activate(siteId, userId, id);
   }
   async renew(siteId: string, userId: string, siteNumber: string, key: string) {
@@ -1515,7 +1535,11 @@ export class PanelManagementService {
       !data.name ||
       !/^\d+(?:\.\d{1,8})?$/.test(data.price) ||
       !Number.isInteger(data.billingDays) ||
-      data.billingDays < 1
+      data.billingDays < 1 ||
+      !Number.isInteger(data.maxDirectChildren) ||
+      data.maxDirectChildren < 0 ||
+      !Number.isInteger(data.maxDepth) ||
+      data.maxDepth < 1
     )
       throw new TenantError("PLAN_INVALID", "Invalid panel plan");
     return this.db.$transaction(async (tx: any) => {
