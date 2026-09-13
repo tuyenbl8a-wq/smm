@@ -44,7 +44,7 @@ test("panel expiry automatically renews once with an idempotent wallet debit", a
     sellerSiteId: "seller",
     renterUserId: "user",
     expiresAt: new Date("2026-09-01T00:00:00Z"),
-    plan: { price: "100.00000000", billingDays: 30 },
+    planId: "plan",
   };
   const db = {
     $transaction: (fn) =>
@@ -52,6 +52,12 @@ test("panel expiry automatically renews once with an idempotent wallet debit", a
         panelSubscription: {
           findMany: async ({ where }) => (where.autoRenew ? [row] : []),
           update: async (x) => subscriptions.push(x),
+        },
+        panelRentalPlan: {
+          findUnique: async ({ where }) => {
+            assert.deepEqual(where, { id: "plan" });
+            return { price: "100.00000000", billingDays: 30 };
+          },
         },
         walletTransaction: {
           findUnique: async () => null,

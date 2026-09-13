@@ -185,11 +185,19 @@ test("reseller authorization is current, hard-denies Childpanels, and does not r
           : { id: "root", parentSiteId: null, status: "ACTIVE" },
     },
     panelSubscription: {
-      findFirst: async () => ({
-        planId: "plan",
-        expiresAt: new Date(Date.now() + 60_000),
-        plan: { code, active: planActive, allowPanelResale: resale },
-      }),
+      findFirst: async (args: any) => {
+        assert.equal("include" in args, false);
+        return {
+          planId: "plan",
+          expiresAt: new Date(Date.now() + 60_000),
+        };
+      },
+    },
+    panelRentalPlan: {
+      findUnique: async ({ where }: any) => {
+        assert.deepEqual(where, { id: "plan" });
+        return { code, active: planActive, allowPanelResale: resale };
+      },
     },
     panelRentalPlanPermission: {
       findFirst: async () =>
