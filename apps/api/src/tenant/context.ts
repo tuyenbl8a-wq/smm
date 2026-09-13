@@ -107,7 +107,6 @@ export class TenantResolver {
         const subscription = await this.db.panelSubscription.findFirst({
           where: { siteId: current.id },
           orderBy: { createdAt: "desc" },
-          include: { plan: true },
         });
         if (
           !subscription ||

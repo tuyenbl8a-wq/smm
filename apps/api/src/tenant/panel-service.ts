@@ -656,12 +656,13 @@ export class PanelManagementService {
     const subscription = await this.db.panelSubscription.findFirst({
       where: { siteId, status: "ACTIVE", expiresAt: { gt: new Date() } },
       orderBy: { createdAt: "desc" },
-      include: { plan: true },
     });
-    if (
-      !subscription?.plan?.allowPanelResale ||
-      subscription.plan.code === "CHILLPANEL"
-    )
+    const plan = subscription
+      ? await this.db.panelRentalPlan.findUnique({
+          where: { id: subscription.planId },
+        })
+      : null;
+    if (!subscription || !plan?.allowPanelResale || plan.code === "CHILLPANEL")
       throw new TenantError(
         "PANEL_RESALE_DENIED",
         "Panel resale is not allowed",
@@ -1078,17 +1079,9 @@ export class PanelManagementService {
             where: { siteId: site.id },
             orderBy: { createdAt: "desc" },
             select: {
+              planId: true,
               status: true,
               expiresAt: true,
-              plan: {
-                select: {
-                  name: true,
-                  code: true,
-                  permissions: {
-                    select: { permission: { select: { code: true } } },
-                  },
-                },
-              },
             },
           }),
           this.db.site.findUnique({
@@ -1096,10 +1089,20 @@ export class PanelManagementService {
             select: { siteNumber: true, name: true },
           }),
         ]);
+        const plan = subscription
+          ? await this.db.panelRentalPlan.findUnique({
+              where: { id: subscription.planId },
+              select: {
+                name: true,
+                code: true,
+                permissions: {
+                  select: { permission: { select: { code: true } } },
+                },
+              },
+            })
+          : null;
         const permissionCodes =
-          subscription?.plan?.permissions?.map(
-            (row: any) => row.permission.code,
-          ) ?? [];
+          plan?.permissions?.map((row: any) => row.permission.code) ?? [];
         return {
           ...site,
           owner,
@@ -1117,7 +1120,7 @@ export class PanelManagementService {
           subscription: subscription
             ? {
                 ...subscription,
-                plan: { ...subscription.plan, permissionCodes },
+                plan: plan ? { ...plan, permissionCodes } : null,
               }
             : null,
         };
