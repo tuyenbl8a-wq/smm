@@ -84,8 +84,12 @@ export class SubmitWorker {
     });
     if (!order || order.providerOrderId)
       return this.complete(claimed.id, "SUBMITTED");
-    const provider = await this.db.provider.findUnique({
-      where: { id: order.providerId },
+    const provider = await this.db.provider.findFirst({
+      where: {
+        id: order.providerId,
+        siteId: order.siteId,
+        deletedAt: null,
+      },
     });
     const external = (order.input as any)?.providerExternalServiceId;
     if (!provider || !external) {
