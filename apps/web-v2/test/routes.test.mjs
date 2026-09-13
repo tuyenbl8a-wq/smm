@@ -198,6 +198,21 @@ test("admin orders keep website IDs distinct and use protected operations", () =
   ])
     assert.match(admin, new RegExp(operation));
   assert.match(admin + client, /x-csrf-token/);
+  for (const operation of [
+    "Provider - Update Status",
+    "Provider - Send Order",
+    "Start Count",
+    "confirmClearProviderOrderId",
+    "Full history / audit trail",
+    "bulkStatus",
+    "bulkSync",
+    "bulkRetry",
+    "bulkTag",
+    "bulkClearTags",
+    "selectedStats",
+  ])
+    assert.match(admin, new RegExp(operation));
+  assert.match(admin, /UNKNOWN.*không tự gửi lại/);
 });
 test("admin UI excludes secret fields and never stores sessions locally", () => {
   assert.match(

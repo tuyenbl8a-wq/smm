@@ -307,14 +307,15 @@ test("manual order update validates counts and records before/after with actor",
     remains: 0,
     manualOverride: false,
   };
-  const audits: any[] = [];
+  const audits: any[] = [],
+    history: any[] = [];
   const tx: any = {
     $executeRawUnsafe: async () => 1,
     order: {
       findUnique: async () => order,
       update: async ({ data }: any) => ({ ...order, ...data }),
     },
-    orderHistory: { create: async () => ({}) },
+    orderHistory: { create: async ({ data }: any) => history.push(data) },
     auditLog: { create: async ({ data }: any) => audits.push(data) },
   };
   const service = new AdminOperationsService({
@@ -329,6 +330,8 @@ test("manual order update validates counts and records before/after with actor",
   assert.equal(result.manualOverride, true);
   assert.equal(audits[0].actorId, "admin");
   assert.equal(audits[0].before.manualOverride, false);
+  assert.equal(history[0].details.reason, "Kiểm tra thủ công");
+  assert.equal(history[0].details.after.manualOverride, true);
   await assert.rejects(
     () =>
       service.updateOrder("admin", "100002", {
@@ -336,6 +339,101 @@ test("manual order update validates counts and records before/after with actor",
         reason: "invalid count",
       }),
     (error: AdminOperationError) => error.code === "REMAINS_INVALID",
+  );
+});
+
+test("manual provider assignment is tenant-owned, unique, and explicit when cleared", async () => {
+  const siteId = "11111111-1111-4111-8111-111111111111",
+    order: any = {
+      id: 2n,
+      siteId,
+      publicId: "order-id",
+      quantity: 100,
+      providerId: null,
+      providerOrderId: null,
+      status: "FAILED",
+      startCount: null,
+      remains: 100,
+      manualOverride: true,
+      tags: [],
+      refundedAmount: "0",
+    };
+  const providerQueries: any[] = [],
+    orderQueries: any[] = [];
+  const tx: any = {
+    order: {
+      findUnique: async () => order,
+      findFirst: async ({ where }: any) => (orderQueries.push(where), null),
+      update: async ({ data }: any) => Object.assign(order, data),
+    },
+    provider: {
+      findFirst: async ({ where }: any) => (
+        providerQueries.push(where),
+        where.siteId === siteId ? { id: where.id, siteId } : null
+      ),
+    },
+    orderHistory: { create: async () => ({}) },
+    auditLog: { create: async () => ({}) },
+  };
+  const service = new AdminOperationsService({
+    order: { findFirst: async () => order },
+    provider: tx.provider,
+    $transaction: async (run: any) => run(tx),
+  });
+  await service.updateOrder(
+    "actor",
+    "100002",
+    {
+      providerId: "22222222-2222-4222-8222-222222222222",
+      providerOrderId: "NCC-100",
+      reason: "Xác minh mã NCC",
+    },
+    siteId,
+  );
+  assert.equal(
+    providerQueries.every((where) => where.siteId === siteId),
+    true,
+  );
+  assert.equal(orderQueries[0].siteId, siteId);
+  assert.equal(orderQueries[0].providerOrderId, "NCC-100");
+  await assert.rejects(
+    () =>
+      service.updateOrder(
+        "actor",
+        "100002",
+        { providerOrderId: "", reason: "Xóa mã NCC" },
+        siteId,
+      ),
+    (error: AdminOperationError) =>
+      error.code === "PROVIDER_ORDER_CLEAR_CONFIRMATION_REQUIRED",
+  );
+  await service.updateOrder(
+    "actor",
+    "100002",
+    {
+      providerOrderId: "",
+      confirmClearProviderOrderId: true,
+      reason: "Xóa mã NCC đã xác nhận",
+    },
+    siteId,
+  );
+  assert.equal(order.providerOrderId, null);
+});
+
+test("provider order choices are queried directly inside the current tenant", async () => {
+  const siteId = "11111111-1111-4111-8111-111111111111";
+  const service = new AdminOperationsService({
+    provider: {
+      findMany: async ({ where }: any) => {
+        assert.equal(where.siteId, siteId);
+        assert.equal(where.deletedAt, null);
+        return [{ id: "provider-a", name: "A" }];
+      },
+    },
+  });
+  assert.deepEqual(
+    await service.orderFilterOptions({ kind: "provider" }, siteId),
+    [{ id: "provider-a", name: "A" }],
   );
 });
 

@@ -382,6 +382,19 @@ test("provider tenant ownership migration preserves and root-backfills providers
   assert.doesNotMatch(migration, /DROP\s+TABLE/i);
 });
 
+test("order tags migration is additive and indexed", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260913120000_order_tags/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /ADD COLUMN "tags" TEXT\[\] NOT NULL/);
+  assert.match(migration, /USING GIN \("tags"\)/);
+  assert.doesNotMatch(migration, /DELETE|TRUNCATE|DROP TABLE/i);
+});
+
 test("User price group stays a scalar foreign key without an implicit Prisma relation", () => {
   const userModel = schema.slice(
     schema.indexOf("model User {"),
