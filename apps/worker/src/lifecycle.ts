@@ -41,10 +41,15 @@ export class LifecycleWorker {
       });
       for (const o of orders) {
         try {
-          const p = await this.db.provider.findUnique({
-              where: { id: o.providerId },
-            }),
-            controller = new AbortController(),
+          const p = await this.db.provider.findFirst({
+            where: {
+              id: o.providerId,
+              siteId: o.siteId,
+              deletedAt: null,
+            },
+          });
+          if (!p) continue;
+          const controller = new AbortController(),
             timer = setTimeout(() => controller.abort(), p.timeoutMs);
           try {
             const r = await fetch(p.apiUrl, {
@@ -108,7 +113,9 @@ export class LifecycleWorker {
           `SELECT pg_advisory_xact_lock($1::bigint)`,
           order.id,
         );
-      const current = await tx.order.findUnique({ where: { id: order.id } });
+      const current = await tx.order.findFirst({
+        where: { id: order.id, siteId: order.siteId },
+      });
       if (
         !current ||
         current.manualOverride ||
@@ -150,6 +157,7 @@ export class LifecycleWorker {
         });
       await tx.orderHistory.create({
         data: {
+          siteId: current.siteId,
           orderId: current.id,
           fromStatus: current.status,
           toStatus: status,
@@ -158,6 +166,7 @@ export class LifecycleWorker {
       });
       await tx.auditLog?.create({
         data: {
+          siteId: current.siteId,
           action: "ORDER_PROVIDER_SYNC",
           resource: "Order",
           resourceId: current.publicId,
@@ -199,8 +208,14 @@ export class LifecycleWorker {
         return rows[0];
       });
       if (!claimed) break;
-      const row = { ...claimed, orderId: claimed.order_id };
-      const o = await this.db.order.findUnique({ where: { id: row.orderId } });
+      const row = {
+        ...claimed,
+        orderId: claimed.order_id,
+        siteId: claimed.site_id,
+      };
+      const o = await this.db.order.findFirst({
+        where: { id: row.orderId, siteId: row.siteId },
+      });
       if (!o?.providerOrderId) {
         await model.update({
           where: { id: row.id },
@@ -212,8 +227,12 @@ export class LifecycleWorker {
         });
         continue;
       }
-      const p = await this.db.provider.findUnique({
-        where: { id: o.providerId },
+      const p = await this.db.provider.findFirst({
+        where: {
+          id: o.providerId,
+          siteId: o.siteId,
+          deletedAt: null,
+        },
       });
       if (!p) {
         await model.update({

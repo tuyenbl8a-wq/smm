@@ -19,6 +19,7 @@ const fixture = ({ response, fetchError, commitError = false }) => {
   const updates = [],
     logs = [],
     orderUpdates = [];
+  let providerWhere;
   let transactions = 0;
   const claimed = { id: "outbox", order_id: 7n, attempts: 0 };
   const order = {
@@ -57,7 +58,9 @@ const fixture = ({ response, fetchError, commitError = false }) => {
       findUnique: async () => order,
       update: async ({ data }) => orderUpdates.push(data),
     },
-    provider: { findUnique: async () => provider },
+    provider: {
+      findFirst: async ({ where }) => ((providerWhere = where), provider),
+    },
     providerOutbox: { update: async ({ data }) => updates.push(data) },
     orderProviderLog: {
       upsert: async (args) => (logs.push(args), args),
@@ -73,9 +76,26 @@ const fixture = ({ response, fetchError, commitError = false }) => {
     updates,
     logs,
     orderUpdates,
+    providerWhere: () => providerWhere,
     restore: () => (globalThis.fetch = oldFetch),
   };
 };
+
+test("provider submit resolves only an active provider owned by the order tenant", async () => {
+  const f = fixture({
+    response: response(200, JSON.stringify({ order: "123" })),
+  });
+  try {
+    await f.worker.once();
+    assert.deepEqual(f.providerWhere(), {
+      id: "provider",
+      siteId: "site",
+      deletedAt: null,
+    });
+  } finally {
+    f.restore();
+  }
+});
 
 const safeJson = (value) =>
   JSON.stringify(value, (_key, item) =>
