@@ -177,16 +177,20 @@ test("reseller authorization is current, hard-denies Childpanels, and does not r
   let resale = true;
   let permission = true;
   let planActive = true;
+  let siteStatus = "ACTIVE";
+  let subscriptionActive = true;
+  let overrideDisabled = false;
   const db: any = {
     site: {
       findUnique: async ({ where }: any) =>
         where.id === "seller"
-          ? { id: "seller", parentSiteId: "root", status: "ACTIVE" }
+          ? { id: "seller", parentSiteId: "root", status: siteStatus }
           : { id: "root", parentSiteId: null, status: "ACTIVE" },
     },
     panelSubscription: {
       findFirst: async (args: any) => {
         assert.equal("include" in args, false);
+        if (!subscriptionActive) return null;
         return {
           planId: "plan",
           expiresAt: new Date(Date.now() + 60_000),
@@ -203,7 +207,10 @@ test("reseller authorization is current, hard-denies Childpanels, and does not r
       findFirst: async () =>
         permission ? { permissionId: "resale-permission" } : null,
     },
-    siteDisabledPermission: { findFirst: async () => null },
+    siteDisabledPermission: {
+      findFirst: async () =>
+        overrideDisabled ? { permissionId: "resale-permission" } : null,
+    },
   };
   const service = new PanelManagementService(db, {} as any, {} as any);
   assert.equal(await service.assertResellerAccess("seller"), "seller");
@@ -227,6 +234,99 @@ test("reseller authorization is current, hard-denies Childpanels, and does not r
     () => service.assertResellerAccess("seller"),
     (error: any) => error.code === "PANEL_RESALE_DENIED",
   );
+  resale = true;
+  subscriptionActive = false;
+  await assert.rejects(
+    () => service.assertResellerAccess("seller"),
+    (error: any) => error.code === "PANEL_RESALE_DENIED",
+  );
+  subscriptionActive = true;
+  overrideDisabled = true;
+  await assert.rejects(
+    () => service.assertResellerAccess("seller"),
+    (error: any) => error.code === "PANEL_RESALE_DENIED",
+  );
+  overrideDisabled = false;
+  siteStatus = "SUSPENDED";
+  await assert.rejects(
+    () => service.assertResellerAccess("seller"),
+    (error: any) => error.code === "PANEL_UNAVAILABLE",
+  );
+});
+
+test("reseller customer sales re-check current entitlement before listing plans, renting, and activation", async () => {
+  let entitlement = true;
+  const calls: any[] = [];
+  const db: any = {
+    site: {
+      findUnique: async ({ where }: any) =>
+        where.id === "seller"
+          ? { id: "seller", parentSiteId: "root", status: "ACTIVE" }
+          : { id: "root", parentSiteId: null, status: "ACTIVE" },
+    },
+    panelSubscription: {
+      findFirst: async ({ where }: any) => {
+        assert.equal(where.siteId, "seller");
+        assert.equal(where.status, "ACTIVE");
+        assert.equal(where.expiresAt.gt instanceof Date, true);
+        return entitlement ? { planId: "seller-plan" } : null;
+      },
+    },
+    panelRentalPlan: {
+      findUnique: async ({ where }: any) => {
+        assert.deepEqual(where, { id: "seller-plan" });
+        return {
+          id: "seller-plan",
+          code: "PANEL_250K",
+          allowPanelResale: true,
+        };
+      },
+      findMany: async ({ where }: any) => {
+        assert.deepEqual(where, { sellerSiteId: "seller", active: true });
+        return [];
+      },
+    },
+    panelRentalPlanPermission: {
+      findFirst: async ({ where }: any) => {
+        assert.equal(where.planId, "seller-plan");
+        assert.equal(where.permission.code, "panels.resale.manage");
+        return { permissionId: "resale" };
+      },
+      findMany: async () => [],
+    },
+    siteDisabledPermission: { findFirst: async () => null },
+  };
+  const rental: any = {
+    rent: async (...args: any[]) => (calls.push(["rent", ...args]), "intent"),
+    activate: async (...args: any[]) =>
+      (calls.push(["activate", ...args]), "activated"),
+  };
+  const service = new PanelManagementService(db, rental, {} as any);
+  assert.deepEqual(await service.plans("seller"), []);
+  assert.equal(
+    await service.rent("seller", "customer", { planId: "child-plan" }, "key"),
+    "intent",
+  );
+  assert.equal(
+    await service.activate("seller", "customer", "intent-id"),
+    "activated",
+  );
+  assert.deepEqual(calls.map(([operation]) => operation), ["rent", "activate"]);
+
+  entitlement = false;
+  await assert.rejects(
+    () => service.plans("seller"),
+    (error: any) => error.code === "PANEL_RESALE_DENIED",
+  );
+  await assert.rejects(
+    () => service.rent("seller", "customer", {}, "key"),
+    (error: any) => error.code === "PANEL_RESALE_DENIED",
+  );
+  await assert.rejects(
+    () => service.activate("seller", "customer", "intent-id"),
+    (error: any) => error.code === "PANEL_RESALE_DENIED",
+  );
+  assert.equal(calls.length, 2);
 });
 
 test("numeric and UUID lookups apply direct seller scope in the database query", async () => {
