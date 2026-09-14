@@ -212,13 +212,15 @@ test("admin price alert dashboard counts open alerts and resolves with audit", a
   const audit: any[] = [];
   const alert = { id: "alert", status: "OPEN", severity: "CRITICAL" };
   const tx: any = {
+    service: { findMany: async () => [{ id: "service" }] },
     priceAlert: {
-      findUnique: async () => alert,
+      findFirst: async () => alert,
       update: async ({ data }: any) => ({ ...alert, ...data }),
     },
     auditLog: { create: async ({ data }: any) => audit.push(data) },
   };
   const db: any = {
+    service: { findMany: async () => [{ id: "service" }] },
     priceAlert: {
       count: async () => 3,
       findMany: async () => [alert],

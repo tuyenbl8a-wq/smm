@@ -300,3 +300,48 @@ test("interactive provider administration is tenant-scoped and never exposes cre
     [rows[2]!.id],
   );
 });
+
+test("managed child upstream hides credentials, locks endpoint settings, and rotates only its dedicated key", async () => {
+  const encryptionKey = "managed-upstream-test-key";
+  const provider: any = {
+    id: "managed-provider",
+    siteId: SITE_A,
+    managedParentSiteId: ROOT_SITE,
+    managedApiKeyId: "managed-key",
+    name: "Managed parent upstream",
+    apiUrl: "https://parent.dichvu1st.com/api/v2",
+    apiKeyEncrypted: encryptSecret("old-managed-secret", encryptionKey),
+    deletedAt: null,
+    status: "ACTIVE",
+  };
+  const audits: any[] = [];
+  const tx: any = {
+    provider: {
+      findFirst: async () => provider,
+      update: async ({ data }: any) => Object.assign(provider, data),
+    },
+    apiKey: {
+      update: async ({ data }: any) => ({ id: "managed-key", ...data }),
+    },
+    auditLog: { create: async ({ data }: any) => audits.push(data) },
+  };
+  const db: any = {
+    provider: {
+      findFirst: async () => provider,
+    },
+    apiKey: {
+      findFirst: async () => ({ keyPrefix: "smm_old", active: true }),
+    },
+    $transaction: async (work: any) => work(tx),
+  };
+  const service = new ProviderService(db, encryptionKey);
+  const safe: any = await service.managedUpstream(SITE_A);
+  assert.equal("apiKeyEncrypted" in safe, false);
+  assert.equal("managedApiKeyId" in safe, false);
+  assert.equal(safe.apiUrl, "https://parent.dichvu1st.com/api/v2");
+  const rotated = await service.regenerateManagedKey("actor", SITE_A);
+  assert.match(rotated.key, /^smm_/);
+  assert.equal(audits[0].siteId, SITE_A);
+  assert.equal(audits[0].action, "MANAGED_UPSTREAM_KEY_REGENERATE");
+  assert.equal(JSON.stringify(audits).includes(rotated.key), false);
+});

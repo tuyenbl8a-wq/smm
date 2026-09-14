@@ -49,7 +49,7 @@ const nav = [
   ["▤", "Danh mục", "/admin/categories", "services.view"],
   ["⇄", "Nhà cung cấp", "/admin/providers", "providers.view"],
   ["◇", "Nhóm giá", "/admin/price-groups", "users.pricing.manage"],
-  ["₫", "Bảng giá", "/admin/pricing", "pricing.view"],
+  ["₫", "Bảng giá", "/admin/pricing", "services.pricing.manage"],
   ["⇩", "Nạp tiền & thanh toán", "/admin/deposits", "payments.view"],
   ["▰", "Phương thức thanh toán", "/admin/payment-methods", "payments.view"],
   ["▧", "Ví & giao dịch", "/admin/transactions", "payments.view"],
@@ -57,7 +57,7 @@ const nav = [
   ["♧", "Affiliate", "/admin/affiliate", "reports.read"],
   ["◌", "Hỗ trợ khách hàng", "/admin/support", "support.view"],
   ["⌁", "Báo cáo & thống kê", "/admin/reports", "reports.read"],
-  ["▥", "Nhật ký hệ thống", "/admin/logs", "audit.read"],
+  ["▥", "Nhật ký hệ thống", "/admin/logs", "audit.view"],
   ["⚙", "Cài đặt hệ thống", "/admin/settings", "settings.view"],
   ["◈", "Giao diện website", "/admin/themes", "settings.view"],
 ] as const;

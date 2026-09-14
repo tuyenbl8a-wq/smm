@@ -173,6 +173,13 @@ test("child service edits persist only tenant overrides and never mutate the mas
       },
     },
     service: {
+      findFirst: async () => ({
+        id: "service",
+        active: true,
+        deletedAt: null,
+        min: 1,
+        max: 10000,
+      }),
       update: async () => {
         serviceUpdated = true;
       },

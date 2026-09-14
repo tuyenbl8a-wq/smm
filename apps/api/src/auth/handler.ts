@@ -161,7 +161,6 @@ export class AuthHandler {
           "Authentication required",
         );
       const rootOnlyAdminPrefixes = [
-        "/api/v1/admin/referrals",
         "/api/v1/admin/system-status",
       ];
       if (
@@ -514,7 +513,7 @@ export class AuthHandler {
       if (request.method === "GET" && path === "/api/v1/customer/referral")
         return this.ok(
           response,
-          await this.promotions!.referralSummary(auth.user.id),
+          await this.promotions!.referralSummary(auth.user.id, tenant.id),
         );
       if (request.method === "GET" && path === "/api/v1/admin/coupons") {
         if (
@@ -544,7 +543,10 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
-        return this.ok(response, await this.promotions!.adminReferrals());
+        return this.ok(
+          response,
+          await this.promotions!.adminReferrals(tenant.id),
+        );
       }
       if (
         request.method === "GET" &&
@@ -934,8 +936,7 @@ export class AuthHandler {
       }
       if (request.method === "GET" && path === "/api/v1/admin/logs") {
         if (
-          !canAccessAdmin(auth.access, "logs.read") &&
-          !canAccessAdmin(auth.access, "audit.read")
+          !canAccessAdmin(auth.access, "audit.view")
         )
           return this.error(
             response,
@@ -1202,8 +1203,8 @@ export class AuthHandler {
           response,
           tenant.id === ROOT_SITE_ID
             ? await this.catalog!.adminOverview(
-                canAccessAdmin(auth.access, "pricing.view") ||
-                  canAccessAdmin(auth.access, "pricing.manage"),
+                canAccessAdmin(auth.access, "services.pricing.manage") ||
+                  canAccessAdmin(auth.access, "services.pricing.manage"),
               )
             : await this.catalog!.tenantAdminOverview(tenant.id),
         );
@@ -1226,8 +1227,8 @@ export class AuthHandler {
           tenant.id === ROOT_SITE_ID
             ? await this.catalog!.serviceEditor(
                 serviceEditor[1]!,
-                canAccessAdmin(auth.access, "pricing.view") ||
-                  canAccessAdmin(auth.access, "pricing.manage"),
+                canAccessAdmin(auth.access, "services.pricing.manage") ||
+                  canAccessAdmin(auth.access, "services.pricing.manage"),
               )
             : await this.catalog!.tenantServiceEditor(
                 tenant.id,
@@ -1293,7 +1294,7 @@ export class AuthHandler {
         if (
           tenant.id === ROOT_SITE_ID &&
           body.pricing &&
-          !canAccessAdmin(auth.access, "pricing.manage")
+          !canAccessAdmin(auth.access, "services.pricing.manage")
         )
           return this.error(
             response,
@@ -1334,8 +1335,7 @@ export class AuthHandler {
           path === "/api/v1/admin/pricing/alerts")
       ) {
         if (
-          !canAccessAdmin(auth.access, "pricing.view") &&
-          !canAccessAdmin(auth.access, "pricing.manage")
+          !canAccessAdmin(auth.access, "services.pricing.manage")
         )
           return this.error(
             response,
@@ -1347,7 +1347,7 @@ export class AuthHandler {
         return this.ok(
           response,
           path.endsWith("/alerts")
-            ? await this.catalog.pricingAlerts()
+            ? await this.catalog.pricingAlerts(tenant.id)
             : await this.catalog.adminOverview(true, tenant.id),
         );
       }
@@ -1364,6 +1364,36 @@ export class AuthHandler {
           );
         if (!this.providers) throw new Error("Provider service unavailable");
         return this.ok(response, await this.providers.list(tenant.id));
+      }
+      if (path === "/api/v1/admin/managed-upstream") {
+        if (
+          !canAccessAdmin(
+            auth.access,
+            request.method === "POST" ? "settings.manage" : "settings.view",
+          )
+        )
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Permission denied",
+          );
+        if (!this.providers) throw new Error("Provider service unavailable");
+        if (request.method === "GET")
+          return this.ok(
+            response,
+            await this.providers.managedUpstream(tenant.id),
+          );
+        if (request.method === "POST") {
+          this.csrf(request, auth.rawToken);
+          return this.ok(
+            response,
+            await this.providers.regenerateManagedKey(
+              auth.user.id,
+              tenant.id,
+            ),
+          );
+        }
       }
       const providerDetail =
           /^\/api\/v1\/admin\/providers\/([0-9a-f-]{36})$/.exec(path),
@@ -2209,7 +2239,7 @@ export class AuthHandler {
         path.startsWith("/api/v1/admin/pricing/")
       ) {
         this.checkBurst(request, "admin-pricing-mutation");
-        if (!canAccessAdmin(auth.access, "pricing.manage"))
+        if (!canAccessAdmin(auth.access, "services.pricing.manage"))
           return this.error(
             response,
             403,
@@ -2242,7 +2272,11 @@ export class AuthHandler {
         if (alert)
           return this.ok(
             response,
-            await this.catalog.resolvePricingAlert(auth.user.id, alert[1]!),
+            await this.catalog.resolvePricingAlert(
+              auth.user.id,
+              alert[1]!,
+              tenant.id,
+            ),
           );
       }
       if (

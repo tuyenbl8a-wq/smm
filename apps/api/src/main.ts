@@ -37,7 +37,7 @@ const { PrismaClient } = await dynamicImport("@prisma/client");
 const prisma = new PrismaClient();
 const orderService = new OrderService(prisma);
 const panelDns = createPanelDnsProvider(process.env);
-const panelService = new PanelService(prisma, panelDns);
+const panelService = new PanelService(prisma, panelDns, config.encryptionKey);
 const panelManagement = new PanelManagementService(
   prisma,
   panelService,
