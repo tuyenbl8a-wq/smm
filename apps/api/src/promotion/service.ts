@@ -231,10 +231,12 @@ export class PromotionService {
     });
   }
 
-  async referralSummary(userId: string) {
-    let affiliate = await this.db.affiliate.findUnique({ where: { userId } });
+  async referralSummary(userId: string, siteId: string) {
+    let affiliate = await this.db.affiliate.findFirst({
+      where: { userId, siteId },
+    });
     if (!affiliate) {
-      const user = await this.db.user.findUnique({ where: { id: userId } });
+      const user = await this.db.user.findFirst({ where: { id: userId, siteId } });
       if (!user)
         throw new PromotionError(
           "AFFILIATE_NOT_FOUND",
@@ -242,6 +244,7 @@ export class PromotionService {
         );
       affiliate = await this.db.affiliate.create({
         data: {
+          siteId,
           userId,
           code: user.referralCode,
           commissionRate: "10.000000",
@@ -249,9 +252,9 @@ export class PromotionService {
       });
     }
     const [referrals, commissions] = await Promise.all([
-      this.db.referral.count({ where: { affiliateId: affiliate.id } }),
+      this.db.referral.count({ where: { affiliateId: affiliate.id, siteId } }),
       this.db.affiliateCommission.findMany({
-        where: { affiliateId: affiliate.id },
+        where: { affiliateId: affiliate.id, siteId },
         orderBy: { createdAt: "desc" },
         take: 100,
       }),
@@ -267,10 +270,15 @@ export class PromotionService {
     };
   }
 
-  async adminReferrals() {
+  async adminReferrals(siteId: string) {
     const [referrals, commissions] = await Promise.all([
-      this.db.referral.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
+      this.db.referral.findMany({
+        where: { siteId },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
       this.db.affiliateCommission.findMany({
+        where: { siteId },
         orderBy: { createdAt: "desc" },
         take: 100,
       }),
@@ -282,8 +290,8 @@ export class PromotionService {
 export async function settleReferral(tx: any, order: any) {
   if (!["COMPLETED", "PARTIAL"].includes(order.status)) return null;
   if (String(order.profit).startsWith("-")) return null;
-  const referral = await tx.referral.findUnique({
-    where: { referredUserId: order.userId },
+  const referral = await tx.referral.findFirst({
+    where: { referredUserId: order.userId, siteId: order.siteId },
   });
   if (!referral) return null;
   const affiliate = await tx.affiliate.findUnique({
@@ -314,6 +322,7 @@ export async function settleReferral(tx: any, order: any) {
   );
   const commission = await tx.affiliateCommission.create({
     data: {
+      siteId: order.siteId,
       affiliateId: affiliate.id,
       referralId: referral.id,
       referenceId,

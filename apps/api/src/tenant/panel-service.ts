@@ -1,4 +1,5 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { encryptSecret } from "../provider/crypto.js";
 const randomUUID = () => {
   const x = randomBytes(16).toString("hex");
   return `${x.slice(0, 8)}-${x.slice(8, 12)}-4${x.slice(13, 16)}-8${x.slice(17, 20)}-${x.slice(20)}`;
@@ -47,6 +48,126 @@ async function grantChildServicePermissions(tx: any, userId: string) {
     skipDuplicates: true,
   });
 }
+
+/** Seed only tenant rules; the canonical service/category/platform rows remain owned by the parent chain. */
+async function inheritParentCatalog(
+  tx: any,
+  parentSiteId: string,
+  childSiteId: string,
+  renterUserId: string,
+  parentSlug: string,
+  encryptionKey: string,
+) {
+  const [owned, inherited] = await Promise.all([
+    tx.service.findMany({
+      where: { siteId: parentSiteId, active: true, deletedAt: null },
+    }),
+    tx.siteServiceRule.findMany({
+      where: { siteId: parentSiteId, active: true },
+    }),
+  ]);
+  const inheritedServices = inherited.length
+    ? await tx.service.findMany({
+        where: {
+          id: { in: inherited.map((rule: any) => rule.serviceId) },
+          active: true,
+          deletedAt: null,
+        },
+      })
+    : [];
+  const inheritedByService = new Map(
+    inherited.map((rule: any) => [rule.serviceId, rule]),
+  );
+  const services = new Map(
+    [...owned, ...inheritedServices].map((service: any) => [service.id, service]),
+  );
+  const data = [...services.values()].map((service: any) => {
+    const rule: any = inheritedByService.get(service.id);
+    const base = units(service.rate);
+    const percent = BigInt(String(rule?.markupPercent ?? 0).split(".")[0] || "0");
+    const fixed = units(rule?.fixedProfit ?? 0);
+    const minimum = units(rule?.minProfit ?? 0);
+    const effectiveRate =
+      rule?.fixedRate != null
+        ? String(rule.fixedRate)
+        : decimal(base + (base * percent) / 100n + (fixed > minimum ? fixed : minimum));
+    return {
+      siteId: childSiteId,
+      serviceId: service.id,
+      active: true,
+      pricingMode: "FIXED",
+      fixedRate: effectiveRate,
+      minOverride: rule?.minOverride ?? service.min,
+      maxOverride: rule?.maxOverride ?? service.max,
+    };
+  });
+  if (data.length)
+    await tx.siteServiceRule.createMany({ data, skipDuplicates: true });
+  if (data.length) {
+    const rawKey = `smm_${randomBytes(32).toString("base64url")}`;
+    const apiKey = await tx.apiKey.create({
+      data: {
+        siteId: parentSiteId,
+        userId: renterUserId,
+        keyPrefix: rawKey.slice(0, 12),
+        keyHash: createHash("sha256").update(rawKey).digest("hex"),
+        rateLimit: 120,
+      },
+    });
+    const provider = await tx.provider.create({
+      data: {
+        siteId: childSiteId,
+        managedParentSiteId: parentSiteId,
+        managedApiKeyId: apiKey.id,
+        name: "Managed parent upstream",
+        apiUrl: `https://${parentSlug}.dichvu1st.com/api/v2`,
+        apiKeyEncrypted: encryptSecret(rawKey, encryptionKey),
+        encryptionKeyVersion: 1,
+        currency: "USD",
+        status: "ACTIVE",
+        priority: 1,
+      },
+    });
+    await tx.providerService.createMany({
+      data: [...services.values()].map((service: any) => {
+        const rule = data.find((item: any) => item.serviceId === service.id)!;
+        return {
+          providerId: provider.id,
+          externalId: String(service.serviceNumber),
+          name: service.name,
+          category: String(service.categoryId),
+          type: service.type,
+          rate: rule.fixedRate,
+          min: rule.minOverride,
+          max: rule.maxOverride,
+          refill: service.refill,
+          cancel: service.cancel,
+          active: true,
+          stale: false,
+          lastSyncedAt: new Date(),
+        };
+      }),
+      skipDuplicates: true,
+    });
+    const upstreamServices = await tx.providerService.findMany({
+      where: { providerId: provider.id },
+      select: { id: true, externalId: true },
+    });
+    const serviceByNumber = new Map(
+      [...services.values()].map((service: any) => [String(service.serviceNumber), service]),
+    );
+    await tx.serviceMapping.createMany({
+      data: upstreamServices.map((upstream: any) => ({
+        serviceId: serviceByNumber.get(upstream.externalId)!.id,
+        providerServiceId: upstream.id,
+        priority: 1,
+        active: true,
+      })),
+      skipDuplicates: true,
+    });
+  }
+  return data.length;
+}
 import type { PanelDnsProvider } from "./panel-dns-provider.js";
 import { TENANT_PLAN_PERMISSION_CODES } from "./panel-permissions.js";
 const SCALE = 100_000_000n;
@@ -69,6 +190,7 @@ export class PanelService {
   constructor(
     private readonly db: any,
     private readonly dns: PanelDnsProvider,
+    private readonly encryptionKey = "",
   ) {}
 
   /**
@@ -415,6 +537,14 @@ export class PanelService {
           commissionRate: "10.000000",
         },
       });
+      const inheritedServiceCount = await inheritParentCatalog(
+        tx,
+        sellerSiteId,
+        siteId,
+        renterUserId,
+        parent.slug,
+        this.encryptionKey,
+      );
       const site = await tx.site.update({
         where: { id: siteId },
         data: { ownerUserId: childOwner.id },
@@ -487,6 +617,7 @@ export class PanelService {
             planId: plan.id,
             hostname: intent.hostname,
             providerZoneId: intent.providerZoneId,
+            inheritedServiceCount,
           },
         },
       });

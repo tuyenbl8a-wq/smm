@@ -54,10 +54,11 @@ test("coupon validation rejects inactive, expired and exhausted usage", async ()
 test("referral settlement credits wallet and is idempotent", async () => {
   let created = 0;
   const tx: any = {
-    referral: { findUnique: async () => ({ id: "r", affiliateId: "a" }) },
+    referral: { findFirst: async () => ({ id: "r", affiliateId: "a" }) },
     affiliate: {
       findUnique: async () => ({
         id: "a",
+        siteId: "site",
         userId: "referrer",
         active: true,
         commissionRate: "10",
@@ -72,6 +73,7 @@ test("referral settlement credits wallet and is idempotent", async () => {
   };
   const order = {
     status: "COMPLETED",
+    siteId: "site",
     userId: "customer",
     publicId: "order",
     profit: "10",

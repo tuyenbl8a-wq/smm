@@ -392,7 +392,45 @@ test("order tags migration is additive and indexed", () => {
   );
   assert.match(migration, /ADD COLUMN "tags" TEXT\[\] NOT NULL/);
   assert.match(migration, /USING GIN \("tags"\)/);
+  assert.doesNotMatch(migration, /DELETE\s+FROM|TRUNCATE|DROP TABLE/i);
+});
+
+test("tenant product permission repair backfills existing PANEL and CHILL plans additively", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260914120000_tenant_permission_contract/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const permission of [
+    "services.presentation.manage",
+    "services.pricing.manage",
+    "services.toggle",
+    "reports.read",
+    "audit.view",
+    "providers.sync",
+  ])
+    assert.match(migration, new RegExp(permission.replaceAll(".", "\\.")));
+  assert.match(migration, /PANEL_250K/);
+  assert.match(migration, /CHILLPANEL/);
+  assert.match(migration, /ON CONFLICT DO NOTHING/);
   assert.doesNotMatch(migration, /DELETE|TRUNCATE|DROP TABLE/i);
+});
+
+test("managed child upstream migration is additive and references only parent API credentials", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260914130000_child_managed_upstream/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /managed_parent_site_id/);
+  assert.match(migration, /managed_api_key_id/);
+  assert.match(migration, /REFERENCES "sites"/);
+  assert.match(migration, /REFERENCES "api_keys"/);
+  assert.doesNotMatch(migration, /DELETE\s+FROM|TRUNCATE|DROP TABLE/i);
 });
 
 test("User price group stays a scalar foreign key without an implicit Prisma relation", () => {

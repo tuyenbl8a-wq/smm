@@ -56,7 +56,12 @@ test("pending rental provisions a provider zone and never debits the wallet", as
       create: async ({ data }: any) => ({ ...intent, ...data }),
     },
     site: {
-      findUnique: async () => ({ id: "seller", status: "ACTIVE", depth: 0 }),
+      findUnique: async () => ({
+        id: "seller",
+        slug: "seller",
+        status: "ACTIVE",
+        depth: 0,
+      }),
       count: async () => 0,
     },
     panelRentalPlan: {
@@ -150,6 +155,8 @@ test("activation persists provider metadata before routing and activates afterwa
   let assignedOwnerId: string | undefined;
   let siteStatus = "PENDING";
   let transactionCount = 0;
+  let inheritedRules: any[] = [];
+  let managedProvider: any;
   const tx: any = {
     $queryRawUnsafe: async (sql: string) =>
       sql.startsWith("SELECT")
@@ -160,7 +167,12 @@ test("activation persists provider metadata before routing and activates afterwa
       update: async ({ data }: any) => Object.assign(state, data),
     },
     site: {
-      findUnique: async () => ({ id: "seller", status: "ACTIVE", depth: 0 }),
+      findUnique: async () => ({
+        id: "seller",
+        slug: "seller",
+        status: "ACTIVE",
+        depth: 0,
+      }),
       create: async ({ data }: any) => {
         siteStatus = data.status;
         return data;
@@ -203,6 +215,41 @@ test("activation persists provider metadata before routing and activates afterwa
     userPermission: { createMany: async () => ({ count: 4 }) },
     wallet: { create: async () => undefined },
     affiliate: { create: async () => undefined },
+    service: {
+      findMany: async ({ where }: any) =>
+        where.siteId
+          ? [
+              {
+                id: "parent-service",
+                siteId: "seller",
+                serviceNumber: 100001n,
+                categoryId: "category",
+                name: "Parent service",
+                type: "Default",
+                rate: "20.00000000",
+                min: 10,
+                max: 1000,
+                refill: true,
+                cancel: false,
+              },
+            ]
+          : [],
+    },
+    siteServiceRule: {
+      findMany: async () => [],
+      createMany: async ({ data }: any) =>
+        ((inheritedRules = data), { count: data.length }),
+    },
+    apiKey: { create: async () => ({ id: "managed-key" }) },
+    provider: {
+      create: async ({ data }: any) =>
+        (managedProvider = { id: "managed-provider", ...data }),
+    },
+    providerService: {
+      createMany: async () => ({ count: 1 }),
+      findMany: async () => [{ id: "managed-service", externalId: "100001" }],
+    },
+    serviceMapping: { createMany: async () => ({ count: 1 }) },
     siteDomain: {
       create: async ({ data }: any) => {
         if (data.providerZoneId) domainData = data;
@@ -220,7 +267,7 @@ test("activation persists provider metadata before routing and activates afterwa
       return fn(tx);
     },
   };
-  const result = await new PanelService(db, provider).activate(
+  const result = await new PanelService(db, provider, "test-encryption-key").activate(
     "seller",
     "user",
     intent.id,
@@ -233,6 +280,21 @@ test("activation persists provider metadata before routing and activates afterwa
   assert.deepEqual(domainData.assignedNameservers, intent.assignedNameservers);
   assert.equal(childOwnerData.siteId, state.activatedSiteId);
   assert.equal(assignedOwnerId, "child-owner");
+  assert.deepEqual(inheritedRules, [
+    {
+      siteId: state.activatedSiteId,
+      serviceId: "parent-service",
+      active: true,
+      pricingMode: "FIXED",
+      fixedRate: "20.00000000",
+      minOverride: 10,
+      maxOverride: 1000,
+    },
+  ]);
+  assert.equal(managedProvider.siteId, state.activatedSiteId);
+  assert.equal(managedProvider.managedParentSiteId, "seller");
+  assert.equal(managedProvider.apiUrl, "https://seller.dichvu1st.com/api/v2");
+  assert.equal(managedProvider.apiKeyEncrypted.includes("smm_"), false);
   assert.equal(provider.calls.at(-1), "route:panel.example.com");
 });
 

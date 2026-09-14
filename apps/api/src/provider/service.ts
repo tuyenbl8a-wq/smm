@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import { repriceMappedServices } from "../catalog/repricing.js";
 import { decryptSecret, encryptSecret, maskSecret } from "./crypto.js";
 import { StandardSmmAdapter } from "./adapter.js";
@@ -640,6 +641,71 @@ export class ProviderService {
       ),
     }));
   }
+  async managedUpstream(siteId: string) {
+    const provider = await this.db.provider.findFirst({
+      where: { siteId, managedParentSiteId: { not: null }, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        apiUrl: true,
+        status: true,
+        managedParentSiteId: true,
+        managedApiKeyId: true,
+        updatedAt: true,
+      },
+    });
+    if (!provider) return null;
+    const key = provider.managedApiKeyId
+      ? await this.db.apiKey.findFirst({
+          where: { id: provider.managedApiKeyId, siteId: provider.managedParentSiteId! },
+          select: { keyPrefix: true, active: true, lastUsedAt: true },
+        })
+      : null;
+    const {
+      managedApiKeyId: _managedApiKeyId,
+      apiKeyEncrypted: _apiKeyEncrypted,
+      ...safe
+    } = provider;
+    return { ...safe, key };
+  }
+
+  async regenerateManagedKey(actorId: string, siteId: string) {
+    const raw = `smm_${randomBytes(32).toString("base64url")}`;
+    return this.db.$transaction(async (tx: any) => {
+      const provider = await tx.provider.findFirst({
+        where: { siteId, managedParentSiteId: { not: null }, deletedAt: null },
+      });
+      if (!provider?.managedApiKeyId)
+        throw new ProviderConfigError(
+          "MANAGED_UPSTREAM_NOT_FOUND",
+          "Managed parent connection not found",
+        );
+      const key = await tx.apiKey.update({
+        where: { id: provider.managedApiKeyId },
+        data: {
+          keyPrefix: raw.slice(0, 12),
+          keyHash: createHash("sha256").update(raw).digest("hex"),
+          active: true,
+        },
+      });
+      await tx.provider.update({
+        where: { id: provider.id },
+        data: { apiKeyEncrypted: encryptSecret(raw, this.encryptionKey) },
+      });
+      await tx.auditLog.create({
+        data: {
+          siteId,
+          actorId,
+          action: "MANAGED_UPSTREAM_KEY_REGENERATE",
+          resource: "provider",
+          resourceId: provider.id,
+          before: { keyPrefix: "[REDACTED]" },
+          after: { keyPrefix: key.keyPrefix },
+        },
+      });
+      return { key: raw, prefix: key.keyPrefix };
+    });
+  }
   async create(actorId: string, siteId: string, input: any) {
     const apiUrl = String(input.apiUrl ?? "");
     try {
@@ -740,6 +806,14 @@ export class ProviderService {
     });
     if (!before)
       throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
+    if (
+      before.managedParentSiteId &&
+      Object.keys(input ?? {}).some((key) => key !== "apiKey")
+    )
+      throw new ProviderConfigError(
+        "MANAGED_UPSTREAM_IMMUTABLE",
+        "Managed parent endpoint and provider settings cannot be edited",
+      );
     const data: any = {
       ...(input.name != null
         ? { name: String(input.name).trim().slice(0, 120) }
