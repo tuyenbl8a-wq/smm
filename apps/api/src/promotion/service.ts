@@ -52,6 +52,7 @@ export class PromotionService {
 
   private async validate(
     tx: any,
+    siteId: string,
     userId: string,
     rawCode: unknown,
     amount: unknown,
@@ -60,10 +61,13 @@ export class PromotionService {
     const normalized = code(rawCode);
     if (lock)
       await tx.$queryRawUnsafe(
-        `SELECT "id" FROM "coupons" WHERE "code"=$1 FOR UPDATE`,
+        `SELECT "id" FROM "coupons" WHERE "site_id"=$1::uuid AND "code"=$2 FOR UPDATE`,
+        siteId,
         normalized,
       );
-    const coupon = await tx.coupon.findUnique({ where: { code: normalized } });
+    const coupon = await tx.coupon.findUnique({
+      where: { siteId_code: { siteId, code: normalized } },
+    });
     if (!coupon)
       throw new PromotionError(
         "COUPON_NOT_FOUND",
@@ -94,17 +98,26 @@ export class PromotionService {
     return { coupon, ...couponDiscount(coupon, amount) };
   }
 
-  preview(userId: string, rawCode: unknown, amount: unknown) {
-    return this.validate(this.db, userId, rawCode, amount);
+  preview(siteId: string, userId: string, rawCode: unknown, amount: unknown) {
+    return this.validate(this.db, siteId, userId, rawCode, amount);
   }
 
-  reserve(tx: any, userId: string, rawCode: unknown, amount: unknown) {
-    return this.validate(tx, userId, rawCode, amount, true);
+  reserve(
+    tx: any,
+    siteId: string,
+    userId: string,
+    rawCode: unknown,
+    amount: unknown,
+  ) {
+    return this.validate(tx, siteId, userId, rawCode, amount, true);
   }
 
-  async listCoupons(search = "") {
+  async listCoupons(siteId: string, search = "") {
     const rows = await this.db.coupon.findMany({
-      where: search ? { code: { contains: search.toUpperCase() } } : {},
+      where: {
+        siteId,
+        ...(search ? { code: { contains: search.toUpperCase() } } : {}),
+      },
       orderBy: { createdAt: "desc" },
       take: 100,
     });
@@ -118,7 +131,7 @@ export class PromotionService {
     );
   }
 
-  async saveCoupon(actorId: string, input: any, id?: string) {
+  async saveCoupon(actorId: string, siteId: string, input: any, id?: string) {
     const normalized = code(input.code),
       type = String(input.type ?? "");
     if (!["FIXED", "PERCENT"].includes(type))
@@ -140,6 +153,7 @@ export class PromotionService {
         "Thời gian áp dụng không hợp lệ.",
       );
     const data = {
+      siteId,
       code: normalized,
       type,
       value: decimal(value),
@@ -165,11 +179,17 @@ export class PromotionService {
         "Giới hạn không hợp lệ.",
       );
     return this.db.$transaction(async (tx: any) => {
+      if (id && !(await tx.coupon.findFirst({ where: { id, siteId } })))
+        throw new PromotionError(
+          "COUPON_NOT_FOUND",
+          "Mã giảm giá không tồn tại.",
+        );
       const saved = id
-        ? await tx.coupon.update({ where: { id }, data })
+        ? await tx.coupon.update({ where: { id, siteId }, data })
         : await tx.coupon.create({ data });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: id ? "COUPON_UPDATE" : "COUPON_CREATE",
           resource: "Coupon",
@@ -180,20 +200,21 @@ export class PromotionService {
     });
   }
 
-  async archiveCoupon(actorId: string, id: string) {
+  async archiveCoupon(actorId: string, siteId: string, id: string) {
     return this.db.$transaction(async (tx: any) => {
-      const before = await tx.coupon.findUnique({ where: { id } });
+      const before = await tx.coupon.findFirst({ where: { id, siteId } });
       if (!before)
         throw new PromotionError(
           "COUPON_NOT_FOUND",
           "Mã giảm giá không tồn tại.",
         );
       const item = await tx.coupon.update({
-        where: { id },
+        where: { id, siteId },
         data: { active: false },
       });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "COUPON_ARCHIVE",
           resource: "coupon",
@@ -210,10 +231,12 @@ export class PromotionService {
     });
   }
 
-  async referralSummary(userId: string) {
-    let affiliate = await this.db.affiliate.findUnique({ where: { userId } });
+  async referralSummary(userId: string, siteId: string) {
+    let affiliate = await this.db.affiliate.findFirst({
+      where: { userId, siteId },
+    });
     if (!affiliate) {
-      const user = await this.db.user.findUnique({ where: { id: userId } });
+      const user = await this.db.user.findFirst({ where: { id: userId, siteId } });
       if (!user)
         throw new PromotionError(
           "AFFILIATE_NOT_FOUND",
@@ -221,6 +244,7 @@ export class PromotionService {
         );
       affiliate = await this.db.affiliate.create({
         data: {
+          siteId,
           userId,
           code: user.referralCode,
           commissionRate: "10.000000",
@@ -228,9 +252,9 @@ export class PromotionService {
       });
     }
     const [referrals, commissions] = await Promise.all([
-      this.db.referral.count({ where: { affiliateId: affiliate.id } }),
+      this.db.referral.count({ where: { affiliateId: affiliate.id, siteId } }),
       this.db.affiliateCommission.findMany({
-        where: { affiliateId: affiliate.id },
+        where: { affiliateId: affiliate.id, siteId },
         orderBy: { createdAt: "desc" },
         take: 100,
       }),
@@ -246,10 +270,15 @@ export class PromotionService {
     };
   }
 
-  async adminReferrals() {
+  async adminReferrals(siteId: string) {
     const [referrals, commissions] = await Promise.all([
-      this.db.referral.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
+      this.db.referral.findMany({
+        where: { siteId },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
       this.db.affiliateCommission.findMany({
+        where: { siteId },
         orderBy: { createdAt: "desc" },
         take: 100,
       }),
@@ -261,8 +290,8 @@ export class PromotionService {
 export async function settleReferral(tx: any, order: any) {
   if (!["COMPLETED", "PARTIAL"].includes(order.status)) return null;
   if (String(order.profit).startsWith("-")) return null;
-  const referral = await tx.referral.findUnique({
-    where: { referredUserId: order.userId },
+  const referral = await tx.referral.findFirst({
+    where: { referredUserId: order.userId, siteId: order.siteId },
   });
   if (!referral) return null;
   const affiliate = await tx.affiliate.findUnique({
@@ -293,6 +322,7 @@ export async function settleReferral(tx: any, order: any) {
   );
   const commission = await tx.affiliateCommission.create({
     data: {
+      siteId: order.siteId,
       affiliateId: affiliate.id,
       referralId: referral.id,
       referenceId,

@@ -243,10 +243,16 @@ export class CatalogService {
     return this.bulk.applySimple(actorId, input);
   }
 
-  async pricingAlerts() {
+  async pricingAlerts(siteId = ROOT_SITE_ID) {
+    const services = await this.db.service.findMany({
+      where: { siteId, deletedAt: null },
+      select: { id: true },
+    });
+    const where = { serviceId: { in: services.map((item: any) => item.id) } };
     const [open, items] = await Promise.all([
-      this.db.priceAlert.count({ where: { status: "OPEN" } }),
+      this.db.priceAlert.count({ where: { ...where, status: "OPEN" } }),
       this.db.priceAlert.findMany({
+        where,
         orderBy: { createdAt: "desc" },
         take: 100,
       }),
@@ -254,9 +260,22 @@ export class CatalogService {
     return { open, items };
   }
 
-  async resolvePricingAlert(actorId: string, id: string) {
+  async resolvePricingAlert(
+    actorId: string,
+    id: string,
+    siteId = ROOT_SITE_ID,
+  ) {
     return this.db.$transaction(async (tx: any) => {
-      const alert = await tx.priceAlert.findUnique({ where: { id } });
+      const serviceIds = await tx.service.findMany({
+        where: { siteId, deletedAt: null },
+        select: { id: true },
+      });
+      const alert = await tx.priceAlert.findFirst({
+        where: {
+          id,
+          serviceId: { in: serviceIds.map((item: any) => item.id) },
+        },
+      });
       if (!alert)
         throw new CatalogError(
           "PRICE_ALERT_NOT_FOUND",
@@ -279,6 +298,7 @@ export class CatalogService {
         id,
         alert,
         resolved,
+        siteId,
       );
       return resolved;
     });
@@ -487,11 +507,15 @@ export class CatalogService {
     });
     const services = await this.db.service.findMany({
       where: {
-        id: { in: rules.map((rule: any) => rule.serviceId) },
+        OR: [
+          { siteId },
+          { id: { in: rules.map((rule: any) => rule.serviceId) } },
+        ],
         deletedAt: null,
       },
       select: {
         id: true,
+        siteId: true,
         serviceNumber: true,
         name: true,
         description: true,
@@ -502,20 +526,46 @@ export class CatalogService {
         categoryId: true,
       },
     });
-    const serviceMap = new Map(
-      services.map((service: any) => [service.id, service]),
-    );
+    const visibleServices = services.filter((service: any) => {
+      if (service.siteId === siteId) return service.active;
+      const rule = rules.find((item: any) => item.serviceId === service.id);
+      return Boolean(rule?.active && service.active);
+    });
+    const categories = await this.db.serviceCategory.findMany({
+      where: {
+        id: { in: [...new Set(visibleServices.map((service: any) => service.categoryId))] },
+        active: true,
+        deletedAt: null,
+      },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+    const platforms = await this.db.platform.findMany({
+      where: {
+        id: {
+          in: [
+            ...new Set(
+              categories
+                .map((category: any) => category.platformId)
+                .filter(Boolean),
+            ),
+          ],
+        },
+        active: true,
+      },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
     return {
-      services: rules.flatMap((rule: any) => {
-        const service: any = serviceMap.get(rule.serviceId);
-        return service
-          ? [
-              {
-                ...this.applySiteRule(service, rule),
-                active: rule.active && service.active,
-              },
-            ]
-          : [];
+      platforms,
+      categories,
+      services: services.flatMap((service: any) => {
+        const rule = rules.find((item: any) => item.serviceId === service.id);
+        if (service.siteId !== siteId && !rule) return [];
+        return [
+          {
+            ...this.applySiteRule(service, rule),
+            active: service.siteId === siteId ? service.active : rule.active && service.active,
+          },
+        ];
       }),
       providers: [],
       providerServices: [],
@@ -564,7 +614,10 @@ export class CatalogService {
     const presentationRequested =
       input.name !== undefined || input.description !== undefined;
     const pricingRequested =
-      input.fixedRate !== undefined || input.markupPercent !== undefined;
+      input.fixedRate !== undefined ||
+      input.markupPercent !== undefined ||
+      input.min !== undefined ||
+      input.max !== undefined;
     const toggleRequested = input.active !== undefined;
     if (presentationRequested && !capabilities.presentation)
       throw new CatalogError(
@@ -592,6 +645,24 @@ export class CatalogService {
           "SERVICE_NOT_FOUND",
           "Assigned service not found",
         );
+      const service = await tx.service.findFirst({
+        where: { id: serviceId, active: true, deletedAt: null },
+      });
+      if (!service)
+        throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
+      const minOverride =
+        input.min === undefined ? before.minOverride : integer(input.min, "min", service.min);
+      const maxOverride =
+        input.max === undefined ? before.maxOverride : integer(input.max, "max", service.min);
+      if (
+        (minOverride != null && minOverride < service.min) ||
+        (maxOverride != null && maxOverride > service.max) ||
+        (minOverride != null && maxOverride != null && maxOverride < minOverride)
+      )
+        throw new CatalogError(
+          "RANGE_INVALID",
+          "Tenant quantity limits must stay within the upstream service range",
+        );
       const data: any = {
         ...(input.name !== undefined ? { displayName: name(input.name) } : {}),
         ...(input.description !== undefined
@@ -617,6 +688,8 @@ export class CatalogService {
               fixedRate: null,
             }
           : {}),
+        ...(input.min !== undefined ? { minOverride } : {}),
+        ...(input.max !== undefined ? { maxOverride } : {}),
       };
       const updated = await tx.siteServiceRule.update({
         where: { siteId_serviceId: { siteId, serviceId } },
@@ -636,44 +709,60 @@ export class CatalogService {
     });
   }
 
-  async adminOverview(includePricing = true) {
-    const [
-      platforms,
-      categories,
-      services,
-      priceGroups,
-      priceRules,
-      providerServices,
-      providers,
-      mappings,
-      priceHistory,
-    ] = await Promise.all([
-      this.db.platform.findMany({
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+  async adminOverview(includePricing = true, siteId = ROOT_SITE_ID) {
+    const providers = await this.db.provider.findMany({
+      where: { siteId, deletedAt: null },
+      select: { id: true, name: true, status: true },
+      orderBy: { name: "asc" },
+    });
+    const [platforms, categories, services, priceGroups, providerServices] =
+      await Promise.all([
+        this.db.platform.findMany({
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        }),
+        this.db.serviceCategory.findMany({
+          where: { deletedAt: null },
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        }),
+        this.db.service.findMany({
+          where: { siteId, deletedAt: null },
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+          take: 5000,
+        }),
+        this.db.priceGroup.findMany({
+          where: { siteId },
+          orderBy: { name: "asc" },
+        }),
+        this.db.providerService.findMany({
+          where: {
+            providerId: { in: providers.map((provider: any) => provider.id) },
+            active: true,
+          },
+          orderBy: { name: "asc" },
+          take: 5000,
+        }),
+      ]);
+    const [priceRules, mappings, priceHistory] = await Promise.all([
+      this.db.priceRule.findMany({
+        where: {
+          serviceId: { in: services.map((service: any) => service.id) },
+          priceGroupId: { in: priceGroups.map((group: any) => group.id) },
+        },
+        take: 15000,
       }),
-      this.db.serviceCategory.findMany({
-        where: { deletedAt: null },
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      this.db.serviceMapping.findMany({
+        where: {
+          serviceId: { in: services.map((service: any) => service.id) },
+          providerServiceId: {
+            in: providerServices.map((service: any) => service.id),
+          },
+        },
+        take: 15000,
       }),
-      this.db.service.findMany({
-        where: { deletedAt: null },
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-        take: 5000,
-      }),
-      this.db.priceGroup.findMany({ orderBy: { name: "asc" } }),
-      this.db.priceRule.findMany({ take: 15000 }),
-      this.db.providerService.findMany({
-        where: { active: true },
-        orderBy: { name: "asc" },
-        take: 5000,
-      }),
-      this.db.provider.findMany({
-        where: { deletedAt: null },
-        select: { id: true, name: true, status: true },
-        orderBy: { name: "asc" },
-      }),
-      this.db.serviceMapping.findMany({ take: 15000 }),
       this.db.servicePriceHistory.findMany({
+        where: {
+          serviceId: { in: services.map((service: any) => service.id) },
+        },
         orderBy: { createdAt: "desc" },
         take: 100,
       }),
@@ -832,7 +921,17 @@ export class CatalogService {
     };
   }
 
-  async serviceSourcePreview(id: string, providerServiceId: string) {
+  async serviceSourcePreview(
+    id: string,
+    providerServiceId: string,
+    siteId = ROOT_SITE_ID,
+  ) {
+    const ownedService = await this.db.service.findFirst({
+      where: { id, siteId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!ownedService)
+      throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
     const [current, target] = await Promise.all([
       this.serviceEditor(id, true),
       this.db.providerService.findFirst({
@@ -845,7 +944,7 @@ export class CatalogService {
         "Provider service not found",
       );
     const provider = await this.db.provider.findFirst({
-      where: { id: target.providerId, deletedAt: null },
+      where: { id: target.providerId, siteId, deletedAt: null },
       select: { id: true, name: true, status: true },
     });
     if (!provider)

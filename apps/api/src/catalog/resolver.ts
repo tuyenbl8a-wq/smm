@@ -1,7 +1,11 @@
 import { moneyUnits, resolveCustomerRate } from "./pricing.js";
 export class PricingResolver {
   constructor(private readonly db: any) {}
-  async resolveEffectiveProviderCost(serviceId: string, tx = this.db) {
+  async resolveEffectiveProviderCost(
+    serviceId: string,
+    tx = this.db,
+    siteId?: string,
+  ) {
     const mappings = await tx.serviceMapping.findMany({
       where: { serviceId, active: true },
       orderBy: { priority: "asc" },
@@ -17,6 +21,7 @@ export class PricingResolver {
     const providers = await tx.provider.findMany({
       where: {
         id: { in: rows.map((x: any) => x.providerId) },
+        ...(siteId ? { siteId } : {}),
         status: { in: ["ACTIVE", "DEGRADED"] },
         deletedAt: null,
       },
@@ -65,7 +70,7 @@ export class PricingResolver {
       tx.service.findUnique({ where: { id: serviceId } }),
       tx.user.findUnique({
         where: { id: userId },
-        select: { priceGroupId: true },
+        select: { priceGroupId: true, siteId: true },
       }),
     ]);
     if (
@@ -84,7 +89,7 @@ export class PricingResolver {
             providerCost: String(service.providerCost),
             safetyCost: moneyUnits(service.providerCost),
           }
-        : await this.resolveEffectiveProviderCost(serviceId, tx);
+        : await this.resolveEffectiveProviderCost(serviceId, tx, user?.siteId);
     const group = user?.priceGroupId
       ? await tx.priceGroup.findFirst({
           where: { id: user.priceGroupId, active: true },

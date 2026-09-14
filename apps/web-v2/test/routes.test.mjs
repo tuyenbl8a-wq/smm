@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import vm from "node:vm";
+import { adminPage } from "../dist/admin.js";
 const page = await readFile(
   new URL("../dist/page.js", import.meta.url),
   "utf8",
@@ -33,6 +35,94 @@ const adminUx = await readFile(
   new URL("../dist/admin-ux.js", import.meta.url),
   "utf8",
 );
+const inlineAdminScript = (route) => {
+  const html = adminPage("", route);
+  const match = /<script>([\s\S]*?)<\/script>/.exec(html);
+  assert.ok(match, `missing inline script for ${route}`);
+  return match[1];
+};
+
+test("generated Admin scripts parse as real JavaScript on operational routes", () => {
+  for (const route of [
+    "/admin/orders",
+    "/admin/orders/100002",
+    "/admin/panels",
+    "/admin/panel-plans",
+    "/admin/panel-subscriptions",
+  ]) {
+    assert.doesNotThrow(() => new vm.Script(inlineAdminScript(route)), route);
+  }
+});
+
+test("resolved Admin API data replaces the initial loading skeleton", async () => {
+  const contentNode = { innerHTML: "<div class=admin-skeleton></div>" };
+  const simpleNode = {
+    textContent: "",
+    hidden: false,
+    classList: { add() {}, remove() {}, toggle() {} },
+  };
+  const document = {
+    cookie: "",
+    body: simpleNode,
+    documentElement: simpleNode,
+    createElement: () => ({
+      _text: "",
+      innerHTML: "",
+      set textContent(value) {
+        this._text = String(value);
+        this.innerHTML = this._text;
+      },
+    }),
+    querySelector: (selector) =>
+      selector === "#content"
+        ? contentNode
+        : [".admin-scrim", ".admin-side nav a:not([hidden])"].includes(selector)
+          ? simpleNode
+          : null,
+    querySelectorAll: () => [],
+  };
+  const responses = [
+    {
+      user: { username: "owner" },
+      roles: ["ADMIN"],
+      permissions: ["settings.manage", "panels.resale.manage"],
+    },
+    { items: [] },
+  ];
+  const context = {
+    document,
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ success: true, data: responses.shift() }),
+    }),
+    AbortController,
+    AbortSignal,
+    URL,
+    URLSearchParams,
+    FormData,
+    Intl,
+    Date,
+    Set,
+    WeakSet,
+    Promise,
+    crypto,
+    navigator: { clipboard: { writeText: async () => undefined } },
+    location: { pathname: "/admin/panel-plans", href: "" },
+    setTimeout,
+    clearTimeout,
+    drawerToggle: simpleNode,
+    themeToggle: simpleNode,
+    refresh: simpleNode,
+    adminName: simpleNode,
+    adminRole: simpleNode,
+    avatar: simpleNode,
+  };
+  new vm.Script(inlineAdminScript("/admin/panel-plans")).runInNewContext(context);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.doesNotMatch(contentNode.innerHTML, /admin-skeleton/);
+  assert.match(contentNode.innerHTML, /Chưa có dữ liệu/);
+});
 test("public experience includes real catalog, navigation and responsive UI", () => {
   assert.match(page, /api\/v1\/public\/catalog/);
   assert.match(page, /DỊCH VỤ CỦA CHÚNG TÔI/);
@@ -198,6 +288,21 @@ test("admin orders keep website IDs distinct and use protected operations", () =
   ])
     assert.match(admin, new RegExp(operation));
   assert.match(admin + client, /x-csrf-token/);
+  for (const operation of [
+    "Provider - Update Status",
+    "Provider - Send Order",
+    "Start Count",
+    "confirmClearProviderOrderId",
+    "Full history / audit trail",
+    "bulkStatus",
+    "bulkSync",
+    "bulkRetry",
+    "bulkTag",
+    "bulkClearTags",
+    "selectedStats",
+  ])
+    assert.match(admin, new RegExp(operation));
+  assert.match(admin, /UNKNOWN.*không tự gửi lại/);
 });
 test("admin UI excludes secret fields and never stores sessions locally", () => {
   assert.match(

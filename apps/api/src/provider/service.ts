@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import { repriceMappedServices } from "../catalog/repricing.js";
 import { decryptSecret, encryptSecret, maskSecret } from "./crypto.js";
 import { StandardSmmAdapter } from "./adapter.js";
@@ -100,17 +101,17 @@ export class ProviderService {
       provider.timeoutMs,
     );
   }
-  private async provider(id: string) {
+  private async provider(siteId: string, id: string) {
     const provider = await this.db.provider.findFirst({
-      where: { id, deletedAt: null },
+      where: { id, siteId, deletedAt: null },
     });
     if (!provider)
       throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
     return provider;
   }
 
-  async fetchServices(id: string, query: any = {}) {
-    const provider = await this.provider(id),
+  async fetchServices(siteId: string, id: string, query: any = {}) {
+    const provider = await this.provider(siteId, id),
       rows = await this.adapter(provider).getServices(),
       search = String(query.search ?? "")
         .trim()
@@ -181,8 +182,8 @@ export class ProviderService {
     });
   }
 
-  async importPreview(id: string, input: any) {
-    const provider = await this.provider(id),
+  async importPreview(siteId: string, id: string, input: any) {
+    const provider = await this.provider(siteId, id),
       records = await this.selectedRecords(provider, input),
       category = await this.db.serviceCategory.findFirst({
         where: {
@@ -202,6 +203,7 @@ export class ProviderService {
         : null,
       this.db.priceGroup.findMany({
         where: {
+          siteId,
           active: true,
           code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] },
         },
@@ -226,9 +228,21 @@ export class ProviderService {
           },
         })
       : [];
-    const mapped = new Set(
-      existingMappings.map((row: any) => row.providerServiceId),
-    );
+    const tenantServices = existingMappings.length
+      ? await this.db.service.findMany({
+          where: {
+            siteId,
+            id: { in: existingMappings.map((row: any) => row.serviceId) },
+          },
+          select: { id: true },
+        })
+      : [];
+    const tenantServiceIds = new Set(tenantServices.map((row: any) => row.id)),
+      mapped = new Set(
+        existingMappings
+          .filter((row: any) => tenantServiceIds.has(row.serviceId))
+          .map((row: any) => row.providerServiceId),
+      );
     return {
       count: records.length,
       items: records.map((record) => {
@@ -295,8 +309,8 @@ export class ProviderService {
     };
   }
 
-  async importApply(actorId: string, id: string, input: any) {
-    const provider = await this.provider(id),
+  async importApply(actorId: string, siteId: string, id: string, input: any) {
+    const provider = await this.provider(siteId, id),
       records = await this.selectedRecords(provider, input),
       categoryId = String(input.categoryId ?? ""),
       action = normalizeExistingImportAction(input.existingAction);
@@ -325,6 +339,7 @@ export class ProviderService {
       const priceGroups = requestedGroupCodes.length
         ? await tx.priceGroup.findMany({
             where: {
+              siteId,
               active: true,
               code: { in: requestedGroupCodes },
             },
@@ -352,9 +367,23 @@ export class ProviderService {
             },
           })
         : [];
-      const mappingMap = new Map(
-        mappings.map((row: any) => [row.providerServiceId, row]),
-      );
+      const tenantServices = mappings.length
+        ? await tx.service.findMany({
+            where: {
+              siteId,
+              id: { in: mappings.map((row: any) => row.serviceId) },
+            },
+            select: { id: true },
+          })
+        : [];
+      const tenantServiceIds = new Set(
+          tenantServices.map((row: any) => row.id),
+        ),
+        mappingMap = new Map(
+          mappings
+            .filter((row: any) => tenantServiceIds.has(row.serviceId))
+            .map((row: any) => [row.providerServiceId, row]),
+        );
       let created = 0,
         updated = 0,
         skipped = 0;
@@ -399,7 +428,7 @@ export class ProviderService {
               syncAverageTime: input.syncAverageTime === true,
             };
           await tx.service.update({
-            where: { id: mapping.serviceId },
+            where: { id: mapping.serviceId, siteId },
             data: {
               ...(all || currentSync.syncName ? { name: record.name } : {}),
               ...(all || currentSync.syncCost
@@ -456,6 +485,7 @@ export class ProviderService {
           });
         const local = await tx.service.create({
           data: {
+            siteId,
             categoryId,
             name: record.name,
             description:
@@ -566,9 +596,11 @@ export class ProviderService {
           id,
           changedProviderServiceIds,
           "provider-service-import",
+          siteId,
         );
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "PROVIDER_SERVICE_IMPORT",
           resource: "provider",
@@ -586,8 +618,8 @@ export class ProviderService {
     });
   }
 
-  async syncLogs(id: string, page = 1) {
-    await this.provider(id);
+  async syncLogs(siteId: string, id: string, page = 1) {
+    await this.provider(siteId, id);
     const limit = 50;
     return this.db.providerSyncLog.findMany({
       where: { providerId: id },
@@ -596,9 +628,9 @@ export class ProviderService {
       take: limit,
     });
   }
-  async list() {
+  async list(siteId: string) {
     const rows = await this.db.provider.findMany({
-      where: { deletedAt: null },
+      where: { siteId, deletedAt: null },
       orderBy: [{ priority: "asc" }, { name: "asc" }],
     });
     return rows.map(({ apiKeyEncrypted, ...x }: any) => ({
@@ -609,7 +641,72 @@ export class ProviderService {
       ),
     }));
   }
-  async create(actorId: string, input: any) {
+  async managedUpstream(siteId: string) {
+    const provider = await this.db.provider.findFirst({
+      where: { siteId, managedParentSiteId: { not: null }, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        apiUrl: true,
+        status: true,
+        managedParentSiteId: true,
+        managedApiKeyId: true,
+        updatedAt: true,
+      },
+    });
+    if (!provider) return null;
+    const key = provider.managedApiKeyId
+      ? await this.db.apiKey.findFirst({
+          where: { id: provider.managedApiKeyId, siteId: provider.managedParentSiteId! },
+          select: { keyPrefix: true, active: true, lastUsedAt: true },
+        })
+      : null;
+    const {
+      managedApiKeyId: _managedApiKeyId,
+      apiKeyEncrypted: _apiKeyEncrypted,
+      ...safe
+    } = provider;
+    return { ...safe, key };
+  }
+
+  async regenerateManagedKey(actorId: string, siteId: string) {
+    const raw = `smm_${randomBytes(32).toString("base64url")}`;
+    return this.db.$transaction(async (tx: any) => {
+      const provider = await tx.provider.findFirst({
+        where: { siteId, managedParentSiteId: { not: null }, deletedAt: null },
+      });
+      if (!provider?.managedApiKeyId)
+        throw new ProviderConfigError(
+          "MANAGED_UPSTREAM_NOT_FOUND",
+          "Managed parent connection not found",
+        );
+      const key = await tx.apiKey.update({
+        where: { id: provider.managedApiKeyId },
+        data: {
+          keyPrefix: raw.slice(0, 12),
+          keyHash: createHash("sha256").update(raw).digest("hex"),
+          active: true,
+        },
+      });
+      await tx.provider.update({
+        where: { id: provider.id },
+        data: { apiKeyEncrypted: encryptSecret(raw, this.encryptionKey) },
+      });
+      await tx.auditLog.create({
+        data: {
+          siteId,
+          actorId,
+          action: "MANAGED_UPSTREAM_KEY_REGENERATE",
+          resource: "provider",
+          resourceId: provider.id,
+          before: { keyPrefix: "[REDACTED]" },
+          after: { keyPrefix: key.keyPrefix },
+        },
+      });
+      return { key: raw, prefix: key.keyPrefix };
+    });
+  }
+  async create(actorId: string, siteId: string, input: any) {
     const apiUrl = String(input.apiUrl ?? "");
     try {
       const u = new URL(apiUrl);
@@ -633,6 +730,7 @@ export class ProviderService {
         "Provider key is too short",
       );
     const data = {
+      siteId,
       name: String(input.name ?? "")
         .trim()
         .slice(0, 120),
@@ -659,6 +757,7 @@ export class ProviderService {
       const item = await tx.provider.create({ data });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "PROVIDER_CREATE",
           resource: "provider",
@@ -669,9 +768,9 @@ export class ProviderService {
       return { id: item.id, name: item.name };
     });
   }
-  async detail(id: string) {
+  async detail(siteId: string, id: string) {
     const provider = await this.db.provider.findFirst({
-      where: { id, deletedAt: null },
+      where: { id, siteId, deletedAt: null },
     });
     if (!provider)
       throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
@@ -701,10 +800,20 @@ export class ProviderService {
       logs,
     };
   }
-  async update(actorId: string, id: string, input: any) {
-    const before = await this.db.provider.findUnique({ where: { id } });
+  async update(actorId: string, siteId: string, id: string, input: any) {
+    const before = await this.db.provider.findFirst({
+      where: { id, siteId, deletedAt: null },
+    });
     if (!before)
       throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
+    if (
+      before.managedParentSiteId &&
+      Object.keys(input ?? {}).some((key) => key !== "apiKey")
+    )
+      throw new ProviderConfigError(
+        "MANAGED_UPSTREAM_IMMUTABLE",
+        "Managed parent endpoint and provider settings cannot be edited",
+      );
     const data: any = {
       ...(input.name != null
         ? { name: String(input.name).trim().slice(0, 120) }
@@ -750,9 +859,10 @@ export class ProviderService {
         this.encryptionKey,
       );
     return this.db.$transaction(async (tx: any) => {
-      const item = await tx.provider.update({ where: { id }, data });
+      const item = await tx.provider.update({ where: { id, siteId }, data });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "PROVIDER_UPDATE",
           resource: "provider",
@@ -768,10 +878,10 @@ export class ProviderService {
     });
   }
 
-  async archive(actorId: string, id: string) {
+  async archive(actorId: string, siteId: string, id: string) {
     return this.db.$transaction(async (tx: any) => {
       const before = await tx.provider.findFirst({
-        where: { id, deletedAt: null },
+        where: { id, siteId, deletedAt: null },
       });
       if (!before)
         throw new ProviderConfigError(
@@ -779,7 +889,7 @@ export class ProviderService {
           "Không tìm thấy nhà cung cấp",
         );
       const item = await tx.provider.update({
-        where: { id },
+        where: { id, siteId },
         data: {
           status: "INACTIVE",
           deletedAt: new Date(),
@@ -801,6 +911,7 @@ export class ProviderService {
       });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "PROVIDER_ARCHIVE",
           resource: "provider",
@@ -815,8 +926,10 @@ export class ProviderService {
       };
     });
   }
-  async sync(actorId: string, id: string) {
-    const provider = await this.db.provider.findUnique({ where: { id } });
+  async sync(actorId: string, siteId: string, id: string) {
+    const provider = await this.db.provider.findFirst({
+      where: { id, siteId, deletedAt: null },
+    });
     if (!provider)
       throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
     const syncLog = this.db.providerSyncLog?.create
@@ -902,7 +1015,7 @@ export class ProviderService {
           });
       const pricingAvailable = Boolean(tx.serviceMapping);
       const pricing = pricingAvailable
-        ? await repriceMappedServices(tx, id, changed)
+        ? await repriceMappedServices(tx, id, changed, "provider-sync", siteId)
         : {
             priceChanged: 0,
             priceIncreased: 0,
@@ -911,11 +1024,12 @@ export class ProviderService {
             unavailable: 0,
           };
       await tx.provider.update({
-        where: { id },
+        where: { id, siteId },
         data: { lastSyncAt: now, lastSuccessAt: now },
       });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "PROVIDER_SERVICES_SYNC",
           resource: "provider",
@@ -954,8 +1068,10 @@ export class ProviderService {
     return result;
   }
 
-  async test(id: string) {
-    const provider = await this.db.provider.findUnique({ where: { id } });
+  async test(siteId: string, id: string) {
+    const provider = await this.db.provider.findFirst({
+      where: { id, siteId, deletedAt: null },
+    });
     if (!provider)
       throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
     return this.adapter(provider).getBalance();
