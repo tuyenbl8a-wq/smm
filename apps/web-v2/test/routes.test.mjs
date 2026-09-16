@@ -789,7 +789,7 @@ test("three new references render nine distinct and responsive interfaces", asyn
     "Creator · hồng tím năng lượng",
   ])
     assert.ok(adminOperations.includes(copy));
-  for (const thumb of ["thumb-glass", "thumb-business", "thumb-creator"])
+  for (const thumb of ["thumb-glass", "thumb-ocean", "thumb-creator"])
     assert.ok(admin.includes(thumb));
 });
 test("final reference pair completes exactly ten unique three-scope architectures", async () => {
@@ -898,6 +898,10 @@ test("reference themes provide 30 concrete renderers without document wrappers",
       const html = fullPageThemePreview("", id, scope);
       assert.match(direct, /data-renderer="[^"]+"/);
       assert.match(html, /data-renderer="[^"]+"/);
+      assert.match(
+        html,
+        new RegExp(`data-theme-architecture="${id.toLowerCase()}-${scope}"`),
+      );
       const renderer = /data-renderer="([^"]+)"/.exec(html)?.[1];
       assert.equal(isMeaningfulReferenceRender(html, scope), true);
       const regionClasses =
@@ -918,7 +922,7 @@ test("reference themes provide 30 concrete renderers without document wrappers",
               ];
       const regions = regionClasses.map((className) => {
         const content = new RegExp(
-          `class="${className}">([\\s\\S]*?)<\\/`,
+          `<(?:nav|section|aside|footer) class="[^"]*${className}[^"]*">([\\s\\S]*?)<\\/(?:nav|section|aside|footer)>`,
         ).exec(html)?.[1];
         return content
           ?.replace(/<[^>]+>/g, " ")
@@ -938,12 +942,12 @@ test("reference themes provide 30 concrete renderers without document wrappers",
         .map(
           (className) =>
             new RegExp(
-              `<(?:nav|section|aside|footer) class="${className}">([\\s\\S]*?)<\\/(?:nav|section|aside|footer)>`,
+              `<(?:nav|section|aside|footer) class="[^"]*${className}[^"]*">([\\s\\S]*?)<\\/(?:nav|section|aside|footer)>`,
             ).exec(html)?.[1] ?? "",
         )
         .join("")
         .replace(/[^<]*(<[^>]+>)[^<]*/g, "$1")
-        .replace(/\s(?:class|href)="[^"]*"/g, "");
+        .replace(/\shref="[^"]*"/g, "");
       domArchitectures.add(authoredDom);
     }
     assert.equal(
@@ -967,7 +971,13 @@ test("reference themes provide 30 concrete renderers without document wrappers",
     new URL("../dist/themes.js", import.meta.url),
     "utf8",
   );
+  const rendererSource = await readFile(
+    new URL("../dist/reference-theme-renderers.js", import.meta.url),
+    "utf8",
+  );
   assert.doesNotMatch(runtime, /while\s*\(document\.body\.firstChild\)/);
+  assert.doesNotMatch(rendererSource, /DichVu1st/);
+  assert.match(rendererSource, /data-theme-content=\\?"brandTitle/);
 });
 
 test("admin forms and operational orders expose polished real contracts", () => {

@@ -1,373 +1,193 @@
 export type ReferenceScope = "landing" | "auth" | "customer";
 export type ReferenceRenderer = (html: string) => string;
 
-export const renderSoftBeigeLanding: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="hero',
-      'data-renderer="beige-estate" class="hero beige-estate',
-    )
-    .replace(
-      '<div class="container hero-grid">',
-      `<nav class="theme-navigation"><article><a href="#services">Bộ sưu tập</a><a href="#pricing">Bảng giá</a></article></nav><section class="theme-story"><article><strong>Tăng trưởng thanh lịch</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></article></section><aside class="theme-offer"><article><h2>Dịch vụ tuyển chọn</h2><p>TikTok · Facebook · Instagram · YouTube</p></article></aside><footer class="theme-cta"><article><a href="/register">Tư vấn thương hiệu →</a></article></footer><div class="container hero-grid">`,
-    );
-export const renderSoftBeigeAuth: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="auth',
-      'data-renderer="beige-hospitality" class="auth beige-hospitality',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="auth-navigation"><article>Quyền truy cập riêng</article></nav><section class="auth-visual"><article><h1>Không gian premium</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></article></section><aside class="auth-form-region"><article><h2>Đăng nhập an toàn</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></article></aside><footer class="auth-assurance"><article>Hỗ trợ tận tâm</article></footer>`,
-    );
-export const renderSoftBeigeCustomer: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="customer',
-      'data-renderer="beige-ledger" class="customer beige-ledger',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="dashboard-navigation"><article>Điều hành</article></nav><section class="dashboard-wallet"><article><small>Tài chính</small><h2>Số dư khả dụng</h2></article></section><aside class="dashboard-kpis"><article><strong>Dịch vụ đang dùng</strong><span> Cập nhật theo dữ liệu tài khoản</span></article></aside><footer class="dashboard-orders"><article><strong>Đơn hàng gần đây</strong><a href="/orders"> Xem chi tiết →</a></article></footer>`,
-    );
+type ThemeScreens = Record<
+  ReferenceScope,
+  { renderer: string; regions: string }
+>;
 
-export const renderJapaneseZenLanding: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="hero',
-      'data-renderer="zen-pavilion" class="hero zen-pavilion',
-    )
-    .replace(
-      '<div class="container hero-grid">',
-      `<nav class="theme-navigation"><div><span><a href="#services">Lối vào tĩnh tại</a><a href="#pricing">Bảng giá</a></span></div></nav><section class="theme-story"><div><span><strong>Tăng trưởng từ giá trị thật</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></span></div></section><aside class="theme-offer"><div><span><h2>Dịch vụ hài hòa</h2><p>TikTok · Facebook · Instagram · YouTube</p></span></div></aside><footer class="theme-cta"><div><span><a href="/register">Bắt đầu hành trình →</a></span></div></footer><div class="container hero-grid">`,
-    );
-export const renderJapaneseZenAuth: ReferenceRenderer = (html) =>
-  html
-    .replace('class="auth', 'data-renderer="zen-shoji" class="auth zen-shoji')
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="auth-navigation"><div><span>Cổng shoji</span></div></nav><section class="auth-visual"><div><span><h1>Khu vườn bình tâm</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></span></div></section><aside class="auth-form-region"><div><span><h2>Xác thực tài khoản</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></span></div></aside><footer class="auth-assurance"><div><span>An tâm đồng hành</span></div></footer>`,
-    );
-export const renderJapaneseZenCustomer: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="customer',
-      'data-renderer="zen-ledger" class="customer zen-ledger',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="dashboard-navigation"><div><span>Mục lục vận hành</span></div></nav><section class="dashboard-wallet"><div><span><small>Tài chính</small><h2>Tài chính cân bằng</h2></span></div></section><aside class="dashboard-kpis"><div><span><strong>Dịch vụ tinh gọn</strong><span> Cập nhật theo dữ liệu tài khoản</span></span></div></aside><footer class="dashboard-orders"><div><span><strong>Nhật ký đơn hàng</strong><a href="/orders"> Xem chi tiết →</a></span></div></footer>`,
-    );
+const brand = `<span data-theme-content="brandTitle">Thương hiệu của bạn</span>`;
+const tagline = `<span data-theme-content="tagline">Nền tảng tăng trưởng mạng xã hội</span>`;
+const themedScreens: Record<string, ThemeScreens> = {
+  AI_COSMIC_FUTURE: {
+    landing: {
+      renderer: "ai-cosmic-orbit",
+      regions: `<nav class="theme-navigation ai-orbit-nav"><output>${brand}<span>01 / AI NETWORK</span><a href="#services">Mô-đun</a></output></nav><section class="theme-story ai-neural-core"><output><small>INTELLIGENCE ONLINE</small><strong data-theme-content="heroTitle">Tăng trưởng bằng sức mạnh AI</strong><p data-theme-content="heroSubtitle">Phân tích tín hiệu, tối ưu chiến dịch và mở rộng cộng đồng.</p><i class="neural-orbit" aria-hidden="true"></i></output></section><aside class="theme-offer ai-signal-panel"><output><small>LIVE SIGNAL</small><b>98.7%</b><span>Độ chính xác dự báo</span></output></aside><footer class="theme-cta ai-command-strip"><output>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">Kích hoạt AI</span> →</a></output></footer>`,
+    },
+    auth: {
+      renderer: "ai-cognitive-gateway",
+      regions: `<nav class="auth-navigation ai-auth-status"><output>${brand}<span>NEURAL ACCESS / 01</span></output></nav><section class="auth-visual ai-identity-orbit"><output><small>IDENTITY LAYER</small><h1>Truy cập hệ thống AI</h1><i class="neural-orbit" aria-hidden="true"></i></output></section><aside class="auth-form-region ai-auth-guide"><output><b>Xác thực thông minh</b><span>Phiên truy cập được bảo vệ liên tục.</span></output></aside><footer class="auth-assurance ai-auth-foot"><output>AI GUARD · ONLINE · 24/7</output></footer>`,
+    },
+    customer: {
+      renderer: "ai-intelligence-console",
+      regions: `<nav class="dashboard-navigation ai-console-nav"><output><span>AI</span><b>Agent console</b><small>ONLINE</small></output></nav><section class="dashboard-wallet ai-prediction"><output><small>DỰ BÁO</small><h2>Đà tăng trưởng</h2><b>+24.8%</b></output></section><aside class="dashboard-kpis ai-model-stack"><output><span>01 Reach model</span><span>02 Order signal</span><span>03 Risk monitor</span></output></aside><footer class="dashboard-orders ai-queue"><output><b>AI operation queue</b><a href="/orders">Mở hàng đợi →</a></output></footer>`,
+    },
+  },
+  CREATOR_POP: {
+    landing: {
+      renderer: "creator-pop-collage",
+      regions: `<nav class="theme-navigation creator-ticker"><mark>${brand}</mark><span>#CREATE&nbsp;&nbsp;#SHARE&nbsp;&nbsp;#GROW</span></nav><section class="theme-story creator-cutout"><mark><small>TRENDING NOW ✦</small><strong data-theme-content="heroTitle">Biến ý tưởng thành xu hướng</strong><p data-theme-content="heroSubtitle">Công cụ tăng trưởng dành cho thế hệ sáng tạo.</p></mark><i class="creator-sticker">LIKE!</i><i class="creator-sticker">WOW</i></section><aside class="theme-offer creator-social-card"><mark><b>@yourbrand</b><span>12.8M views</span><span>↗ 48% tuần này</span></mark></aside><footer class="theme-cta creator-swipe"><mark>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">Bắt đầu sáng tạo</span> ↗</a></mark></footer>`,
+    },
+    auth: {
+      renderer: "creator-studio-pass",
+      regions: `<nav class="auth-navigation creator-auth-nav"><mark>${brand} ✦ STUDIO PASS</mark></nav><section class="auth-visual creator-auth-poster"><mark><small>HELLO CREATOR!</small><h1>Trở lại studio</h1><i>★</i><i>♥</i></mark></section><aside class="auth-form-region creator-auth-note"><mark><b>Đăng nhập & bắt đầu</b><span>Nội dung tuyệt vời đang chờ bạn.</span></mark></aside><footer class="auth-assurance creator-auth-foot"><mark>#CREATORS_GROW_TOGETHER</mark></footer>`,
+    },
+    customer: {
+      renderer: "creator-performance-studio",
+      regions: `<nav class="dashboard-navigation creator-ribbon"><mark>CREATOR<br>HUB</mark></nav><section class="dashboard-wallet creator-score"><mark><small>CREATOR SCORE</small><h2>Đang lên xu hướng</h2><b>9.4</b></mark></section><aside class="dashboard-kpis creator-channel-cards"><mark><span>TikTok ↗</span><span>Instagram ↗</span><span>YouTube ↗</span></mark></aside><footer class="dashboard-orders creator-campaigns"><mark><b>Chiến dịch của bạn</b><a href="/orders">Xem tất cả →</a></mark></footer>`,
+    },
+  },
+  URBAN_LIME_BRUTAL: {
+    landing: {
+      renderer: "urban-lime-poster",
+      regions: `<nav class="theme-navigation brutal-index"><hgroup><b>INDEX / 001</b>${brand}<a href="#services">SERVICES ↓</a></hgroup></nav><section class="theme-story brutal-manifesto"><hgroup><small>NO BORING GROWTH</small><strong data-theme-content="heroTitle">Ý TƯỞNG LỚN.<br>THƯƠNG HIỆU LỚN.</strong><p data-theme-content="heroSubtitle">TỐC ĐỘ. MINH BẠCH. HIỆU QUẢ.</p></hgroup></section><aside class="theme-offer brutal-stamp"><hgroup><b>24/7</b><span>GROWTH<br>DEPARTMENT</span></hgroup></aside><footer class="theme-cta brutal-marquee"><hgroup>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">HÀNH ĐỘNG NGAY</span> →</a></hgroup></footer>`,
+    },
+    auth: {
+      renderer: "urban-access-sheet",
+      regions: `<nav class="auth-navigation brutal-auth-index"><hgroup>FORM / 001 — ${brand}</hgroup></nav><section class="auth-visual brutal-auth-title"><hgroup><small>AUTHORIZED USERS ONLY</small><h1>ĐĂNG<br>NHẬP.</h1></hgroup></section><aside class="auth-form-region brutal-auth-rule"><hgroup><b>NHẬP THÔNG TIN →</b><span>KHÔNG RƯỜM RÀ. KHÔNG CHỜ ĐỢI.</span></hgroup></aside><footer class="auth-assurance brutal-auth-foot"><hgroup>SECURE SESSION © 2026</hgroup></footer>`,
+    },
+    customer: {
+      renderer: "urban-data-newsroom",
+      regions: `<nav class="dashboard-navigation brutal-dashboard-index"><hgroup>01<br>DATA<br>DESK</hgroup></nav><section class="dashboard-wallet brutal-ledger"><hgroup><small>BALANCE / LIVE</small><h2>SỔ CÁI</h2><b>READY</b></hgroup></section><aside class="dashboard-kpis brutal-metrics"><hgroup><span>ORDERS / 01</span><span>REACH / 02</span><span>SPEED / 03</span></hgroup></aside><footer class="dashboard-orders brutal-orders"><hgroup><b>ORDER GRID</b><a href="/orders">OPEN →</a></hgroup></footer>`,
+    },
+  },
+  CYBER_NEON_CITY: {
+    landing: {
+      renderer: "cyber-neon-metropolis",
+      regions: `<nav class="theme-navigation cyber-city-nav"><code>${brand}<span>DISTRICT 07</span><a href="#services">ENTER GRID</a></code></nav><section class="theme-story cyber-skyline"><code><small>NEON NETWORK // ONLINE</small><strong data-theme-content="heroTitle">Thành phố không ngủ.<br>Thương hiệu không dừng.</strong><p data-theme-content="heroSubtitle">Kết nối chiến dịch với nhịp đập của thế giới số.</p><i class="city-grid" aria-hidden="true"></i></code></section><aside class="theme-offer cyber-billboard"><code><small>LIVE / 23:59</small><b>+128K</b><span>SOCIAL PULSE</span></code></aside><footer class="theme-cta cyber-transit"><code>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">Vào thành phố</span> ↗</a></code></footer>`,
+    },
+    auth: {
+      renderer: "cyber-identity-portal",
+      regions: `<nav class="auth-navigation cyber-auth-nav"><code>${brand} // ID GATE</code></nav><section class="auth-visual cyber-auth-city"><code><small>SECTOR 09</small><h1>Identity<br>portal</h1><i class="city-grid"></i></code></section><aside class="auth-form-region cyber-auth-status"><code><b>ACCESS REQUEST</b><span>Encrypted city network</span></code></aside><footer class="auth-assurance cyber-auth-foot"><code>CYAN LINE ━━━ MAGENTA LINE</code></footer>`,
+    },
+    customer: {
+      renderer: "cyber-city-telemetry",
+      regions: `<nav class="dashboard-navigation cyber-rail"><code>NEON<br>OPS<br>07</code></nav><section class="dashboard-wallet cyber-telemetry"><code><small>LIVE TELEMETRY</small><h2>Network pulse</h2><b>99.98%</b></code></section><aside class="dashboard-kpis cyber-districts"><code><span>SHIBUYA / ACTIVE</span><span>SEOUL / ACTIVE</span><span>SAIGON / ACTIVE</span></code></aside><footer class="dashboard-orders cyber-mission"><code><b>MISSION QUEUE</b><a href="/orders">EXECUTE →</a></code></footer>`,
+    },
+  },
+  PRISM_GLASS: {
+    landing: {
+      renderer: "prism-glass-atrium",
+      regions: `<nav class="theme-navigation prism-floating-nav"><figure>${brand}<span>PRISM / 01</span><a href="#services">Khám phá</a></figure></nav><section class="theme-story prism-glass-hero"><figure><small>LIGHT. COLOR. GROWTH.</small><strong data-theme-content="heroTitle">Tăng trưởng qua một lăng kính mới</strong><p data-theme-content="heroSubtitle">Trải nghiệm trong suốt, linh hoạt và đầy chiều sâu.</p><i class="prism-sphere"></i></figure></section><aside class="theme-offer prism-layer-card"><figure><small>REFRACTION</small><b>∞</b><span>Khả năng mở rộng</span></figure></aside><footer class="theme-cta prism-dock"><figure>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">Mở không gian</span> →</a></figure></footer>`,
+    },
+    auth: {
+      renderer: "prism-crystal-suite",
+      regions: `<nav class="auth-navigation prism-auth-nav"><figure>${brand}<span>Private layer</span></figure></nav><section class="auth-visual prism-auth-orb"><figure><small>WELCOME THROUGH</small><h1>Không gian<br>trong suốt</h1><i class="prism-sphere"></i></figure></section><aside class="auth-form-region prism-auth-card"><figure><b>Crystal access</b><span>Đăng nhập vào lớp làm việc riêng.</span></figure></aside><footer class="auth-assurance prism-auth-foot"><figure>PRIVACY · CLARITY · CONTROL</figure></footer>`,
+    },
+    customer: {
+      renderer: "prism-luminous-workspace",
+      regions: `<nav class="dashboard-navigation prism-dock-nav"><figure>◇<br>PRISM DOCK</figure></nav><section class="dashboard-wallet prism-wallet"><figure><small>AVAILABLE LIGHT</small><h2>Không gian tài chính</h2><b>READY</b></figure></section><aside class="dashboard-kpis prism-floating-stack"><figure><span>Reach</span><span>Orders</span><span>Velocity</span></figure></aside><footer class="dashboard-orders prism-flow"><figure><b>Luồng đơn hàng</b><a href="/orders">Mở workspace →</a></figure></footer>`,
+    },
+  },
+  OCEAN_PREMIUM: {
+    landing: {
+      renderer: "ocean-premium-horizon",
+      regions: `<nav class="theme-navigation ocean-deck-nav"><blockquote>${brand}<span>OCEAN STANDARD</span><a href="#services">Dịch vụ</a></blockquote></nav><section class="theme-story ocean-horizon"><blockquote><small>CONFIDENCE AT SCALE</small><strong data-theme-content="heroTitle">Vững tay lái.<br>Vươn xa hơn.</strong><p data-theme-content="heroSubtitle">Hạ tầng tăng trưởng chuyên nghiệp cho hành trình dài hạn.</p><i class="ocean-wave"></i></blockquote></section><aside class="theme-offer ocean-coordinate"><blockquote><small>10°46′N 106°41′E</small><b>24/7</b><span>Điều hành liên tục</span></blockquote></aside><footer class="theme-cta ocean-route"><blockquote>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">Khởi hành</span> →</a></blockquote></footer>`,
+    },
+    auth: {
+      renderer: "ocean-secure-harbor",
+      regions: `<nav class="auth-navigation ocean-auth-nav"><blockquote>${brand}<span>SECURE HARBOR</span></blockquote></nav><section class="auth-visual ocean-auth-horizon"><blockquote><small>WELCOME ABOARD</small><h1>Trở về<br>bến an toàn</h1><i class="ocean-wave"></i></blockquote></section><aside class="auth-form-region ocean-auth-guide"><blockquote><b>Member access</b><span>Phiên truy cập được mã hóa.</span></blockquote></aside><footer class="auth-assurance ocean-auth-foot"><blockquote>PROFESSIONAL · RELIABLE · ALWAYS ON</blockquote></footer>`,
+    },
+    customer: {
+      renderer: "ocean-command-dashboard",
+      regions: `<nav class="dashboard-navigation ocean-rail"><blockquote>OCEAN<br>COMMAND</blockquote></nav><section class="dashboard-wallet ocean-position"><blockquote><small>CURRENT POSITION</small><h2>Hành trình tăng trưởng</h2><b>ON COURSE</b></blockquote></section><aside class="dashboard-kpis ocean-instruments"><blockquote><span>Speed 24 kn</span><span>Reach 82%</span><span>Orders 128</span></blockquote></aside><footer class="dashboard-orders ocean-log"><blockquote><b>Nhật ký hành trình</b><a href="/orders">Xem chi tiết →</a></blockquote></footer>`,
+    },
+  },
+  BLUE_BUSINESS: {
+    landing: {
+      renderer: "blue-business-report",
+      regions: `<nav class="theme-navigation business-nav"><div>${brand}<span>GIẢI PHÁP</span><a href="#services">Năng lực</a><a href="#pricing">Bảng giá</a></div></nav><section class="theme-story business-lead"><div><small>ĐỐI TÁC TĂNG TRƯỞNG</small><strong data-theme-content="heroTitle">Hiệu suất rõ ràng.<br>Kết quả đáng tin cậy.</strong><p data-theme-content="heroSubtitle">Một nền tảng vận hành có cấu trúc cho doanh nghiệp hiện đại.</p></div></section><aside class="theme-offer business-proof"><div><small>HIỆU SUẤT QUÝ NÀY</small><b>+32%</b><span>Tăng trưởng ổn định</span></div></aside><footer class="theme-cta business-actions"><div>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">Nhận tư vấn</span> →</a></div></footer>`,
+    },
+    auth: {
+      renderer: "blue-business-trust",
+      regions: `<nav class="auth-navigation business-auth-nav"><div>${brand}<span>BUSINESS PORTAL</span></div></nav><section class="auth-visual business-auth-proof"><div><small>TRUSTED OPERATIONS</small><h1>Chào mừng<br>trở lại</h1><p>Quản trị tập trung. Dữ liệu minh bạch.</p></div></section><aside class="auth-form-region business-auth-guide"><div><b>Đăng nhập doanh nghiệp</b><span>Hỗ trợ bảo mật nhiều lớp.</span></div></aside><footer class="auth-assurance business-auth-foot"><div>SECURE · COMPLIANT · RELIABLE</div></footer>`,
+    },
+    customer: {
+      renderer: "blue-business-kpi-board",
+      regions: `<nav class="dashboard-navigation business-rail"><div>EXECUTIVE<br>BOARD</div></nav><section class="dashboard-wallet business-summary"><div><small>TỔNG QUAN</small><h2>Hiệu suất kinh doanh</h2><b>Q3 / 2026</b></div></section><aside class="dashboard-kpis business-kpi-strip"><div><span>REACH ↗</span><span>ORDERS ↗</span><span>ROI ↗</span></div></aside><footer class="dashboard-orders business-table-link"><div><b>Báo cáo đơn hàng</b><a href="/orders">Xem báo cáo →</a></div></footer>`,
+    },
+  },
+  ZEN_JAPANESE: {
+    landing: {
+      renderer: "zen-japanese-pavilion",
+      regions: `<nav class="theme-navigation zen-nav"><div><span class="zen-seal">静</span>${brand}<a href="#services">Dịch vụ</a><a href="#pricing">Bảng giá</a></div></nav><section class="theme-story zen-ink-story"><div><small>静けさの中で成長する</small><strong data-theme-content="heroTitle">Tăng trưởng<br>trong tĩnh tại.</strong><p data-theme-content="heroSubtitle">Tinh giản từng bước. Bền vững từng kết quả.</p><i class="zen-sun"></i></div></section><aside class="theme-offer zen-note"><div><b>間</b><span>Khoảng thở tạo nên cân bằng.</span></div></aside><footer class="theme-cta zen-path"><div>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">Bắt đầu hành trình</span> →</a></div></footer>`,
+    },
+    auth: {
+      renderer: "zen-shoji-retreat",
+      regions: `<nav class="auth-navigation zen-auth-nav"><div><span class="zen-seal">静</span>${brand}</div></nav><section class="auth-visual zen-auth-garden"><div><small>おかえりなさい</small><h1>Trở về<br>tĩnh tại.</h1><i class="zen-sun"></i></div></section><aside class="auth-form-region zen-auth-guide"><div><b>Cổng thành viên</b><span>Đăng nhập nhẹ nhàng và an toàn.</span></div></aside><footer class="auth-assurance zen-auth-foot"><div>信頼 · AN TÂM ĐỒNG HÀNH</div></footer>`,
+    },
+    customer: {
+      renderer: "zen-quiet-ledger",
+      regions: `<nav class="dashboard-navigation zen-rail"><div><span class="zen-seal">静</span><b>Mục lục</b></div></nav><section class="dashboard-wallet zen-balance"><div><small>CÂN BẰNG</small><h2>Dòng chảy tài chính</h2><b>穏</b></div></section><aside class="dashboard-kpis zen-stones"><div><span>Đơn hàng</span><span>Tăng trưởng</span><span>Hỗ trợ</span></div></aside><footer class="dashboard-orders zen-journal"><div><b>Nhật ký vận hành</b><a href="/orders">Mở nhật ký →</a></div></footer>`,
+    },
+  },
+  BLACK_GOLD_LUXURY: {
+    landing: {
+      renderer: "black-gold-editorial",
+      regions: `<nav class="theme-navigation luxury-nav"><header><span>EST. 2026</span>${brand}<a href="#services">COLLECTION</a></header></nav><section class="theme-story luxury-monument"><header><small>THE PRIVATE STANDARD</small><strong data-theme-content="heroTitle">Dấu ấn của<br>sự khác biệt.</strong><p data-theme-content="heroSubtitle">Dịch vụ đặc tuyển cho những thương hiệu dẫn đầu.</p><i class="gold-crown">♛</i></header></section><aside class="theme-offer luxury-edition"><header><small>EDITION</small><b>01</b><span>Private growth suite</span></header></aside><footer class="theme-cta luxury-concierge"><header>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">Gia nhập đặc quyền</span> →</a></header></footer>`,
+    },
+    auth: {
+      renderer: "black-gold-private-suite",
+      regions: `<nav class="auth-navigation luxury-auth-nav"><header>${brand}<span>PRIVATE ACCESS</span></header></nav><section class="auth-visual luxury-auth-monogram"><header><small>WELCOME BACK</small><h1>Thành viên<br>đặc quyền.</h1><i class="gold-crown">♛</i></header></section><aside class="auth-form-region luxury-auth-guide"><header><b>Private suite</b><span>Xác thực dành riêng cho hội viên.</span></header></aside><footer class="auth-assurance luxury-auth-foot"><header>CONFIDENTIAL · CONCIERGE 24/7</header></footer>`,
+    },
+    customer: {
+      renderer: "black-gold-executive",
+      regions: `<nav class="dashboard-navigation luxury-rail"><header>♛<br>PRIVATE<br>DESK</header></nav><section class="dashboard-wallet luxury-portfolio"><header><small>PORTFOLIO</small><h2>Tài sản khả dụng</h2><b>MEMBER 01</b></header></section><aside class="dashboard-kpis luxury-metrics"><header><span>Influence</span><span>Prestige</span><span>Velocity</span></header></aside><footer class="dashboard-orders luxury-vault"><header><b>Order vault</b><a href="/orders">Open vault →</a></header></footer>`,
+    },
+  },
+  BEIGE_EDITORIAL: {
+    landing: {
+      renderer: "beige-editorial-magazine",
+      regions: `<nav class="theme-navigation editorial-masthead"><article><span>VOL. 01 / 2026</span>${brand}<a href="#services">THE EDIT</a></article></nav><section class="theme-story editorial-cover"><article><small>THE GROWTH ISSUE</small><strong data-theme-content="heroTitle">Một cách tinh tế<br>để được nhìn thấy.</strong><p data-theme-content="heroSubtitle">Chiến lược tăng trưởng được biên tập dành riêng cho thương hiệu của bạn.</p><i>01</i></article></section><aside class="theme-offer editorial-caption"><article><b>PROFILE</b><span>Ideas, influence & considered growth.</span></article></aside><footer class="theme-cta editorial-folio"><article>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">Khám phá ấn bản</span> →</a></article></footer>`,
+    },
+    auth: {
+      renderer: "beige-editorial-hospitality",
+      regions: `<nav class="auth-navigation editorial-auth-nav"><article>${brand}<span>MEMBERS / 01</span></article></nav><section class="auth-visual editorial-auth-cover"><article><small>PRIVATE EDITION</small><h1>Câu chuyện<br>tiếp tục.</h1><i>01</i></article></section><aside class="auth-form-region editorial-auth-note"><article><b>Member sign in</b><span>Truy cập không gian dành riêng cho bạn.</span></article></aside><footer class="auth-assurance editorial-auth-foot"><article>CURATED WITH CARE · 2026</article></footer>`,
+    },
+    customer: {
+      renderer: "beige-editorial-ledger",
+      regions: `<nav class="dashboard-navigation editorial-rail"><article>VOL.<br>01<br>DESK</article></nav><section class="dashboard-wallet editorial-opening"><article><small>THE DAILY BRIEF</small><h2>Tổng quan hôm nay</h2><b>SEPTEMBER / 16</b></article></section><aside class="dashboard-kpis editorial-columns"><article><span>01 / Reach</span><span>02 / Orders</span><span>03 / Balance</span></article></aside><footer class="dashboard-orders editorial-index"><article><b>Order index</b><a href="/orders">Turn the page →</a></article></footer>`,
+    },
+  },
+};
 
-export const renderDarkLuxuryLanding: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="hero',
-      'data-renderer="noir-monument" class="hero noir-monument',
-    )
-    .replace(
-      '<div class="container hero-grid">',
-      `<nav class="theme-navigation"><header><a href="#services">Bộ sưu tập độc quyền</a><a href="#pricing">Bảng giá</a></header></nav><section class="theme-story"><header><strong>Nâng tầm vị thế thương hiệu</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></header></section><aside class="theme-offer"><header><h2>Dịch vụ đặc tuyển</h2><p>TikTok · Facebook · Instagram · YouTube</p></header></aside><footer class="theme-cta"><header><a href="/register">Gia nhập đặc quyền →</a></header></footer><div class="container hero-grid">`,
-    );
-export const renderDarkLuxuryAuth: ReferenceRenderer = (html) =>
-  html
-    .replace('class="auth', 'data-renderer="noir-suite" class="auth noir-suite')
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="auth-navigation"><header>Private access</header></nav><section class="auth-visual"><header><h1>Tầm nhìn thành phố</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></header></section><aside class="auth-form-region"><header><h2>Xác thực hội viên</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></header></aside><footer class="auth-assurance"><header>Dịch vụ concierge</header></footer>`,
-    );
-export const renderDarkLuxuryCustomer: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="customer',
-      'data-renderer="noir-console" class="customer noir-console',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="dashboard-navigation"><header>Executive menu</header></nav><section class="dashboard-wallet"><header><small>Tài chính</small><h2>Tài sản khả dụng</h2></header></section><aside class="dashboard-kpis"><header><strong>Danh mục cao cấp</strong><span> Cập nhật theo dữ liệu tài khoản</span></header></aside><footer class="dashboard-orders"><header><strong>Order vault</strong><a href="/orders"> Xem chi tiết →</a></header></footer>`,
-    );
-
-export const renderPremiumCorporateLanding: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="hero',
-      'data-renderer="corporate-tower" class="hero corporate-tower',
-    )
-    .replace(
-      '<div class="container hero-grid">',
-      `<nav class="theme-navigation"><div><small><a href="#services">Giải pháp doanh nghiệp</a><a href="#pricing">Bảng giá</a></small></div></nav><section class="theme-story"><div><small><strong>Kiến tạo tăng trưởng bền vững</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></small></div></section><aside class="theme-offer"><div><small><h2>Năng lực vận hành</h2><p>TikTok · Facebook · Instagram · YouTube</p></small></div></aside><footer class="theme-cta"><div><small><a href="/register">Nhận tư vấn →</a></small></div></footer><div class="container hero-grid">`,
-    );
-export const renderPremiumCorporateAuth: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="auth',
-      'data-renderer="corporate-portal" class="auth corporate-portal',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="auth-navigation"><div><small>Trung tâm tin cậy</small></div></nav><section class="auth-visual"><div><small><h1>Không gian doanh nghiệp</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></small></div></section><aside class="auth-form-region"><div><small><h2>Đăng nhập tổ chức</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></small></div></aside><footer class="auth-assurance"><div><small>Tuân thủ và bảo mật</small></div></footer>`,
-    );
-export const renderPremiumCorporateCustomer: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="customer',
-      'data-renderer="corporate-board" class="customer corporate-board',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="dashboard-navigation"><div><small>Điều hướng vận hành</small></div></nav><section class="dashboard-wallet"><div><small><small>Tài chính</small><h2>Doanh thu và số dư</h2></small></div></section><aside class="dashboard-kpis"><div><small><strong>Hiệu suất dịch vụ</strong><span> Cập nhật theo dữ liệu tài khoản</span></small></div></aside><footer class="dashboard-orders"><div><small><strong>Bảng đơn hàng</strong><a href="/orders"> Xem chi tiết →</a></small></div></footer>`,
-    );
-
-export const renderCyberNeonLanding: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="hero',
-      'data-renderer="neon-metropolis" class="hero neon-metropolis',
-    )
-    .replace(
-      '<div class="container hero-grid">',
-      `<nav class="theme-navigation"><code><a href="#services">Command center</a><a href="#pricing">Bảng giá</a></code></nav><section class="theme-story"><code><strong>Kích hoạt sức mạnh tăng trưởng</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></code></section><aside class="theme-offer"><code><h2>Neon service modules</h2><p>TikTok · Facebook · Instagram · YouTube</p></code></aside><footer class="theme-cta"><code><a href="/register">Launch campaign →</a></code></footer><div class="container hero-grid">`,
-    );
-export const renderCyberNeonAuth: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="auth',
-      'data-renderer="neon-portal" class="auth neon-portal',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="auth-navigation"><code>Identity gateway</code></nav><section class="auth-visual"><code><h1>Thành phố số</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></code></section><aside class="auth-form-region"><code><h2>Access terminal</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></code></aside><footer class="auth-assurance"><code>System online</code></footer>`,
-    );
-export const renderCyberNeonCustomer: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="customer',
-      'data-renderer="neon-telemetry" class="customer neon-telemetry',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="dashboard-navigation"><code>Circuit navigation</code></nav><section class="dashboard-wallet"><code><small>Tài chính</small><h2>Ví năng lượng</h2></code></section><aside class="dashboard-kpis"><code><strong>Telemetry dịch vụ</strong><span> Cập nhật theo dữ liệu tài khoản</span></code></aside><footer class="dashboard-orders"><code><strong>Mission queue</strong><a href="/orders"> Xem chi tiết →</a></code></footer>`,
-    );
-
-export const renderGlassLanding: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="hero',
-      'data-renderer="glass-orbit" class="hero glass-orbit',
-    )
-    .replace(
-      '<div class="container hero-grid">',
-      `<nav class="theme-navigation"><figure><a href="#services">Điều hướng nổi</a><a href="#pricing">Bảng giá</a></figure></nav><section class="theme-story"><figure><strong>Tăng trưởng trong suốt</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></figure></section><aside class="theme-offer"><figure><h2>Dịch vụ lăng kính</h2><p>TikTok · Facebook · Instagram · YouTube</p></figure></aside><footer class="theme-cta"><figure><a href="/register">Khám phá cơ hội →</a></figure></footer><div class="container hero-grid">`,
-    );
-export const renderGlassAuth: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="auth',
-      'data-renderer="glass-gateway" class="auth glass-gateway',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="auth-navigation"><figure>Crystal access</figure></nav><section class="auth-visual"><figure><h1>Chân trời tương lai</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></figure></section><aside class="auth-form-region"><figure><h2>Đăng nhập trong suốt</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></figure></aside><footer class="auth-assurance"><figure>Riêng tư được bảo vệ</figure></footer>`,
-    );
-export const renderGlassCustomer: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="customer',
-      'data-renderer="glass-workspace" class="customer glass-workspace',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="dashboard-navigation"><figure>Floating menu</figure></nav><section class="dashboard-wallet"><figure><small>Tài chính</small><h2>Ví thanh khoản</h2></figure></section><aside class="dashboard-kpis"><figure><strong>Chỉ số đa sắc</strong><span> Cập nhật theo dữ liệu tài khoản</span></figure></aside><footer class="dashboard-orders"><figure><strong>Luồng đơn hàng</strong><a href="/orders"> Xem chi tiết →</a></figure></footer>`,
-    );
-
-export const renderOceanLanding: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="hero',
-      'data-renderer="ocean-lighthouse" class="hero ocean-lighthouse',
-    )
-    .replace(
-      '<div class="container hero-grid">',
-      `<nav class="theme-navigation"><blockquote><a href="#services">Hải trình thương hiệu</a><a href="#pricing">Bảng giá</a></blockquote></nav><section class="theme-story"><blockquote><strong>Vượt sóng vươn xa</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></blockquote></section><aside class="theme-offer"><blockquote><h2>Đội hình dịch vụ</h2><p>TikTok · Facebook · Instagram · YouTube</p></blockquote></aside><footer class="theme-cta"><blockquote><a href="/register">Khởi hành ngay →</a></blockquote></footer><div class="container hero-grid">`,
-    );
-export const renderOceanAuth: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="auth',
-      'data-renderer="ocean-secure-harbor" class="auth ocean-secure-harbor',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="auth-navigation"><blockquote>Cổng an toàn</blockquote></nav><section class="auth-visual"><blockquote><h1>Hải đăng dẫn lối</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></blockquote></section><aside class="auth-form-region"><blockquote><h2>Xác thực bảo mật</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></blockquote></aside><footer class="auth-assurance"><blockquote>Neo giữ niềm tin</blockquote></footer>`,
-    );
-export const renderOceanCustomer: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="customer',
-      'data-renderer="ocean-operations" class="customer ocean-operations',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="dashboard-navigation"><blockquote>Boong điều hành</blockquote></nav><section class="dashboard-wallet"><blockquote><small>Tài chính</small><h2>Nguồn lực tài chính</h2></blockquote></section><aside class="dashboard-kpis"><blockquote><strong>Tuyến dịch vụ</strong><span> Cập nhật theo dữ liệu tài khoản</span></blockquote></aside><footer class="dashboard-orders"><blockquote><strong>Danh sách hành trình</strong><a href="/orders"> Xem chi tiết →</a></blockquote></footer>`,
-    );
-
-export const renderCreatorLanding: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="hero',
-      'data-renderer="creator-collage" class="hero creator-collage',
-    )
-    .replace(
-      '<div class="container hero-grid">',
-      `<nav class="theme-navigation"><mark><a href="#services">Creator hub</a><a href="#pricing">Bảng giá</a></mark></nav><section class="theme-story"><mark><strong>Tạo nội dung, kết nối, chuyển đổi</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></mark></section><aside class="theme-offer"><mark><h2>Kênh tăng trưởng</h2><p>TikTok · Facebook · Instagram · YouTube</p></mark></aside><footer class="theme-cta"><mark><a href="/register">Bắt đầu viral →</a></mark></footer><div class="container hero-grid">`,
-    );
-export const renderCreatorAuth: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="auth',
-      'data-renderer="creator-studio" class="auth creator-studio',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="auth-navigation"><mark>Studio pass</mark></nav><section class="auth-visual"><mark><h1>Không gian sáng tạo</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></mark></section><aside class="auth-form-region"><mark><h2>Đăng nhập creator</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></mark></aside><footer class="auth-assurance"><mark>Cộng đồng đồng hành</mark></footer>`,
-    );
-export const renderCreatorCustomer: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="customer',
-      'data-renderer="creator-performance" class="customer creator-performance',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="dashboard-navigation"><mark>Creator menu</mark></nav><section class="dashboard-wallet"><mark><small>Tài chính</small><h2>Thu nhập khả dụng</h2></mark></section><aside class="dashboard-kpis"><mark><strong>Hiệu suất nội dung</strong><span> Cập nhật theo dữ liệu tài khoản</span></mark></aside><footer class="dashboard-orders"><mark><strong>Chiến dịch đang chạy</strong><a href="/orders"> Xem chi tiết →</a></mark></footer>`,
-    );
-
-export const renderBrutalistLanding: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="hero',
-      'data-renderer="brutalist-poster" class="hero brutalist-poster',
-    )
-    .replace(
-      '<div class="container hero-grid">',
-      `<nav class="theme-navigation"><hgroup><a href="#services">Mục lục 01</a><a href="#pricing">Bảng giá</a></hgroup></nav><section class="theme-story"><hgroup><strong>Ý tưởng lớn xây thương hiệu</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></hgroup></section><aside class="theme-offer"><hgroup><h2>Khối dịch vụ</h2><p>TikTok · Facebook · Instagram · YouTube</p></hgroup></aside><footer class="theme-cta"><hgroup><a href="/register">Hành động ngay →</a></hgroup></footer><div class="container hero-grid">`,
-    );
-export const renderBrutalistAuth: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="auth',
-      'data-renderer="brutalist-sheet" class="auth brutalist-sheet',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="auth-navigation"><hgroup>Issue 01 / Access</hgroup></nav><section class="auth-visual"><hgroup><h1>Tuyên ngôn tăng trưởng</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></hgroup></section><aside class="auth-form-region"><hgroup><h2>Biểu mẫu truy cập</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></hgroup></aside><footer class="auth-assurance"><hgroup>Bản quyền bảo mật</hgroup></footer>`,
-    );
-export const renderBrutalistCustomer: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="customer',
-      'data-renderer="brutalist-newsroom" class="customer brutalist-newsroom',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="dashboard-navigation"><hgroup>Index / Menu</hgroup></nav><section class="dashboard-wallet"><hgroup><small>Tài chính</small><h2>Sổ cái tài khoản</h2></hgroup></section><aside class="dashboard-kpis"><hgroup><strong>Headline metrics</strong><span> Cập nhật theo dữ liệu tài khoản</span></hgroup></aside><footer class="dashboard-orders"><hgroup><strong>Order grid</strong><a href="/orders"> Xem chi tiết →</a></hgroup></footer>`,
-    );
-
-export const renderAiLanding: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="hero',
-      'data-renderer="ai-neural-orbit" class="hero ai-neural-orbit',
-    )
-    .replace(
-      '<div class="container hero-grid">',
-      `<nav class="theme-navigation"><output><a href="#services">AI command</a><a href="#pricing">Bảng giá</a></output></nav><section class="theme-story"><output><strong>Tăng trưởng bằng sức mạnh AI</strong><p>Giải pháp được thiết kế riêng cho ngôn ngữ hình ảnh của giao diện này.</p></output></section><aside class="theme-offer"><output><h2>Mô-đun thông minh</h2><p>TikTok · Facebook · Instagram · YouTube</p></output></aside><footer class="theme-cta"><output><a href="/register">Kích hoạt AI →</a></output></footer><div class="container hero-grid">`,
-    );
-export const renderAiAuth: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="auth',
-      'data-renderer="ai-cognitive-gateway" class="auth ai-cognitive-gateway',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="auth-navigation"><output>Neural access</output></nav><section class="auth-visual"><output><h1>Trợ lý AI trực tuyến</h1><p>Tiếp tục hành trình phát triển thương hiệu cùng DichVu1st.</p></output></section><aside class="auth-form-region"><output><h2>Xác thực thông minh</h2><p>Email và mật khẩu được truyền qua phiên bảo mật.</p></output></aside><footer class="auth-assurance"><output>Agent bảo vệ 24/7</output></footer>`,
-    );
-export const renderAiCustomer: ReferenceRenderer = (html) =>
-  html
-    .replace(
-      'class="customer',
-      'data-renderer="ai-intelligence" class="customer ai-intelligence',
-    )
-    .replace(
-      /(data-renderer="[^"]+" class="[^"]+">)/,
-      `$1<nav class="dashboard-navigation"><output>Agent console</output></nav><section class="dashboard-wallet"><output><small>Tài chính</small><h2>Ví được phân tích</h2></output></section><aside class="dashboard-kpis"><output><strong>Dự báo tăng trưởng</strong><span> Cập nhật theo dữ liệu tài khoản</span></output></aside><footer class="dashboard-orders"><output><strong>Đơn hàng tự động</strong><a href="/orders"> Xem chi tiết →</a></output></footer>`,
-    );
+const roots: Record<ReferenceScope, string> = {
+  landing: "hero",
+  auth: "auth",
+  customer: "customer",
+};
+const render =
+  (theme: string, scope: ReferenceScope): ReferenceRenderer =>
+  (html) => {
+    const screen = themedScreens[theme]?.[scope];
+    if (!screen) return html;
+    return html
+      .replace(
+        `class="${roots[scope]}`,
+        `data-renderer="${screen.renderer}" data-theme-architecture="${theme.toLowerCase()}-${scope}" class="${roots[scope]} ${screen.renderer}`,
+      )
+      .replace(/(data-renderer="[^"]+"[^>]*>)/, `$1${screen.regions}`);
+  };
 
 export const referenceRenderers: Record<
   string,
   Record<ReferenceScope, ReferenceRenderer>
-> = {
-  BEIGE_EDITORIAL: {
-    landing: renderSoftBeigeLanding,
-    auth: renderSoftBeigeAuth,
-    customer: renderSoftBeigeCustomer,
-  },
-  ZEN_JAPANESE: {
-    landing: renderJapaneseZenLanding,
-    auth: renderJapaneseZenAuth,
-    customer: renderJapaneseZenCustomer,
-  },
-  BLACK_GOLD_LUXURY: {
-    landing: renderDarkLuxuryLanding,
-    auth: renderDarkLuxuryAuth,
-    customer: renderDarkLuxuryCustomer,
-  },
-  BLUE_BUSINESS: {
-    landing: renderPremiumCorporateLanding,
-    auth: renderPremiumCorporateAuth,
-    customer: renderPremiumCorporateCustomer,
-  },
-  CYBER_NEON_CITY: {
-    landing: renderCyberNeonLanding,
-    auth: renderCyberNeonAuth,
-    customer: renderCyberNeonCustomer,
-  },
-  PRISM_GLASS: {
-    landing: renderGlassLanding,
-    auth: renderGlassAuth,
-    customer: renderGlassCustomer,
-  },
-  OCEAN_PREMIUM: {
-    landing: renderOceanLanding,
-    auth: renderOceanAuth,
-    customer: renderOceanCustomer,
-  },
-  CREATOR_POP: {
-    landing: renderCreatorLanding,
-    auth: renderCreatorAuth,
-    customer: renderCreatorCustomer,
-  },
-  URBAN_LIME_BRUTAL: {
-    landing: renderBrutalistLanding,
-    auth: renderBrutalistAuth,
-    customer: renderBrutalistCustomer,
-  },
-  AI_COSMIC_FUTURE: {
-    landing: renderAiLanding,
-    auth: renderAiAuth,
-    customer: renderAiCustomer,
-  },
-};
+> = Object.fromEntries(
+  Object.keys(themedScreens).map((theme) => [
+    theme,
+    {
+      landing: render(theme, "landing"),
+      auth: render(theme, "auth"),
+      customer: render(theme, "customer"),
+    },
+  ]),
+);
 
 export function runtimeReferenceShells(scope: ReferenceScope) {
-  const root =
-    scope === "landing" ? "hero" : scope === "auth" ? "auth" : "customer";
   return Object.fromEntries(
     Object.entries(referenceRenderers).map(([theme, renderers]) => [
       theme,
-      renderers[scope](`<div class="${root}"></div>`),
+      renderers[scope](`<div class="${roots[scope]}"></div>`),
     ]),
   );
 }
@@ -388,14 +208,13 @@ const scopeRegions: Record<ReferenceScope, string[]> = {
   ],
 };
 
-/** Rejects the former empty-region implementation rather than trusting class names. */
 export function isMeaningfulReferenceRender(
   html: string,
   scope: ReferenceScope,
 ) {
   return scopeRegions[scope].every((className) => {
     const content = new RegExp(
-      `<(?:nav|section|aside|footer) class="${className}">([\\s\\S]*?)<\\/(?:nav|section|aside|footer)>`,
+      `<(?:nav|section|aside|footer) class="[^"]*${className}[^"]*">([\\s\\S]*?)<\\/(?:nav|section|aside|footer)>`,
     ).exec(html)?.[1];
     const text = content
       ?.replace(/<[^>]+>/g, " ")
