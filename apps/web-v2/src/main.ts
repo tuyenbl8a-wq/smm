@@ -5,6 +5,7 @@ import { authPage, landingPage } from "./page.js";
 import { customerPage } from "./customer.js";
 import { adminPage, isAdminRoute } from "./admin.js";
 import { themeEditorPage, themePreviewPage } from "./theme-builder.js";
+import { tenantBranding } from "./branding.js";
 const config = loadConfig(process.env, 3001);
 const browserHost = (value: string | string[] | undefined) => {
   if (Array.isArray(value)) return null;
@@ -19,6 +20,27 @@ const browserHost = (value: string | string[] | undefined) => {
     return parsed.host;
   } catch {
     return null;
+  }
+};
+const tenantHeaders = (hostname: string) => {
+  const proxySecret = process.env.TENANT_PROXY_SECRET?.trim() || config.sessionSecret;
+  const timestamp = String(Date.now());
+  return {
+    "x-smm-tenant-host": hostname,
+    "x-smm-tenant-timestamp": timestamp,
+    "x-smm-tenant-signature": createHmac("sha256", proxySecret).update(`${timestamp}\n${hostname}`).digest("hex"),
+  };
+};
+const resolveBranding = async (hostname: string) => {
+  try {
+    const response = await fetch(new URL("/api/v1/public/settings", config.apiUrl), {
+      headers: tenantHeaders(hostname), signal: AbortSignal.timeout(2_500),
+    });
+    if (!response.ok) throw new Error("SETTINGS_UNAVAILABLE");
+    const body = await response.json() as any;
+    return tenantBranding(hostname, body.data || {});
+  } catch {
+    return tenantBranding(hostname);
   }
 };
 const server = createServer(async (request, response) => {
@@ -44,17 +66,9 @@ const server = createServer(async (request, response) => {
       response.end("Invalid Host header");
       return;
     }
-    const proxySecret =
-      process.env.TENANT_PROXY_SECRET?.trim() || config.sessionSecret;
     const tenantHost = new URL(`http://${validatedHost}`).hostname;
-    const timestamp = String(Date.now());
-    const signature = createHmac("sha256", proxySecret)
-      .update(`${timestamp}\n${tenantHost}`)
-      .digest("hex");
     const headers: Record<string, string> = {
-      "x-smm-tenant-host": tenantHost,
-      "x-smm-tenant-timestamp": timestamp,
-      "x-smm-tenant-signature": signature,
+      ...tenantHeaders(tenantHost),
     };
     for (const name of [
       "content-type",
@@ -107,16 +121,19 @@ const server = createServer(async (request, response) => {
     );
     return;
   }
+  const validatedHost = browserHost(request.headers.host);
+  const hostname = validatedHost ? new URL(`http://${validatedHost}`).hostname : "localhost";
+  const branding = await resolveBranding(hostname);
   const pages: Record<string, () => string> = {
-    "/": () => landingPage(""),
-    "/services": () => landingPage(""),
-    "/pricing": () => landingPage(""),
-    "/help": () => landingPage(""),
-    "/login": () => authPage("", "login"),
-    "/register": () => authPage("", "register"),
-    "/forgot-password": () => authPage("", "forgot"),
+    "/": () => landingPage("", branding),
+    "/services": () => landingPage("", branding),
+    "/pricing": () => landingPage("", branding),
+    "/help": () => landingPage("", branding),
+    "/login": () => authPage("", "login", "", branding),
+    "/register": () => authPage("", "register", "", branding),
+    "/forgot-password": () => authPage("", "forgot", "", branding),
     "/reset-password": () =>
-      authPage("", "reset", url.searchParams.get("token") ?? ""),
+      authPage("", "reset", url.searchParams.get("token") ?? "", branding),
   };
   const customerRoute =
     path === "/dashboard" ||
@@ -147,9 +164,9 @@ const server = createServer(async (request, response) => {
       : editorMatch
         ? () => themeEditorPage(editorMatch[1] ?? null)
         : isAdminRoute(path)
-          ? () => adminPage("", path)
+          ? () => adminPage("", path, branding)
           : customerRoute
-            ? () => customerPage("", path)
+            ? () => customerPage("", path, branding)
             : pages[path];
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.setHeader("x-content-type-options", "nosniff");

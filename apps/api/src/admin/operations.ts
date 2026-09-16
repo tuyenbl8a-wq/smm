@@ -28,7 +28,6 @@ const CANONICAL_ADMIN_PERMISSIONS = [
   "orders.refund",
   "orders.retry",
   "services.view",
-  "services.manage",
   "services.presentation.manage",
   "services.pricing.manage",
   "services.toggle",
@@ -36,10 +35,13 @@ const CANONICAL_ADMIN_PERMISSIONS = [
   "services.import",
   "providers.view",
   "providers.manage",
+  "providers.sync",
   "users.view",
   "users.manage",
   "users.balance.manage",
   "users.pricing.manage",
+  "users.security.manage",
+  "wallet.manage",
   "payments.view",
   "payments.manage",
   "payments.approve",
@@ -48,6 +50,7 @@ const CANONICAL_ADMIN_PERMISSIONS = [
   "support.view",
   "support.manage",
   "reports.view",
+  "reports.read",
   "settings.view",
   "settings.manage",
   "staff.view",
@@ -1519,9 +1522,9 @@ export class AdminOperationsService {
     });
   }
 
-  async orderProviders() {
+  async orderProviders(siteId = ROOT_SITE_ID) {
     return this.db.provider.findMany({
-      where: { deletedAt: null },
+      where: { siteId, deletedAt: null },
       select: { id: true, name: true, status: true },
       orderBy: { name: "asc" },
     });
@@ -1572,6 +1575,7 @@ export class AdminOperationsService {
     const providerRows = providerSearch
       ? await this.db.provider.findMany({
           where: {
+            siteId,
             name: { contains: providerSearch, mode: "insensitive" },
             deletedAt: null,
           },
@@ -1692,27 +1696,18 @@ export class AdminOperationsService {
     const search = optional(query.search),
       kind = String(query.kind || "");
     if (kind === "provider")
-      return this.db.order
-        .findMany({
-          where: { siteId, providerId: { not: null } },
-          distinct: ["providerId"],
-          select: { providerId: true },
-          take: 100,
-        })
-        .then((orders: any[]) =>
-          this.db.provider.findMany({
-            where: {
-              id: { in: orders.map((order) => order.providerId) },
-              deletedAt: null,
-              ...(search
-                ? { name: { contains: search, mode: "insensitive" } }
-                : {}),
-            },
-            select: { id: true, name: true, status: true },
-            orderBy: { name: "asc" },
-            take: 30,
-          }),
-        );
+      return this.db.provider.findMany({
+        where: {
+          siteId,
+          deletedAt: null,
+          ...(search
+            ? { name: { contains: search, mode: "insensitive" } }
+            : {}),
+        },
+        select: { id: true, name: true, status: true },
+        orderBy: { name: "asc" },
+        take: 100,
+      });
     if (kind === "service") {
       const rows = await this.db.service.findMany({
         where: {
@@ -1845,6 +1840,7 @@ export class AdminOperationsService {
       items.length && this.db.provider?.findMany
         ? this.db.provider.findMany({
             where: {
+              siteId,
               id: {
                 in: [
                   ...new Set(
@@ -1919,17 +1915,17 @@ export class AdminOperationsService {
         }),
         this.db.refill.findMany({ where: { orderId: order.id } }),
         this.db.cancellation.findMany({ where: { orderId: order.id } }),
-        this.db.user.findUnique({
-          where: { id: order.userId },
+        this.db.user.findFirst({
+          where: { id: order.userId, siteId },
           select: { id: true, userNumber: true, email: true, username: true },
         }),
-        this.db.service.findUnique({
-          where: { id: order.serviceId },
+        this.db.service.findFirst({
+          where: { id: order.serviceId, siteId },
           select: { id: true, serviceNumber: true, name: true },
         }),
         order.providerId
-          ? this.db.provider.findUnique({
-              where: { id: order.providerId },
+          ? this.db.provider.findFirst({
+              where: { id: order.providerId, siteId, deletedAt: null },
               select: { id: true, name: true, status: true },
             })
           : null,
@@ -1971,7 +1967,7 @@ export class AdminOperationsService {
         "Order is not linked to a provider order",
       );
     const provider = await this.db.provider.findFirst({
-      where: { id: order.providerId, deletedAt: null },
+      where: { id: order.providerId, siteId, deletedAt: null },
     });
     if (!provider)
       throw new AdminOperationError("PROVIDER_NOT_FOUND", "Provider not found");
@@ -2111,6 +2107,7 @@ export class AdminOperationsService {
       const provider = await tx.provider.findFirst({
         where: {
           id: current.providerId,
+          siteId,
           status: { in: ["ACTIVE", "DEGRADED"] },
           deletedAt: null,
         },
@@ -2145,6 +2142,7 @@ export class AdminOperationsService {
         });
         await tx.orderHistory.create({
           data: {
+            siteId,
             orderId: current.id,
             fromStatus: current.status,
             toStatus: "PENDING",
@@ -2159,6 +2157,7 @@ export class AdminOperationsService {
         });
         await tx.auditLog.create({
           data: {
+            siteId,
             actorId,
             action: "ORDER_PROVIDER_RETRY",
             resource: "Order",
@@ -2200,6 +2199,7 @@ export class AdminOperationsService {
         }
         await tx.orderHistory.create({
           data: {
+            siteId,
             orderId: current.id,
             fromStatus: current.status,
             toStatus: current.status,
@@ -2214,6 +2214,7 @@ export class AdminOperationsService {
         });
         await tx.auditLog.create({
           data: {
+            siteId,
             actorId,
             action: "ORDER_PROVIDER_RETRY_FAILED",
             resource: "Order",
@@ -2281,6 +2282,7 @@ export class AdminOperationsService {
       });
       await tx.orderHistory.create({
         data: {
+          siteId: current.siteId,
           orderId,
           fromStatus: current.status,
           toStatus: status,
@@ -2295,6 +2297,7 @@ export class AdminOperationsService {
       });
       await tx.auditLog.create({
         data: {
+          siteId: current.siteId,
           actorId,
           action: "ORDER_PROVIDER_SYNC",
           resource: "Order",
@@ -2393,6 +2396,7 @@ export class AdminOperationsService {
       });
       await tx.orderHistory.create({
         data: {
+          siteId,
           orderId: order.id,
           fromStatus: order.status,
           toStatus: status,
@@ -2407,6 +2411,7 @@ export class AdminOperationsService {
       });
       await tx.auditLog.create({
         data: {
+          siteId,
           actorId,
           action: "ORDER_REFUND",
           resource: "Order",
@@ -2499,13 +2504,37 @@ export class AdminOperationsService {
       );
     if (input.providerId) {
       const provider = await this.db.provider.findFirst({
-        where: { id: input.providerId, deletedAt: null },
+        where: { id: input.providerId, siteId, deletedAt: null },
       });
       if (!provider)
         throw new AdminOperationError(
           "PROVIDER_NOT_FOUND",
           "Không tìm thấy nhà cung cấp",
         );
+    }
+    if (
+      input.providerOrderId === "" &&
+      input.confirmClearProviderOrderId !== true
+    )
+      throw new AdminOperationError(
+        "PROVIDER_ORDER_CLEAR_CONFIRMATION_REQUIRED",
+        "Vui lòng xác nhận trước khi xóa Provider Order ID",
+      );
+    if (input.tags !== undefined) {
+      if (
+        !Array.isArray(input.tags) ||
+        input.tags.length > 20 ||
+        input.tags.some(
+          (tag: unknown) =>
+            typeof tag !== "string" ||
+            !/^[\p{L}\p{N} _.-]{1,40}$/u.test(tag.trim()),
+        )
+      )
+        throw new AdminOperationError(
+          "ORDER_TAGS_INVALID",
+          "Nhãn đơn không hợp lệ",
+        );
+      input.tags = [...new Set(input.tags.map((tag: string) => tag.trim()))];
     }
     const before: any = {
       providerId: order.providerId,
@@ -2523,6 +2552,7 @@ export class AdminOperationsService {
       "startCount",
       "remains",
       "manualOverride",
+      "tags",
     ])
       if (input[field] !== undefined)
         data[field] = input[field] === "" ? null : input[field];
@@ -2548,7 +2578,44 @@ export class AdminOperationsService {
           startCount: current.startCount,
           remains: current.remains,
           manualOverride: current.manualOverride,
+          tags: current.tags,
         });
+        const targetProviderId = data.providerId ?? current.providerId;
+        const targetProviderOrderId =
+          data.providerOrderId === null
+            ? null
+            : (data.providerOrderId ?? current.providerOrderId);
+        if (targetProviderOrderId && !targetProviderId)
+          throw new AdminOperationError(
+            "PROVIDER_REQUIRED",
+            "Phải chọn nhà cung cấp trước khi gán Provider Order ID",
+          );
+        if (targetProviderId) {
+          const provider = await tx.provider.findFirst({
+            where: { id: targetProviderId, siteId, deletedAt: null },
+          });
+          if (!provider)
+            throw new AdminOperationError(
+              "PROVIDER_NOT_FOUND",
+              "Không tìm thấy nhà cung cấp",
+            );
+        }
+        if (targetProviderId && targetProviderOrderId) {
+          const duplicate = await tx.order.findFirst({
+            where: {
+              siteId,
+              providerId: targetProviderId,
+              providerOrderId: targetProviderOrderId,
+              id: { not: current.id },
+            },
+            select: { id: true },
+          });
+          if (duplicate)
+            throw new AdminOperationError(
+              "PROVIDER_ORDER_CONFLICT",
+              "Provider Order ID đã được dùng cho nhà cung cấp này",
+            );
+        }
         let refund = {
           target: String(current.refundedAmount),
           added: moneyFromUnits(0n),
@@ -2583,12 +2650,13 @@ export class AdminOperationsService {
           where: { id: order.id },
           data,
         });
-        if (input.status !== undefined && input.status !== order.status)
+        if (Object.keys(data).length)
           await tx.orderHistory.create({
             data: {
+              siteId,
               orderId: order.id,
-              fromStatus: order.status,
-              toStatus: input.status,
+              fromStatus: current.status,
+              toStatus: updated.status,
               actorId,
               details: {
                 source: "ADMIN_MANUAL",
@@ -2601,6 +2669,7 @@ export class AdminOperationsService {
           });
         await tx.auditLog.create({
           data: {
+            siteId,
             actorId,
             action: "ORDER_MANUAL_UPDATE",
             resource: "Order",
@@ -2619,6 +2688,7 @@ export class AdminOperationsService {
           providerOrderId: updated.providerOrderId,
           manualOverride: updated.manualOverride,
           manualOverrideAt: updated.manualOverrideAt,
+          tags: updated.tags,
           refundedAmount: String(updated.refundedAmount),
           refundAdded: refund.added,
         };
@@ -3052,6 +3122,8 @@ export class AdminOperationsService {
   async publicSettings(siteId = ROOT_SITE_ID) {
     const allowed = [
       "siteName",
+      "brandName",
+      "siteDescription",
       "defaultLanguage",
       "currency",
       "announcement",
@@ -3065,6 +3137,7 @@ export class AdminOperationsService {
       "supportEmail",
       "supportPhoneEnabled",
       "supportPhone",
+      "supportSummary",
       "logoUrl",
       "faviconUrl",
       "footerText",
@@ -3077,23 +3150,21 @@ export class AdminOperationsService {
       "themeContent",
       "themeOverrides",
     ];
-    const rows = await this.db.setting.findMany({
+    const [rows, site, domain] = await Promise.all([this.db.setting.findMany({
       where: {
-        siteId: {
-          in: siteId === ROOT_SITE_ID ? [ROOT_SITE_ID] : [ROOT_SITE_ID, siteId],
-        },
+        siteId,
         group: { in: ["general", "branding"] },
         key: { in: allowed },
         encrypted: false,
       },
       select: { siteId: true, key: true, value: true },
       orderBy: { siteId: "asc" },
-    });
-    const root = rows.filter((row: any) => row.siteId === ROOT_SITE_ID),
-      local = rows.filter((row: any) => row.siteId === siteId);
-    return Object.fromEntries(
-      [...root, ...local].map((row: any) => [row.key, row.value]),
-    );
+    }), this.db.site.findUnique({ where: { id: siteId }, select: { name: true } }),
+    this.db.siteDomain.findFirst({ where: { siteId, status: "VERIFIED" }, orderBy: { isPrimary: "desc" }, select: { hostname: true } })]);
+    const values: any = Object.fromEntries(rows.map((row: any) => [row.key, row.value]));
+    if (!values.siteName) values.siteName = siteId === ROOT_SITE_ID ? "DichVu1st" : site?.name || domain?.hostname || "Website";
+    if (!values.brandName) values.brandName = values.siteName;
+    return values;
   }
 
   async maintenance() {

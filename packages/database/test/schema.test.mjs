@@ -158,7 +158,10 @@ test("initial migration creates every mapped model table", () => {
     )
     .join("\n");
   for (const table of schema.matchAll(/@@map\("([^"]+)"\)/g))
-    assert.match(migration, new RegExp(`CREATE TABLE (?:"${table[1]}"|${table[1]}(?:\\s|\\())`));
+    assert.match(
+      migration,
+      new RegExp(`CREATE TABLE (?:"${table[1]}"|${table[1]}(?:\\s|\\())`),
+    );
   assert.match(migration, /CREATE EXTENSION IF NOT EXISTS pgcrypto/);
   assert.match(migration, /FOREIGN KEY/);
 });
@@ -354,6 +357,99 @@ test("provider retry permission migration is additive and restricted to super ad
   assert.match(sql, /SUPER_ADMIN/);
   assert.match(sql, /ON CONFLICT/);
   assert.doesNotMatch(sql, /DROP|TRUNCATE|DELETE FROM/i);
+});
+
+test("provider tenant ownership migration preserves and root-backfills providers", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260911130000_provider_tenant_ownership/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /ADD COLUMN "site_id" UUID NOT NULL/);
+  assert.match(migration, /00000000-0000-4000-8000-000000000001/);
+  assert.match(
+    migration,
+    /FOREIGN KEY \("site_id"\) REFERENCES "sites"\("id"\)/,
+  );
+  assert.match(
+    migration,
+    /UNIQUE INDEX "providers_site_name_key" ON "providers"\("site_id", "name"\)/,
+  );
+  assert.match(migration, /providers_site_status_priority_idx/);
+  assert.doesNotMatch(migration, /DELETE\s+FROM\s+"?providers"?/i);
+  assert.doesNotMatch(migration, /DROP\s+TABLE/i);
+});
+
+test("order tags migration is additive and indexed", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260913120000_order_tags/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /ADD COLUMN "tags" TEXT\[\] NOT NULL/);
+  assert.match(migration, /USING GIN \("tags"\)/);
+  assert.doesNotMatch(migration, /DELETE\s+FROM|TRUNCATE|DROP TABLE/i);
+});
+
+test("tenant product permission repair backfills existing PANEL and CHILL plans additively", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260914120000_tenant_permission_contract/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const permission of [
+    "services.presentation.manage",
+    "services.pricing.manage",
+    "services.toggle",
+    "reports.read",
+    "audit.view",
+    "providers.sync",
+  ])
+    assert.match(migration, new RegExp(permission.replaceAll(".", "\\.")));
+  assert.match(migration, /PANEL_250K/);
+  assert.match(migration, /CHILLPANEL/);
+  assert.match(migration, /ON CONFLICT DO NOTHING/);
+  assert.doesNotMatch(migration, /DELETE|TRUNCATE|DROP TABLE/i);
+});
+
+test("managed child upstream migration is additive and references only parent API credentials", () => {
+  const migration = readFileSync(
+    new URL(
+      "../prisma/migrations/20260914130000_child_managed_upstream/migration.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /managed_parent_site_id/);
+  assert.match(migration, /managed_api_key_id/);
+  assert.match(migration, /REFERENCES "sites"/);
+  assert.match(migration, /REFERENCES "api_keys"/);
+  assert.doesNotMatch(migration, /DELETE\s+FROM|TRUNCATE|DROP TABLE/i);
+});
+
+test("catalog ownership and presentation overlay migrations are additive and tenant indexed", () => {
+  const ownership = readFileSync(
+    new URL("../prisma/migrations/20260914140000_catalog_tenant_ownership/migration.sql", import.meta.url),
+    "utf8",
+  );
+  const overlays = readFileSync(
+    new URL("../prisma/migrations/20260914150000_catalog_presentation_overlays/migration.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(ownership, /UPDATE "platforms" SET "site_id" = '00000000-0000-4000-8000-000000000001'/);
+  assert.match(ownership, /platforms_site_id_slug_key/);
+  assert.match(ownership, /service_categories_site_id_slug_key/);
+  assert.doesNotMatch(ownership, /DELETE FROM "(?:platforms|service_categories)"/i);
+  assert.match(overlays, /CREATE TABLE "site_platform_rules"/);
+  assert.match(overlays, /CREATE TABLE "site_category_rules"/);
+  assert.match(overlays, /UNIQUE INDEX "site_platform_rules_site_id_platform_id_key"/);
+  assert.doesNotMatch(overlays, /DROP TABLE|DELETE FROM/i);
 });
 
 test("User price group stays a scalar foreign key without an implicit Prisma relation", () => {

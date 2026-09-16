@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import vm from "node:vm";
+import { adminPage } from "../dist/admin.js";
+import { landingPage, authPage } from "../dist/page.js";
+import { customerPage } from "../dist/customer.js";
+import { tenantBranding } from "../dist/branding.js";
 const page = await readFile(
   new URL("../dist/page.js", import.meta.url),
   "utf8",
@@ -33,6 +38,133 @@ const adminUx = await readFile(
   new URL("../dist/admin-ux.js", import.meta.url),
   "utf8",
 );
+const inlineAdminScript = (route) => {
+  const html = adminPage("", route);
+  const match = /<script>([\s\S]*?)<\/script>/.exec(html);
+  assert.ok(match, `missing inline script for ${route}`);
+  return match[1];
+};
+
+test("server-rendered branding is tenant-safe across public, auth, customer and admin shells", () => {
+  const root = tenantBranding("dichvu1st.com");
+  const tenant = tenantBranding("smmlike.site");
+  const custom = tenantBranding("panel.test", {
+    brandName: "Panel Sao",
+    logoUrl: "https://cdn.test/logo.png",
+    faviconUrl: "https://cdn.test/icon.png",
+  });
+  assert.match(landingPage("", root), /DichVu1st/);
+  for (const html of [
+    landingPage("", tenant),
+    authPage("", "login", "", tenant),
+    customerPage("", "/dashboard", tenant),
+    adminPage("", "/admin", tenant),
+  ]) {
+    assert.match(html, /smmlike\.site/i);
+    assert.doesNotMatch(html, />DichVu1st</);
+  }
+  const branded = authPage("", "login", "", custom);
+  assert.match(branded, /Panel Sao/);
+  assert.match(branded, /https:\/\/cdn\.test\/logo\.png/);
+  assert.match(branded, /https:\/\/cdn\.test\/icon\.png/);
+  assert.equal(tenant.monogram, "S");
+});
+
+test("managed upstream settings expose safe metadata and permission-gated rotation", () => {
+  assert.match(adminUx, /Kết nối Panel cha/);
+  assert.match(adminUx, /can\('settings\.manage'\)/);
+  assert.match(adminUx, /api\.post\('\/api\/v1\/admin\/managed-upstream'/);
+  assert.doesNotMatch(adminUx, /apiKeyEncrypted|raw API key|provider secret/i);
+});
+
+test("sidebar groups persist collapsed state and active group opens automatically", () => {
+  assert.match(admin, /localStorage\.getItem\(key\)/);
+  assert.match(admin, /localStorage\.setItem\(key,heading\.dataset\.open\)/);
+  assert.match(admin, /active\?'true'/);
+  assert.match(admin, /section-collapsed/);
+});
+
+test("generated Admin scripts parse as real JavaScript on operational routes", () => {
+  for (const route of [
+    "/admin/orders",
+    "/admin/orders/100002",
+    "/admin/panels",
+    "/admin/panel-plans",
+    "/admin/panel-subscriptions",
+  ]) {
+    assert.doesNotThrow(() => new vm.Script(inlineAdminScript(route)), route);
+  }
+});
+
+test("resolved Admin API data replaces the initial loading skeleton", async () => {
+  const contentNode = { innerHTML: "<div class=admin-skeleton></div>" };
+  const simpleNode = {
+    textContent: "",
+    hidden: false,
+    classList: { add() {}, remove() {}, toggle() {} },
+  };
+  const document = {
+    cookie: "",
+    body: simpleNode,
+    documentElement: simpleNode,
+    createElement: () => ({
+      _text: "",
+      innerHTML: "",
+      set textContent(value) {
+        this._text = String(value);
+        this.innerHTML = this._text;
+      },
+    }),
+    querySelector: (selector) =>
+      selector === "#content"
+        ? contentNode
+        : [".admin-scrim", ".admin-side nav a:not([hidden])"].includes(selector)
+          ? simpleNode
+          : null,
+    querySelectorAll: () => [],
+  };
+  const responses = [
+    {
+      user: { username: "owner" },
+      roles: ["ADMIN"],
+      permissions: ["settings.manage", "panels.resale.manage"],
+    },
+    { items: [] },
+  ];
+  const context = {
+    document,
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ success: true, data: responses.shift() }),
+    }),
+    AbortController,
+    AbortSignal,
+    URL,
+    URLSearchParams,
+    FormData,
+    Intl,
+    Date,
+    Set,
+    WeakSet,
+    Promise,
+    crypto,
+    navigator: { clipboard: { writeText: async () => undefined } },
+    location: { pathname: "/admin/panel-plans", href: "" },
+    setTimeout,
+    clearTimeout,
+    drawerToggle: simpleNode,
+    themeToggle: simpleNode,
+    refresh: simpleNode,
+    adminName: simpleNode,
+    adminRole: simpleNode,
+    avatar: simpleNode,
+  };
+  new vm.Script(inlineAdminScript("/admin/panel-plans")).runInNewContext(context);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.doesNotMatch(contentNode.innerHTML, /admin-skeleton/);
+  assert.match(contentNode.innerHTML, /Chưa có dữ liệu/);
+});
 test("public experience includes real catalog, navigation and responsive UI", () => {
   assert.match(page, /api\/v1\/public\/catalog/);
   assert.match(page, /DỊCH VỤ CỦA CHÚNG TÔI/);
@@ -198,13 +330,28 @@ test("admin orders keep website IDs distinct and use protected operations", () =
   ])
     assert.match(admin, new RegExp(operation));
   assert.match(admin + client, /x-csrf-token/);
+  for (const operation of [
+    "Cập nhật từ NCC",
+    "Gửi lại NCC",
+    "Start Count",
+    "confirmClearProviderOrderId",
+    "Full history / audit trail",
+    "bulkStatus",
+    "bulkSync",
+    "bulkRetry",
+    "bulkTag",
+    "bulkClearTags",
+    "selectedStats",
+  ])
+    assert.match(admin, new RegExp(operation));
+  assert.match(admin, /UNKNOWN.*không tự gửi lại/);
 });
 test("admin UI excludes secret fields and never stores sessions locally", () => {
   assert.match(
     admin,
     /password\|token\|secret\|credential\|encrypted\|authorization/,
   );
-  assert.doesNotMatch(admin + client, /localStorage/);
+  assert.doesNotMatch(admin + client, /localStorage\.(?:setItem|getItem)\([^)]*(?:token|session|secret)/i);
   for (const secret of [
     "SESSION_SECRET",
     "JWT_SECRET",
@@ -308,7 +455,7 @@ test("admin renders real response shapes, relationships and localized tables", (
     adminOperations,
     /label:'(Platform|Category|Provider|Service|Price Group) ID'/,
   );
-  assert.match(adminOperations, /moduleHeader\('Thêm '\+title/);
+  assert.match(adminOperations, /services\.create/);
   for (const label of ["Thêm nhà cung cấp", "Tạo mã giảm giá"])
     assert.match(adminOperations, new RegExp(label));
 });
@@ -330,7 +477,7 @@ test("super admin action renderers include real archive endpoints", () => {
   assert.match(adminOperations, /button\('Xóa','delete'/);
   for (const action of [
     "Thêm nhà cung cấp",
-    "Thêm nhóm giá",
+    "Tạo nhóm giá",
     "Thêm phương thức thanh toán",
     "Nâng tài khoản thành nhân viên",
   ])
@@ -1074,9 +1221,9 @@ test("API proxy signs the validated browser tenant host instead of forwarding sp
   );
   assert.match(server, /browserHost\(request\.headers\.host\)/);
   assert.match(server, /createHmac\("sha256", proxySecret\)/);
-  assert.match(server, /"x-smm-tenant-host": tenantHost/);
+  assert.match(server, /tenantHeaders\(tenantHost\)/);
+  assert.match(server, /"x-smm-tenant-host": hostname/);
   assert.match(server, /"x-smm-tenant-timestamp": timestamp/);
-  assert.match(server, /"x-smm-tenant-signature": signature/);
   assert.doesNotMatch(server, /headers:\s*\{\s*host:\s*validatedHost/);
 });
 
@@ -1096,4 +1243,41 @@ test("panel plan editor round-trips grouped granular permissionCodes separately 
     "allowThemes",
   ])
     assert.match(adminUx, new RegExp(flag));
+});
+
+test("tenant admin shell never server-renders the root brand", () => {
+  const tenant = adminPage("", "/admin", "smmlike.site");
+  const root = adminPage("", "/admin", "dichvu1st.com");
+  assert.match(tenant, /smmlike\.site Admin/);
+  assert.match(tenant, /data-brand-mark>S</);
+  assert.doesNotMatch(tenant, />DichVu1st</);
+  assert.match(root, /DichVu1st Admin/);
+});
+
+test("affiliate and reports have dedicated renderers instead of order filters", () => {
+  assert.match(adminOperations, /function renderAffiliate/);
+  assert.match(adminOperations, /function renderReports/);
+  const affiliate = adminOperations.slice(
+    adminOperations.indexOf("function renderAffiliate"),
+    adminOperations.indexOf("function renderReports"),
+  );
+  assert.doesNotMatch(affiliate, /Website Order ID|Provider Order ID/);
+  assert.match(affiliate, /Affiliate/);
+  assert.match(affiliate, /Commission/);
+});
+
+test("catalog and price-group CTAs use canonical tenant permissions", () => {
+  assert.match(adminOperations, /moduleHeader\('\+ Tạo nhóm giá','create','users\.pricing\.manage'\)/);
+  assert.match(adminOperations, /moduleHeader\(\(kind===['"]platforms/);
+  assert.match(adminOperations, /services\.create/);
+  assert.doesNotMatch(adminOperations, /moduleHeader\([^\n]+services\.manage/);
+});
+
+test("order selection is page-local and advanced filters are collapsed", () => {
+  const html = adminPage("", "/admin/orders");
+  assert.match(html, /advanced-filters/);
+  assert.match(html, /selectedIds\.clear\(\);page=Math\.max/);
+  assert.match(html, /selectedIds\.clear\(\);page=1;orderFilters=/);
+  assert.match(html, /id="bulkBar" hidden/);
+  assert.match(html, /Cập nhật từ NCC/);
 });

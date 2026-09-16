@@ -134,6 +134,7 @@ export class OrderService {
           coupon = input.couponCode
             ? await this.promotions.reserve(
                 tx,
+                siteId,
                 userId,
                 input.couponCode,
                 originalCharge,

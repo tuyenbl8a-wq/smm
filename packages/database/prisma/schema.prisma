@@ -447,7 +447,10 @@ model PaymentWebhook {
 }
 model Provider {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name String @unique @db.VarChar(120)
+  siteId String @map("site_id") @db.Uuid
+  managedParentSiteId String? @map("managed_parent_site_id") @db.Uuid
+  managedApiKeyId String? @map("managed_api_key_id") @db.Uuid
+  name String @db.VarChar(120)
   apiUrl String @map("api_url") @db.VarChar(2048)
   apiKeyEncrypted String @map("api_key_encrypted") @db.Text
   encryptionKeyVersion Int @map("encryption_key_version")
@@ -467,6 +470,10 @@ model Provider {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  @@unique([siteId, name], map: "providers_site_name_key")
+  @@index([siteId, status, priority], map: "providers_site_status_priority_idx")
+  @@unique([siteId, managedParentSiteId], map: "providers_managed_parent_key")
+  @@index([managedApiKeyId], map: "providers_managed_api_key_idx")
   @@index([status, priority])
   @@index([autoSyncEnabled, nextSyncAt])
   @@map("providers")
@@ -495,22 +502,25 @@ model ProviderService {
 }
 model Platform {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name String @unique @db.VarChar(120)
-  slug String @unique @db.VarChar(140)
+  siteId String @map("site_id") @db.Uuid
+  name String @db.VarChar(120)
+  slug String @db.VarChar(140)
   icon String? @db.VarChar(255)
   description String? @db.Text
   sortOrder Int @default(0) @map("sort_order")
   active Boolean @default(true)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-  @@index([active, sortOrder])
+  @@unique([siteId, slug])
+  @@index([siteId, active, sortOrder])
   @@map("platforms")
 }
 model ServiceCategory {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
   platformId String? @map("platform_id") @db.Uuid
   name String @db.VarChar(160)
-  slug String @unique @db.VarChar(180)
+  slug String @db.VarChar(180)
   description String? @db.Text
   icon String? @db.VarChar(2048)
   sortOrder Int @default(0) @map("sort_order")
@@ -518,8 +528,9 @@ model ServiceCategory {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
-  @@index([active, sortOrder])
-  @@index([platformId, active, sortOrder])
+  @@unique([siteId, slug])
+  @@index([siteId, active, sortOrder])
+  @@index([siteId, platformId, active, sortOrder])
   @@map("service_categories")
 }
 model Service {
@@ -651,6 +662,7 @@ model Order {
   refundedAmount Decimal @default(0) @map("refunded_amount") @db.Decimal(20, 8)
   manualOverride Boolean @default(false) @map("manual_override")
   manualOverrideAt DateTime? @map("manual_override_at") @db.Timestamptz(3)
+  tags String[] @default([])
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   @@unique([providerId, providerOrderId])
@@ -1217,6 +1229,40 @@ model SiteServiceRule {
   @@unique([siteId, serviceId])
   @@index([siteId, active])
   @@map("site_service_rules")
+}
+
+model SitePlatformRule {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId             String   @map("site_id") @db.Uuid
+  platformId         String   @map("platform_id") @db.Uuid
+  displayName        String?  @map("display_name") @db.VarChar(120)
+  displayDescription String?  @map("display_description") @db.Text
+  displayIcon        String?  @map("display_icon") @db.VarChar(2048)
+  sortOrder          Int?     @map("sort_order")
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([siteId, platformId])
+  @@index([siteId, active, sortOrder])
+  @@map("site_platform_rules")
+}
+
+model SiteCategoryRule {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId             String   @map("site_id") @db.Uuid
+  categoryId         String   @map("category_id") @db.Uuid
+  displayName        String?  @map("display_name") @db.VarChar(160)
+  displayDescription String?  @map("display_description") @db.Text
+  displayIcon        String?  @map("display_icon") @db.VarChar(2048)
+  sortOrder          Int?     @map("sort_order")
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([siteId, categoryId])
+  @@index([siteId, active, sortOrder])
+  @@map("site_category_rules")
 }
 
 model OrderSiteSettlement {

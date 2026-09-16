@@ -104,6 +104,33 @@ export class CatalogService {
     this.bulk = new BulkPricingService(db);
   }
 
+  private async applyCatalogPresentation(
+    siteId: string,
+    platforms: any[],
+    categories: any[],
+  ) {
+    if (siteId === ROOT_SITE_ID) return { platforms, categories };
+    const [platformRules, categoryRules] = await Promise.all([
+      this.db.sitePlatformRule?.findMany?.({ where: { siteId } }) ?? [],
+      this.db.siteCategoryRule?.findMany?.({ where: { siteId } }) ?? [],
+    ]);
+    const platformMap = new Map(platformRules.map((rule: any) => [rule.platformId, rule]));
+    const categoryMap = new Map(categoryRules.map((rule: any) => [rule.categoryId, rule]));
+    const overlay = (row: any, rule: any) => ({
+      ...row,
+      name: rule?.displayName ?? row.name,
+      description: rule?.displayDescription ?? row.description,
+      icon: rule?.displayIcon ?? row.icon,
+      sortOrder: rule?.sortOrder ?? row.sortOrder,
+      active: row.active && (rule?.active ?? true),
+      tenantOverride: rule ?? null,
+    });
+    return {
+      platforms: platforms.map((row) => overlay(row, platformMap.get(row.id))),
+      categories: categories.map((row) => overlay(row, categoryMap.get(row.id))),
+    };
+  }
+
   bulkPreview(input: any) {
     return this.bulk.preview(input);
   }
@@ -125,7 +152,7 @@ export class CatalogService {
     const limit = integer(query.limit, "limit", 1);
     if (limit > 50)
       throw new CatalogError("PAGINATION_INVALID", "Limit cannot exceed 50");
-    const [categoryRows, platforms] = await Promise.all([
+    const [categoryRows, platformRows] = await Promise.all([
       this.db.serviceCategory.findMany({
         where: { active: true, deletedAt: null },
         select: {
@@ -141,8 +168,10 @@ export class CatalogService {
         select: { id: true, name: true, slug: true },
       }),
     ]);
+    const presented = await this.applyCatalogPresentation(query.siteId, platformRows, categoryRows);
+    const platforms = presented.platforms.filter((row: any) => row.active !== false);
     const platformMap = new Map(platforms.map((item: any) => [item.id, item]));
-    let categories = categoryRows.map((category: any) => ({
+    let categories = presented.categories.filter((row: any) => row.active !== false).map((category: any) => ({
       id: category.id,
       name: category.name,
       slug: category.slug,
@@ -243,10 +272,16 @@ export class CatalogService {
     return this.bulk.applySimple(actorId, input);
   }
 
-  async pricingAlerts() {
+  async pricingAlerts(siteId = ROOT_SITE_ID) {
+    const services = await this.db.service.findMany({
+      where: { siteId, deletedAt: null },
+      select: { id: true },
+    });
+    const where = { serviceId: { in: services.map((item: any) => item.id) } };
     const [open, items] = await Promise.all([
-      this.db.priceAlert.count({ where: { status: "OPEN" } }),
+      this.db.priceAlert.count({ where: { ...where, status: "OPEN" } }),
       this.db.priceAlert.findMany({
+        where,
         orderBy: { createdAt: "desc" },
         take: 100,
       }),
@@ -254,9 +289,22 @@ export class CatalogService {
     return { open, items };
   }
 
-  async resolvePricingAlert(actorId: string, id: string) {
+  async resolvePricingAlert(
+    actorId: string,
+    id: string,
+    siteId = ROOT_SITE_ID,
+  ) {
     return this.db.$transaction(async (tx: any) => {
-      const alert = await tx.priceAlert.findUnique({ where: { id } });
+      const serviceIds = await tx.service.findMany({
+        where: { siteId, deletedAt: null },
+        select: { id: true },
+      });
+      const alert = await tx.priceAlert.findFirst({
+        where: {
+          id,
+          serviceId: { in: serviceIds.map((item: any) => item.id) },
+        },
+      });
       if (!alert)
         throw new CatalogError(
           "PRICE_ALERT_NOT_FOUND",
@@ -279,6 +327,7 @@ export class CatalogService {
         id,
         alert,
         resolved,
+        siteId,
       );
       return resolved;
     });
@@ -308,7 +357,7 @@ export class CatalogService {
       select: { id: true, platformId: true, name: true, slug: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     });
-    const platforms = this.db.platform?.findMany
+    const platformRows = this.db.platform?.findMany
       ? await this.db.platform.findMany({
           where: {
             active: true,
@@ -318,8 +367,11 @@ export class CatalogService {
           orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
         })
       : [];
+    const presented = await this.applyCatalogPresentation(query.siteId, platformRows, categoryRows);
+    const platforms = presented.platforms.filter((row: any) => row.active !== false);
     const platformMap = new Map(platforms.map((item: any) => [item.id, item]));
-    const categories = categoryRows
+    const categories = presented.categories
+      .filter((item: any) => item.active !== false)
       .filter((item: any) =>
         query.platform ? platformMap.has(item.platformId) : true,
       )
@@ -487,11 +539,15 @@ export class CatalogService {
     });
     const services = await this.db.service.findMany({
       where: {
-        id: { in: rules.map((rule: any) => rule.serviceId) },
+        OR: [
+          { siteId },
+          { id: { in: rules.map((rule: any) => rule.serviceId) } },
+        ],
         deletedAt: null,
       },
       select: {
         id: true,
+        siteId: true,
         serviceNumber: true,
         name: true,
         description: true,
@@ -502,20 +558,47 @@ export class CatalogService {
         categoryId: true,
       },
     });
-    const serviceMap = new Map(
-      services.map((service: any) => [service.id, service]),
-    );
+    const visibleServices = services.filter((service: any) => {
+      if (service.siteId === siteId) return service.active;
+      const rule = rules.find((item: any) => item.serviceId === service.id);
+      return Boolean(rule?.active && service.active);
+    });
+    const categoryRows = await this.db.serviceCategory.findMany({
+      where: {
+        id: { in: [...new Set(visibleServices.map((service: any) => service.categoryId))] },
+        active: true,
+        deletedAt: null,
+      },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+    const platformRows = await this.db.platform.findMany({
+      where: {
+        id: {
+          in: [
+            ...new Set(
+              categoryRows
+                .map((category: any) => category.platformId)
+                .filter(Boolean),
+            ),
+          ],
+        },
+        active: true,
+      },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+    const presented = await this.applyCatalogPresentation(siteId, platformRows, categoryRows);
     return {
-      services: rules.flatMap((rule: any) => {
-        const service: any = serviceMap.get(rule.serviceId);
-        return service
-          ? [
-              {
-                ...this.applySiteRule(service, rule),
-                active: rule.active && service.active,
-              },
-            ]
-          : [];
+      platforms: presented.platforms.filter((row: any) => row.active),
+      categories: presented.categories.filter((row: any) => row.active),
+      services: services.flatMap((service: any) => {
+        const rule = rules.find((item: any) => item.serviceId === service.id);
+        if (service.siteId !== siteId && !rule) return [];
+        return [
+          {
+            ...this.applySiteRule(service, rule),
+            active: service.siteId === siteId ? service.active : rule.active && service.active,
+          },
+        ];
       }),
       providers: [],
       providerServices: [],
@@ -564,7 +647,10 @@ export class CatalogService {
     const presentationRequested =
       input.name !== undefined || input.description !== undefined;
     const pricingRequested =
-      input.fixedRate !== undefined || input.markupPercent !== undefined;
+      input.fixedRate !== undefined ||
+      input.markupPercent !== undefined ||
+      input.min !== undefined ||
+      input.max !== undefined;
     const toggleRequested = input.active !== undefined;
     if (presentationRequested && !capabilities.presentation)
       throw new CatalogError(
@@ -592,6 +678,24 @@ export class CatalogService {
           "SERVICE_NOT_FOUND",
           "Assigned service not found",
         );
+      const service = await tx.service.findFirst({
+        where: { id: serviceId, active: true, deletedAt: null },
+      });
+      if (!service)
+        throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
+      const minOverride =
+        input.min === undefined ? before.minOverride : integer(input.min, "min", service.min);
+      const maxOverride =
+        input.max === undefined ? before.maxOverride : integer(input.max, "max", service.min);
+      if (
+        (minOverride != null && minOverride < service.min) ||
+        (maxOverride != null && maxOverride > service.max) ||
+        (minOverride != null && maxOverride != null && maxOverride < minOverride)
+      )
+        throw new CatalogError(
+          "RANGE_INVALID",
+          "Tenant quantity limits must stay within the upstream service range",
+        );
       const data: any = {
         ...(input.name !== undefined ? { displayName: name(input.name) } : {}),
         ...(input.description !== undefined
@@ -617,6 +721,8 @@ export class CatalogService {
               fixedRate: null,
             }
           : {}),
+        ...(input.min !== undefined ? { minOverride } : {}),
+        ...(input.max !== undefined ? { maxOverride } : {}),
       };
       const updated = await tx.siteServiceRule.update({
         where: { siteId_serviceId: { siteId, serviceId } },
@@ -636,44 +742,61 @@ export class CatalogService {
     });
   }
 
-  async adminOverview(includePricing = true) {
-    const [
-      platforms,
-      categories,
-      services,
-      priceGroups,
-      priceRules,
-      providerServices,
-      providers,
-      mappings,
-      priceHistory,
-    ] = await Promise.all([
-      this.db.platform.findMany({
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+  async adminOverview(includePricing = true, siteId = ROOT_SITE_ID) {
+    const providers = await this.db.provider.findMany({
+      where: { siteId, deletedAt: null },
+      select: { id: true, name: true, status: true },
+      orderBy: { name: "asc" },
+    });
+    const [platforms, categories, services, priceGroups, providerServices] =
+      await Promise.all([
+        this.db.platform.findMany({
+          where: { siteId },
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        }),
+        this.db.serviceCategory.findMany({
+          where: { siteId, deletedAt: null },
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        }),
+        this.db.service.findMany({
+          where: { siteId, deletedAt: null },
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+          take: 5000,
+        }),
+        this.db.priceGroup.findMany({
+          where: { siteId },
+          orderBy: { name: "asc" },
+        }),
+        this.db.providerService.findMany({
+          where: {
+            providerId: { in: providers.map((provider: any) => provider.id) },
+            active: true,
+          },
+          orderBy: { name: "asc" },
+          take: 5000,
+        }),
+      ]);
+    const [priceRules, mappings, priceHistory] = await Promise.all([
+      this.db.priceRule.findMany({
+        where: {
+          serviceId: { in: services.map((service: any) => service.id) },
+          priceGroupId: { in: priceGroups.map((group: any) => group.id) },
+        },
+        take: 15000,
       }),
-      this.db.serviceCategory.findMany({
-        where: { deletedAt: null },
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      this.db.serviceMapping.findMany({
+        where: {
+          serviceId: { in: services.map((service: any) => service.id) },
+          providerServiceId: {
+            in: providerServices.map((service: any) => service.id),
+          },
+        },
+        take: 15000,
       }),
-      this.db.service.findMany({
-        where: { deletedAt: null },
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-        take: 5000,
-      }),
-      this.db.priceGroup.findMany({ orderBy: { name: "asc" } }),
-      this.db.priceRule.findMany({ take: 15000 }),
-      this.db.providerService.findMany({
-        where: { active: true },
-        orderBy: { name: "asc" },
-        take: 5000,
-      }),
-      this.db.provider.findMany({
-        where: { deletedAt: null },
-        select: { id: true, name: true, status: true },
-        orderBy: { name: "asc" },
-      }),
-      this.db.serviceMapping.findMany({ take: 15000 }),
       this.db.servicePriceHistory.findMany({
+        where: {
+          serviceId: { in: services.map((service: any) => service.id) },
+        },
         orderBy: { createdAt: "desc" },
         take: 100,
       }),
@@ -832,7 +955,17 @@ export class CatalogService {
     };
   }
 
-  async serviceSourcePreview(id: string, providerServiceId: string) {
+  async serviceSourcePreview(
+    id: string,
+    providerServiceId: string,
+    siteId = ROOT_SITE_ID,
+  ) {
+    const ownedService = await this.db.service.findFirst({
+      where: { id, siteId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!ownedService)
+      throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
     const [current, target] = await Promise.all([
       this.serviceEditor(id, true),
       this.db.providerService.findFirst({
@@ -845,7 +978,7 @@ export class CatalogService {
         "Provider service not found",
       );
     const provider = await this.db.provider.findFirst({
-      where: { id: target.providerId, deletedAt: null },
+      where: { id: target.providerId, siteId, deletedAt: null },
       select: { id: true, name: true, status: true },
     });
     if (!provider)
@@ -1278,8 +1411,60 @@ export class CatalogService {
     });
   }
 
-  async createPlatform(actorId: string, input: any) {
+  private presentationData(input: any) {
+    return {
+      ...(input.name !== undefined ? { displayName: name(input.name) } : {}),
+      ...(input.description !== undefined
+        ? { displayDescription: String(input.description).trim().slice(0, 5000) || null }
+        : {}),
+      ...(input.icon !== undefined ? { displayIcon: safeImageUrl(input.icon) } : {}),
+      ...(input.sortOrder !== undefined ? { sortOrder: integer(input.sortOrder, "sortOrder") } : {}),
+      ...(input.active !== undefined ? { active: input.active === true } : {}),
+    };
+  }
+
+  async updatePlatformPresentation(actorId: string, siteId: string, platformId: string, input: any) {
+    return this.db.$transaction(async (tx: any) => {
+      const categories = await tx.serviceCategory.findMany({ where: { platformId }, select: { id: true } });
+      const services = await tx.service.findMany({ where: { categoryId: { in: categories.map((row: any) => row.id) }, deletedAt: null }, select: { id: true } });
+      const assigned = await tx.siteServiceRule.findFirst({
+        where: { siteId, serviceId: { in: services.map((row: any) => row.id) } },
+        select: { id: true },
+      });
+      if (!assigned) throw new CatalogError("PLATFORM_NOT_FOUND", "Platform is not assigned to this site");
+      const before = await tx.sitePlatformRule.findUnique({ where: { siteId_platformId: { siteId, platformId } } });
+      const item = await tx.sitePlatformRule.upsert({
+        where: { siteId_platformId: { siteId, platformId } },
+        create: { siteId, platformId, ...this.presentationData(input) },
+        update: this.presentationData(input),
+      });
+      await this.audit(tx, actorId, "TENANT_PLATFORM_PRESENTATION_UPDATE", "site_platform_rule", item.id, before, item, siteId);
+      return item;
+    });
+  }
+
+  async updateCategoryPresentation(actorId: string, siteId: string, categoryId: string, input: any) {
+    return this.db.$transaction(async (tx: any) => {
+      const services = await tx.service.findMany({ where: { categoryId, deletedAt: null }, select: { id: true } });
+      const assigned = await tx.siteServiceRule.findFirst({
+        where: { siteId, serviceId: { in: services.map((row: any) => row.id) } },
+        select: { id: true },
+      });
+      if (!assigned) throw new CatalogError("CATEGORY_NOT_FOUND", "Category is not assigned to this site");
+      const before = await tx.siteCategoryRule.findUnique({ where: { siteId_categoryId: { siteId, categoryId } } });
+      const item = await tx.siteCategoryRule.upsert({
+        where: { siteId_categoryId: { siteId, categoryId } },
+        create: { siteId, categoryId, ...this.presentationData(input) },
+        update: this.presentationData(input),
+      });
+      await this.audit(tx, actorId, "TENANT_CATEGORY_PRESENTATION_UPDATE", "site_category_rule", item.id, before, item, siteId);
+      return item;
+    });
+  }
+
+  async createPlatform(actorId: string, siteId: string, input: any) {
     const data = {
+      siteId,
       name: name(input.name).slice(0, 120),
       slug: slug(input.slug).slice(0, 140),
       icon: safeImageUrl(input.icon, 255),
@@ -1299,14 +1484,15 @@ export class CatalogService {
         item.id,
         null,
         item,
+        siteId,
       );
       return item;
     });
   }
 
-  async updatePlatform(actorId: string, id: string, input: any) {
+  async updatePlatform(actorId: string, siteId: string, id: string, input: any) {
     return this.db.$transaction(async (tx: any) => {
-      const before = await tx.platform.findUnique({ where: { id } });
+      const before = await tx.platform.findFirst({ where: { id, siteId } });
       if (!before)
         throw new CatalogError("PLATFORM_NOT_FOUND", "Platform not found");
       const item = await tx.platform.update({
@@ -1343,13 +1529,15 @@ export class CatalogService {
         id,
         before,
         item,
+        siteId,
       );
       return item;
     });
   }
 
-  async createCategory(actorId: string, input: any) {
+  async createCategory(actorId: string, siteId: string, input: any) {
     const data = {
+      siteId,
       platformId: input.platformId ? String(input.platformId) : null,
       name: name(input.name),
       slug: slug(input.slug),
@@ -1361,6 +1549,10 @@ export class CatalogService {
       active: input.active !== false,
     };
     return this.db.$transaction(async (tx: any) => {
+      if (data.platformId) {
+        const platform = await tx.platform.findFirst({ where: { id: data.platformId, siteId } });
+        if (!platform) throw new CatalogError("PLATFORM_NOT_FOUND", "Platform not found");
+      }
       const item = await tx.serviceCategory.create({ data });
       await this.audit(
         tx,
@@ -1370,13 +1562,14 @@ export class CatalogService {
         item.id,
         null,
         item,
+        siteId,
       );
       return item;
     });
   }
-  async updateCategory(actorId: string, id: string, input: any) {
+  async updateCategory(actorId: string, siteId: string, id: string, input: any) {
     return this.db.$transaction(async (tx: any) => {
-      const before = await tx.serviceCategory.findUnique({ where: { id } });
+      const before = await tx.serviceCategory.findFirst({ where: { id, siteId } });
       if (!before)
         throw new CatalogError("CATEGORY_NOT_FOUND", "Category not found");
       const data = {
@@ -1399,6 +1592,10 @@ export class CatalogService {
           : {}),
         ...(input.icon !== undefined ? { icon: safeImageUrl(input.icon) } : {}),
       };
+      if (data.platformId) {
+        const platform = await tx.platform.findFirst({ where: { id: data.platformId, siteId } });
+        if (!platform) throw new CatalogError("PLATFORM_NOT_FOUND", "Platform not found");
+      }
       const item = await tx.serviceCategory.update({ where: { id }, data });
       await this.audit(
         tx,
@@ -1408,11 +1605,12 @@ export class CatalogService {
         id,
         before,
         item,
+        siteId,
       );
       return item;
     });
   }
-  async createService(actorId: string, input: any) {
+  async createService(actorId: string, siteId: string, input: any) {
     const min = integer(input.min, "min", 1),
       max = integer(input.max, "max", 1),
       source = String(input.source ?? "MANUAL"),
@@ -1429,7 +1627,7 @@ export class CatalogService {
       );
     return this.db.$transaction(async (tx: any) => {
       const category = await tx.serviceCategory.findFirst({
-        where: { id: String(input.categoryId), active: true, deletedAt: null },
+        where: { id: String(input.categoryId), siteId, active: true, deletedAt: null },
       });
       if (!category)
         throw new CatalogError(
@@ -1438,9 +1636,14 @@ export class CatalogService {
         );
       let providerService: any = null;
       if (source === "API") {
+        const tenantProviders = tx.provider?.findMany ? await tx.provider.findMany({
+          where: { siteId, deletedAt: null },
+          select: { id: true },
+        }) : null;
         providerService = await tx.providerService.findFirst({
           where: {
             id: String(input.providerServiceId ?? ""),
+            ...(tenantProviders ? { providerId: { in: tenantProviders.map((provider: any) => provider.id) } } : {}),
             active: true,
             stale: false,
           },
@@ -1457,6 +1660,7 @@ export class CatalogService {
           : decimalInput(input.providerCost ?? 0, true);
       const item = await tx.service.create({
         data: {
+          siteId,
           categoryId: category.id,
           name: name(input.name),
           source,
@@ -1502,6 +1706,7 @@ export class CatalogService {
       }
       const groups = await tx.priceGroup.findMany({
         where: {
+          siteId,
           active: true,
           code: { in: ["CUSTOMER", "AGENT", "DISTRIBUTOR"] },
         },
@@ -1544,6 +1749,7 @@ export class CatalogService {
           mappingId: mapping?.id ?? null,
           reason,
         },
+        siteId,
       );
       return { service: item, mapping };
     });
@@ -1610,9 +1816,11 @@ export class CatalogService {
     });
   }
 
-  async updateService(actorId: string, id: string, input: any) {
+  async updateService(actorId: string, siteId: string, id: string, input: any) {
     return this.db.$transaction(async (tx: any) => {
-      const before = await tx.service.findUnique({ where: { id } });
+      const before = tx.service.findFirst
+        ? await tx.service.findFirst({ where: { id, siteId } })
+        : await tx.service.findUnique({ where: { id } });
       if (!before)
         throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
       const data: any = {
@@ -1699,6 +1907,7 @@ export class CatalogService {
         id,
         before,
         item,
+        siteId,
       );
       return item;
     });
@@ -1706,6 +1915,7 @@ export class CatalogService {
 
   async archiveEntity(
     actorId: string,
+    siteId: string,
     kind: "platforms" | "categories" | "services" | "price-groups",
     id: string,
   ) {
@@ -1733,7 +1943,9 @@ export class CatalogService {
         },
       }[kind];
       const repository = tx[config.model];
-      const before = await repository.findUnique({ where: { id } });
+      const before = repository.findFirst
+        ? await repository.findFirst({ where: { id, siteId } })
+        : await repository.findUnique({ where: { id } });
       if (!before)
         throw new CatalogError(
           "CATALOG_ITEM_NOT_FOUND",
@@ -1754,6 +1966,7 @@ export class CatalogService {
           ...item,
           archiveReason: "Giữ nguyên lịch sử đơn hàng, giá và nhật ký",
         },
+        siteId,
       );
       return {
         item,
@@ -1762,7 +1975,7 @@ export class CatalogService {
       };
     });
   }
-  async createPriceGroup(actorId: string, input: any) {
+  async createPriceGroup(actorId: string, siteId: string, input: any) {
     const code = String(input.code ?? "")
       .trim()
       .toUpperCase();
@@ -1771,6 +1984,7 @@ export class CatalogService {
     return this.db.$transaction(async (tx: any) => {
       const item = await tx.priceGroup.create({
         data: {
+          siteId,
           name: name(input.name).slice(0, 100),
           code,
           active: input.active !== false,
@@ -1804,13 +2018,14 @@ export class CatalogService {
         item.id,
         null,
         item,
+        siteId,
       );
       return item;
     });
   }
-  async updatePriceGroup(actorId: string, id: string, input: any) {
+  async updatePriceGroup(actorId: string, siteId: string, id: string, input: any) {
     return this.db.$transaction(async (tx: any) => {
-      const before = await tx.priceGroup.findUnique({ where: { id } });
+      const before = await tx.priceGroup.findFirst({ where: { id, siteId } });
       if (!before)
         throw new CatalogError(
           "PRICE_GROUP_NOT_FOUND",
@@ -1888,6 +2103,7 @@ export class CatalogService {
         id,
         before,
         item,
+        siteId,
       );
       return item;
     });
