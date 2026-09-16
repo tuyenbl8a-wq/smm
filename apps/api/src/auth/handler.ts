@@ -1190,8 +1190,7 @@ export class AuthHandler {
       }
       if (request.method === "GET" && path === "/api/v1/admin/services") {
         if (
-          !canAccessAdmin(auth.access, "services.view") &&
-          !canAccessAdmin(auth.access, "services.manage")
+          !canAccessAdmin(auth.access, "services.view")
         )
           return this.error(
             response,
@@ -1213,8 +1212,7 @@ export class AuthHandler {
         /^\/api\/v1\/admin\/services\/([0-9a-f-]{36})$/.exec(path);
       if (request.method === "GET" && serviceEditor) {
         if (
-          !canAccessAdmin(auth.access, "services.view") &&
-          !canAccessAdmin(auth.access, "services.manage")
+          !canAccessAdmin(auth.access, "services.view")
         )
           return this.error(
             response,
@@ -1281,8 +1279,7 @@ export class AuthHandler {
         /^\/api\/v1\/admin\/services\/([0-9a-f-]{36})\/editor$/.exec(path);
       if (request.method === "POST" && editorUpdate) {
         if (
-          tenant.id === ROOT_SITE_ID &&
-          !canAccessAdmin(auth.access, "services.manage")
+          !canAccessAdmin(auth.access, "services.presentation.manage")
         )
           return this.error(
             response,
@@ -2288,35 +2285,24 @@ export class AuthHandler {
           /^\/api\/v1\/admin\/catalog\/services\/([0-9a-f-]{36})\/update$/.exec(
             path,
           );
-        if (tenant.id !== ROOT_SITE_ID && !tenantServiceUpdate)
-          return this.error(
-            response,
-            403,
-            "GLOBAL_ENDPOINT_ROOT_ONLY",
-            "Child panels cannot create catalog or provider resources",
-          );
-        if (
-          tenant.id === ROOT_SITE_ID &&
-          !canAccessAdmin(auth.access, "services.manage")
-        )
-          return this.error(
-            response,
-            403,
-            "PERMISSION_DENIED",
-            "Permission denied",
-          );
         if (!this.catalog) throw new Error("Catalog service unavailable");
         const body = await this.body(request);
-        if (path === "/api/v1/admin/catalog/platforms")
+        if (path === "/api/v1/admin/catalog/platforms") {
+          if (!canAccessAdmin(auth.access, "services.create"))
+            return this.error(response, 403, "PERMISSION_DENIED", "Service creation permission required");
           return this.ok(
             response,
-            await this.catalog.createPlatform(auth.user.id, body),
+            await this.catalog.createPlatform(auth.user.id, tenant.id, body),
           );
-        if (path === "/api/v1/admin/catalog/categories")
+        }
+        if (path === "/api/v1/admin/catalog/categories") {
+          if (!canAccessAdmin(auth.access, "services.create"))
+            return this.error(response, 403, "PERMISSION_DENIED", "Service creation permission required");
           return this.ok(
             response,
-            await this.catalog.createCategory(auth.user.id, body),
+            await this.catalog.createCategory(auth.user.id, tenant.id, body),
           );
+        }
         if (path === "/api/v1/admin/catalog/services")
           if (!canAccessAdmin(auth.access, "services.create"))
             return this.error(
@@ -2328,13 +2314,16 @@ export class AuthHandler {
           else
             return this.ok(
               response,
-              await this.catalog.createService(auth.user.id, body),
+              await this.catalog.createService(auth.user.id, tenant.id, body),
             );
-        if (path === "/api/v1/admin/catalog/price-groups")
+        if (path === "/api/v1/admin/catalog/price-groups") {
+          if (!canAccessAdmin(auth.access, "users.pricing.manage"))
+            return this.error(response, 403, "PERMISSION_DENIED", "Pricing permission required");
           return this.ok(
             response,
-            await this.catalog.createPriceGroup(auth.user.id, body),
+            await this.catalog.createPriceGroup(auth.user.id, tenant.id, body),
           );
+        }
         if (path === "/api/v1/admin/catalog/price-rules")
           return this.ok(
             response,
@@ -2357,27 +2346,38 @@ export class AuthHandler {
           /^\/api\/v1\/admin\/catalog\/categories\/([0-9a-f-]{36})\/update$/.exec(
             path,
           );
-        if (category)
+        if (category) {
+          if (!canAccessAdmin(auth.access, "services.presentation.manage"))
+            return this.error(response, 403, "PERMISSION_DENIED", "Presentation permission required");
           return this.ok(
             response,
-            await this.catalog.updateCategory(auth.user.id, category[1]!, body),
+            canAccessAdmin(auth.access, "services.create")
+              ? await this.catalog.updateCategory(auth.user.id, tenant.id, category[1]!, body)
+              : await this.catalog.updateCategoryPresentation(auth.user.id, tenant.id, category[1]!, body),
           );
+        }
         const platform =
           /^\/api\/v1\/admin\/catalog\/platforms\/([0-9a-f-]{36})\/update$/.exec(
             path,
           );
-        if (platform)
+        if (platform) {
+          if (!canAccessAdmin(auth.access, "services.presentation.manage"))
+            return this.error(response, 403, "PERMISSION_DENIED", "Presentation permission required");
           return this.ok(
             response,
-            await this.catalog.updatePlatform(auth.user.id, platform[1]!, body),
+            canAccessAdmin(auth.access, "services.create")
+              ? await this.catalog.updatePlatform(auth.user.id, tenant.id, platform[1]!, body)
+              : await this.catalog.updatePlatformPresentation(auth.user.id, tenant.id, platform[1]!, body),
           );
+        }
         const service = tenantServiceUpdate;
         if (service)
           return this.ok(
             response,
-            tenant.id === ROOT_SITE_ID
+            canAccessAdmin(auth.access, "services.create")
               ? await this.catalog.updateService(
                   auth.user.id,
+                  tenant.id,
                   service[1]!,
                   body,
                 )
@@ -2408,6 +2408,7 @@ export class AuthHandler {
             response,
             await this.catalog.updatePriceGroup(
               auth.user.id,
+              tenant.id,
               priceGroup[1]!,
               body,
             ),
@@ -2419,8 +2420,7 @@ export class AuthHandler {
         );
       if (request.method === "DELETE" && catalogArchive) {
         if (
-          tenant.id !== ROOT_SITE_ID ||
-          !canAccessAdmin(auth.access, "services.manage")
+          !canAccessAdmin(auth.access, catalogArchive[1] === "price-groups" ? "users.pricing.manage" : "services.create")
         )
           return this.error(
             response,
@@ -2432,6 +2432,7 @@ export class AuthHandler {
           response,
           await this.catalog!.archiveEntity(
             auth.user.id,
+            tenant.id,
             catalogArchive[1]! as
               "platforms" | "categories" | "services" | "price-groups",
             catalogArchive[2]!,

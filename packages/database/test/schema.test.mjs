@@ -433,6 +433,25 @@ test("managed child upstream migration is additive and references only parent AP
   assert.doesNotMatch(migration, /DELETE\s+FROM|TRUNCATE|DROP TABLE/i);
 });
 
+test("catalog ownership and presentation overlay migrations are additive and tenant indexed", () => {
+  const ownership = readFileSync(
+    new URL("../prisma/migrations/20260914140000_catalog_tenant_ownership/migration.sql", import.meta.url),
+    "utf8",
+  );
+  const overlays = readFileSync(
+    new URL("../prisma/migrations/20260914150000_catalog_presentation_overlays/migration.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(ownership, /UPDATE "platforms" SET "site_id" = '00000000-0000-4000-8000-000000000001'/);
+  assert.match(ownership, /platforms_site_id_slug_key/);
+  assert.match(ownership, /service_categories_site_id_slug_key/);
+  assert.doesNotMatch(ownership, /DELETE FROM "(?:platforms|service_categories)"/i);
+  assert.match(overlays, /CREATE TABLE "site_platform_rules"/);
+  assert.match(overlays, /CREATE TABLE "site_category_rules"/);
+  assert.match(overlays, /UNIQUE INDEX "site_platform_rules_site_id_platform_id_key"/);
+  assert.doesNotMatch(overlays, /DROP TABLE|DELETE FROM/i);
+});
+
 test("User price group stays a scalar foreign key without an implicit Prisma relation", () => {
   const userModel = schema.slice(
     schema.indexOf("model User {"),

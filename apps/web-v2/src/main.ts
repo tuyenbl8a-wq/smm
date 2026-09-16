@@ -147,7 +147,7 @@ const server = createServer(async (request, response) => {
       : editorMatch
         ? () => themeEditorPage(editorMatch[1] ?? null)
         : isAdminRoute(path)
-          ? () => adminPage("", path)
+          ? () => adminPage("", path, new URL(`http://${browserHost(request.headers.host) || "localhost"}`).hostname)
           : customerRoute
             ? () => customerPage("", path)
             : pages[path];

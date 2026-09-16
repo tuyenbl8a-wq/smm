@@ -376,7 +376,7 @@ function creationDatabase() {
 test("creates manual and provider services with exactly three tier prices", async () => {
   const { db, state } = creationDatabase();
   const catalog = new CatalogService(db);
-  const manual = await catalog.createService("admin-1", {
+  const manual = await catalog.createService("admin-1", "00000000-0000-4000-8000-000000000001", {
     source: "MANUAL",
     categoryId: "category-1",
     name: "Dịch vụ thủ công",
@@ -397,7 +397,7 @@ test("creates manual and provider services with exactly three tier prices", asyn
   assert.equal(state().audits[0].actorId, "admin-1");
   assert.equal(state().audits[0].before, null);
   assert.equal(state().audits[0].after.reason, "Tạo mới");
-  const provider = await catalog.createService("admin-1", {
+  const provider = await catalog.createService("admin-1", "00000000-0000-4000-8000-000000000001", {
     source: "API",
     providerServiceId: "ps-create",
     categoryId: "category-1",
@@ -416,7 +416,7 @@ test("creates manual and provider services with exactly three tier prices", asyn
 test("clones service disabled with pricing and mapping copied safely", async () => {
   const { db, state } = creationDatabase();
   const catalog = new CatalogService(db);
-  const original = await catalog.createService("admin-1", {
+  const original = await catalog.createService("admin-1", "00000000-0000-4000-8000-000000000001", {
     source: "API",
     providerServiceId: "ps-create",
     categoryId: "category-1",
