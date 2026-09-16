@@ -792,6 +792,31 @@ test("three new references render nine distinct and responsive interfaces", asyn
   for (const thumb of ["thumb-glass", "thumb-ocean", "thumb-creator"])
     assert.ok(admin.includes(thumb));
 });
+test("references 01-03 keep distinct compositions and Aurora stays unnumbered", async () => {
+  const { fullPageThemePreview } = await import("../dist/theme-builder.js");
+  const expected = {
+    AI_COSMIC_FUTURE: ["ai-robot-orbit", "ai-city-window", "ai-model-stack"],
+    CREATOR_POP: ["creator-portrait", "creator-auth-poster", "creator-channel-cards"],
+    URBAN_LIME_BRUTAL: ["brutal-building", "brutal-auth-title", "brutal-metrics"],
+  };
+  for (const [theme, signatures] of Object.entries(expected)) {
+    const pages = ["landing", "auth", "customer"].map((scope) =>
+      fullPageThemePreview("", theme, scope),
+    );
+    signatures.forEach((signature, index) =>
+      assert.match(pages[index], new RegExp(signature)),
+    );
+    pages.forEach((html) => {
+      assert.doesNotMatch(html, /TÃ|Ä‘|áº|á»|â€|ï¿½|�/);
+      assert.match(html, /data-theme-content="brandTitle"/);
+    });
+  }
+  assert.match(adminOperations, /AURORA_MODERN'\?'MẶC ĐỊNH'/);
+  assert.match(adminOperations, /AI_COSMIC_FUTURE:'01'/);
+  assert.match(adminOperations, /CREATOR_POP:'02'/);
+  assert.match(adminOperations, /URBAN_LIME_BRUTAL:'03'/);
+  assert.doesNotMatch(adminOperations, /presets\.indexOf\(p\)\+1/);
+});
 test("final reference pair completes exactly ten unique three-scope architectures", async () => {
   const { themeStructure } = await import("../dist/themes.js");
   const { fullPageThemePreview, themeEditorPage } =
