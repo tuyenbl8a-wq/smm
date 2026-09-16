@@ -795,7 +795,7 @@ test("three new references render nine distinct and responsive interfaces", asyn
 test("references 01-03 keep distinct compositions and Aurora stays unnumbered", async () => {
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const expected = {
-    AI_COSMIC_FUTURE: ["ai-humanoid", "ai-auth-portal", "ai-customer-signature"],
+    AI_COSMIC_FUTURE: ["aiv2-robot", "aiv2-auth-portal", "aiv2-customer-signature"],
     CREATOR_POP: ["creator-portrait", "creator-auth-poster", "creator-channel-cards"],
     URBAN_LIME_BRUTAL: ["brutal-building", "brutal-auth-title", "brutal-metrics"],
   };
@@ -824,23 +824,41 @@ test("AI cosmic reference keeps one navigation and dense runtime landmarks", asy
   const auth = fullPageThemePreview("", "AI_COSMIC_FUTURE", "auth");
   const customer = fullPageThemePreview("", "AI_COSMIC_FUTURE", "customer");
   for (const token of [
-    "ai-reference-planet",
-    "ai-humanoid-head",
-    "ai-reference-road",
-    "ai-float-optimize",
-    "ai-platform-strip",
+    "aiv2-planet",
+    "aiv2-robot-head",
+    "aiv2-road",
+    "aiv2-float-analysis",
+    "aiv2-platforms",
   ])
     assert.match(landing, new RegExp(token));
-  assert.match(auth, /ai-auth-portal/);
-  assert.match(auth, /ai-auth-manifesto/);
-  assert.match(customer, /ai-customer-signature/);
+  assert.match(auth, /aiv2-auth-portal/);
+  assert.match(auth, /aiv2-auth-manifesto/);
+  assert.match(customer, /aiv2-customer-signature/);
+  assert.match(landing, /data-renderer="ai-reference-landing-v2"/);
+  assert.match(auth, /data-renderer="ai-reference-auth-v2"/);
+  assert.match(customer, /data-renderer="ai-reference-customer-v2"/);
   assert.match(themeStyles, /AI_COSMIC_FUTURE.*\.header\{display:none\}/s);
-  assert.match(admin, /ai_cosmic_future \.thumb-stage/);
-  assert.match(customer, /ai-overview-grid/);
-  assert.match(customer, /ai-growth-chart/);
-  assert.match(customer, /ai-assistant-panel/);
+  assert.match(admin, /ai_cosmic_future \.thumb-ai-v2/);
+  assert.match(customer, /aiv2-overview-grid/);
+  assert.match(customer, /aiv2-growth-chart/);
+  assert.match(customer, /aiv2-assistant-panel/);
   assert.match(themeStyles, /grid-template-columns:1\.28fr \.72fr \.72fr/);
-  assert.match(themeStyles, /ai-overview-grid\{display:grid/);
+  assert.match(themeStyles, /aiv2-overview-grid\{display:grid/);
+  const obsoleteAiSelectors = [
+    "ai-cosmic-orbit",
+    "ai-neural-core",
+    "ai-orbit-nav",
+    "ai-identity-orbit",
+    "ai-city-window",
+    "ai-intelligence-console",
+    "ai-prediction",
+    "ai-model-stack",
+    "ai-queue",
+  ];
+  for (const selector of obsoleteAiSelectors) {
+    assert.doesNotMatch(themeStyles, new RegExp(selector));
+    assert.doesNotMatch(landing + auth + customer, new RegExp(selector));
+  }
 });
 test("final reference pair completes exactly ten unique three-scope architectures", async () => {
   const { themeStructure } = await import("../dist/themes.js");
@@ -869,13 +887,13 @@ test("final reference pair completes exactly ten unique three-scope architecture
       "ticket-desk",
     ],
     AI_COSMIC_FUTURE: [
-      "ai-command",
-      "neural-orbit",
-      "cognitive-gateway",
-      "agent-console",
-      "intelligence-grid",
-      "model-modules",
-      "prompt-pipeline",
+      "ai-reference-nav-v2",
+      "ai-reference-hero-v2",
+      "ai-reference-auth-v2",
+      "ai-reference-sidebar-v2",
+      "ai-reference-dashboard-v2",
+      "ai-reference-services-v2",
+      "ai-reference-order-v2",
     ],
   };
   for (const [id, variants] of Object.entries(expected)) {
@@ -914,7 +932,7 @@ test("final reference pair completes exactly ten unique three-scope architecture
   assert.ok(adminOperations.includes("Đô thị · lime brutalist"));
   assert.ok(adminOperations.includes("AI · quỹ đạo neural đa sắc"));
   assert.match(admin, /\.thumb-brutalist/);
-  assert.match(admin, /\.thumb-stage/);
+  assert.match(admin, /\.thumb-ai-v2/);
 });
 
 test("reference themes provide 30 concrete renderers without document wrappers", async () => {
