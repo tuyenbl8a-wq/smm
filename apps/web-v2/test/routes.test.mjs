@@ -835,6 +835,11 @@ test("AI cosmic reference keeps one navigation and dense runtime landmarks", asy
   assert.match(customer, /ai-agent-orb/);
   assert.match(themeStyles, /AI_COSMIC_FUTURE.*\.header\{display:none\}/s);
   assert.match(admin, /ai_cosmic_future \.thumb-stage/);
+  assert.match(customer, /ai-overview-grid/);
+  assert.match(customer, /ai-growth-chart/);
+  assert.match(customer, /ai-assistant-panel/);
+  assert.match(themeStyles, /grid-template-columns:1\.28fr \.72fr \.72fr/);
+  assert.match(themeStyles, /ai-overview-grid\{display:grid/);
 });
 test("final reference pair completes exactly ten unique three-scope architectures", async () => {
   const { themeStructure } = await import("../dist/themes.js");
