@@ -795,7 +795,7 @@ test("three new references render nine distinct and responsive interfaces", asyn
 test("references 01-03 keep distinct compositions and Aurora stays unnumbered", async () => {
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const expected = {
-    AI_COSMIC_FUTURE: ["ai-robot", "ai-city-window", "ai-model-stack"],
+    AI_COSMIC_FUTURE: ["ai-humanoid", "ai-auth-portal", "ai-customer-signature"],
     CREATOR_POP: ["creator-portrait", "creator-auth-poster", "creator-channel-cards"],
     URBAN_LIME_BRUTAL: ["brutal-building", "brutal-auth-title", "brutal-metrics"],
   };
@@ -824,15 +824,16 @@ test("AI cosmic reference keeps one navigation and dense runtime landmarks", asy
   const auth = fullPageThemePreview("", "AI_COSMIC_FUTURE", "auth");
   const customer = fullPageThemePreview("", "AI_COSMIC_FUTURE", "customer");
   for (const token of [
-    "ai-planet",
-    "ai-robot-head",
-    "ai-road",
-    "ai-chip-four",
-    "ai-command-strip",
+    "ai-reference-planet",
+    "ai-humanoid-head",
+    "ai-reference-road",
+    "ai-float-optimize",
+    "ai-platform-strip",
   ])
     assert.match(landing, new RegExp(token));
-  assert.match(auth, /ai-city-window/);
-  assert.match(customer, /ai-agent-orb/);
+  assert.match(auth, /ai-auth-portal/);
+  assert.match(auth, /ai-auth-manifesto/);
+  assert.match(customer, /ai-customer-signature/);
   assert.match(themeStyles, /AI_COSMIC_FUTURE.*\.header\{display:none\}/s);
   assert.match(admin, /ai_cosmic_future \.thumb-stage/);
   assert.match(customer, /ai-overview-grid/);
