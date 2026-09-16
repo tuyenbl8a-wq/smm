@@ -795,7 +795,7 @@ test("three new references render nine distinct and responsive interfaces", asyn
 test("references 01-03 keep distinct compositions and Aurora stays unnumbered", async () => {
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const expected = {
-    AI_COSMIC_FUTURE: ["ai-robot-orbit", "ai-city-window", "ai-model-stack"],
+    AI_COSMIC_FUTURE: ["ai-robot", "ai-city-window", "ai-model-stack"],
     CREATOR_POP: ["creator-portrait", "creator-auth-poster", "creator-channel-cards"],
     URBAN_LIME_BRUTAL: ["brutal-building", "brutal-auth-title", "brutal-metrics"],
   };
@@ -816,6 +816,25 @@ test("references 01-03 keep distinct compositions and Aurora stays unnumbered", 
   assert.match(adminOperations, /CREATOR_POP:'02'/);
   assert.match(adminOperations, /URBAN_LIME_BRUTAL:'03'/);
   assert.doesNotMatch(adminOperations, /presets\.indexOf\(p\)\+1/);
+});
+test("AI cosmic reference keeps one navigation and dense runtime landmarks", async () => {
+  const { fullPageThemePreview } = await import("../dist/theme-builder.js");
+  const { themeStyles } = await import("../dist/themes.js");
+  const landing = fullPageThemePreview("", "AI_COSMIC_FUTURE", "landing");
+  const auth = fullPageThemePreview("", "AI_COSMIC_FUTURE", "auth");
+  const customer = fullPageThemePreview("", "AI_COSMIC_FUTURE", "customer");
+  for (const token of [
+    "ai-planet",
+    "ai-robot-head",
+    "ai-road",
+    "ai-chip-four",
+    "ai-command-strip",
+  ])
+    assert.match(landing, new RegExp(token));
+  assert.match(auth, /ai-city-window/);
+  assert.match(customer, /ai-agent-orb/);
+  assert.match(themeStyles, /AI_COSMIC_FUTURE.*\.header\{display:none\}/s);
+  assert.match(admin, /ai_cosmic_future \.thumb-stage/);
 });
 test("final reference pair completes exactly ten unique three-scope architectures", async () => {
   const { themeStructure } = await import("../dist/themes.js");
