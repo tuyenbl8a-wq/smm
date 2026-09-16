@@ -1202,3 +1202,39 @@ test("panel plan editor round-trips grouped granular permissionCodes separately 
   ])
     assert.match(adminUx, new RegExp(flag));
 });
+
+test("tenant admin shell never server-renders the root brand", () => {
+  const tenant = adminPage("", "/admin", "smmlike.site");
+  const root = adminPage("", "/admin", "dichvu1st.com");
+  assert.match(tenant, /smmlike\.site Admin/);
+  assert.match(tenant, /data-brand-mark>S</);
+  assert.doesNotMatch(tenant, />DichVu1st</);
+  assert.match(root, /DichVu1st Admin/);
+});
+
+test("affiliate and reports have dedicated renderers instead of order filters", () => {
+  assert.match(adminOperations, /function renderAffiliate/);
+  assert.match(adminOperations, /function renderReports/);
+  const affiliate = adminOperations.slice(
+    adminOperations.indexOf("function renderAffiliate"),
+    adminOperations.indexOf("function renderReports"),
+  );
+  assert.doesNotMatch(affiliate, /Website Order ID|Provider Order ID/);
+  assert.match(affiliate, /Affiliate/);
+  assert.match(affiliate, /Commission/);
+});
+
+test("catalog and price-group CTAs use canonical tenant permissions", () => {
+  assert.match(adminOperations, /moduleHeader\('Thêm nhóm giá','create','users\.pricing\.manage'\)/);
+  assert.match(adminOperations, /moduleHeader\('Thêm '\+title,'create','services\.create'\)/);
+  assert.doesNotMatch(adminOperations, /moduleHeader\([^\n]+services\.manage/);
+});
+
+test("order selection is page-local and advanced filters are collapsed", () => {
+  const html = adminPage("", "/admin/orders");
+  assert.match(html, /advanced-filters/);
+  assert.match(html, /selectedIds\.clear\(\);page=Math\.max/);
+  assert.match(html, /selectedIds\.clear\(\);page=1;orderFilters=/);
+  assert.match(html, /id="bulkBar" hidden/);
+  assert.match(html, /Cập nhật từ NCC/);
+});

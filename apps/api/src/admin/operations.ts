@@ -28,7 +28,6 @@ const CANONICAL_ADMIN_PERMISSIONS = [
   "orders.refund",
   "orders.retry",
   "services.view",
-  "services.manage",
   "services.presentation.manage",
   "services.pricing.manage",
   "services.toggle",
@@ -3148,23 +3147,21 @@ export class AdminOperationsService {
       "themeContent",
       "themeOverrides",
     ];
-    const rows = await this.db.setting.findMany({
+    const [rows, site, domain] = await Promise.all([this.db.setting.findMany({
       where: {
-        siteId: {
-          in: siteId === ROOT_SITE_ID ? [ROOT_SITE_ID] : [ROOT_SITE_ID, siteId],
-        },
+        siteId,
         group: { in: ["general", "branding"] },
         key: { in: allowed },
         encrypted: false,
       },
       select: { siteId: true, key: true, value: true },
       orderBy: { siteId: "asc" },
-    });
-    const root = rows.filter((row: any) => row.siteId === ROOT_SITE_ID),
-      local = rows.filter((row: any) => row.siteId === siteId);
-    return Object.fromEntries(
-      [...root, ...local].map((row: any) => [row.key, row.value]),
-    );
+    }), this.db.site.findUnique({ where: { id: siteId }, select: { name: true } }),
+    this.db.siteDomain.findFirst({ where: { siteId, status: "VERIFIED" }, orderBy: { isPrimary: "desc" }, select: { hostname: true } })]);
+    const values: any = Object.fromEntries(rows.map((row: any) => [row.key, row.value]));
+    if (!values.siteName) values.siteName = siteId === ROOT_SITE_ID ? "DichVu1st" : site?.name || domain?.hostname || "Website";
+    if (!values.brandName) values.brandName = values.siteName;
+    return values;
   }
 
   async maintenance() {

@@ -32,7 +32,7 @@ test("catalog delete archives records and preserves historical references", asyn
     "services",
     "price-groups",
   ] as const) {
-    const result = await service.archiveEntity("admin", kind, "item");
+    const result = await service.archiveEntity("admin", "00000000-0000-4000-8000-000000000001", kind, "item");
     assert.equal(result.archived, true);
   }
   assert.equal(
@@ -311,7 +311,7 @@ test("catalog mutations create an audit record in the same transaction", async (
     },
   };
   const db = { $transaction: async (work: any) => work(tx) };
-  await new CatalogService(db).createCategory("admin-1", {
+  await new CatalogService(db).createCategory("admin-1", "00000000-0000-4000-8000-000000000001", {
     name: "Social Media",
     slug: "social-media",
   });
@@ -345,7 +345,7 @@ test("manual service fields disable only their provider sync controls", async ()
       auditLog: { create: async ({ data }: any) => data },
     },
     db = { $transaction: async (work: any) => work(tx) };
-  await new CatalogService(db).updateService("admin-1", "service-1", {
+  await new CatalogService(db).updateService("admin-1", "00000000-0000-4000-8000-000000000001", "service-1", {
     categoryId: "category-2",
     name: "Tên chỉnh tay",
     min: 20,
@@ -411,7 +411,7 @@ test("public catalog returns only explicitly selected safe fields", async () => 
     page: 1,
     limit: 12,
   });
-  assert.equal(result.categories[0].platform.name, "TikTok");
+  assert.equal(result.categories[0]!.platform!.name, "TikTok");
   assert.equal((result.services[0] as any).providerCost, undefined);
 });
 
@@ -480,4 +480,50 @@ test("child catalog exposes only explicitly inherited services with site overrid
   assert.equal(result.services[0].rate, "12.00000000");
   assert.equal(result.services[0].min, 25);
   assert.equal(result.services[0].max, 500);
+});
+
+test("child platform presentation is stored locally and never updates parent master", async () => {
+  let masterUpdated = false;
+  let overlay: any;
+  const tx: any = {
+    serviceCategory: { findMany: async () => [{ id: "category" }] },
+    service: { findMany: async () => [{ id: "service" }] },
+    siteServiceRule: { findFirst: async () => ({ id: "assignment" }) },
+    sitePlatformRule: {
+      findUnique: async () => null,
+      upsert: async ({ create }: any) => (overlay = { id: "overlay", ...create }),
+    },
+    platform: { update: async () => (masterUpdated = true) },
+    auditLog: { create: async ({ data }: any) => data },
+  };
+  const db = { ...tx, $transaction: async (run: any) => run(tx) };
+  await new CatalogService(db).updatePlatformPresentation(
+    "child-admin",
+    "child-site",
+    "parent-platform",
+    { name: "Tên riêng", active: false },
+  );
+  assert.equal(masterUpdated, false);
+  assert.equal(overlay.siteId, "child-site");
+  assert.equal(overlay.platformId, "parent-platform");
+  assert.equal(overlay.displayName, "Tên riêng");
+  assert.equal(overlay.active, false);
+});
+
+test("child category presentation rejects unassigned cross-tenant category", async () => {
+  const tx: any = {
+    service: { findMany: async () => [{ id: "foreign-service" }] },
+    siteServiceRule: { findFirst: async () => null },
+  };
+  const db = { ...tx, $transaction: async (run: any) => run(tx) };
+  await assert.rejects(
+    () =>
+      new CatalogService(db).updateCategoryPresentation(
+        "child-admin",
+        "child-site",
+        "foreign-category",
+        { name: "Không được phép" },
+      ),
+    (error: any) => error.code === "CATEGORY_NOT_FOUND",
+  );
 });

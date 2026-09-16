@@ -1,7 +1,7 @@
 -- Additive repair of the canonical tenant permission ceiling for existing plans.
 -- Plan inactivity controls new sales only, so both active and inactive existing plans are repaired.
-INSERT INTO "permissions" ("id", "code", "name", "created_at", "updated_at")
-SELECT gen_random_uuid(), code, name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+INSERT INTO "permissions" ("id", "code", "description", "created_at", "updated_at")
+SELECT gen_random_uuid(), code, description, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 FROM (VALUES
   ('orders.retry', 'Retry failed provider orders'),
   ('services.presentation.manage', 'Manage tenant service presentation'),
@@ -12,7 +12,7 @@ FROM (VALUES
   ('users.security.manage', 'Manage tenant user security'),
   ('wallet.manage', 'Manage tenant wallets'),
   ('audit.view', 'View tenant audit log')
-) AS required(code, name)
+) AS required(code, description)
 ON CONFLICT ("code") DO NOTHING;
 
 INSERT INTO "panel_rental_plan_permissions" ("plan_id", "permission_id", "created_at", "updated_at")
