@@ -703,7 +703,10 @@ export class ProviderService {
           after: { keyPrefix: key.keyPrefix },
         },
       });
-      return { key: raw, prefix: key.keyPrefix };
+      // The usable credential is rotated atomically into the managed provider.
+      // Admin responses expose metadata only; the parent API credential must
+      // never enter browser markup, logs, or client-side state.
+      return { rotated: true, prefix: key.keyPrefix, updatedAt: key.updatedAt };
     });
   }
   async create(actorId: string, siteId: string, input: any) {

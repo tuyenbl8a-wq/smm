@@ -340,8 +340,10 @@ test("managed child upstream hides credentials, locks endpoint settings, and rot
   assert.equal("managedApiKeyId" in safe, false);
   assert.equal(safe.apiUrl, "https://parent.dichvu1st.com/api/v2");
   const rotated = await service.regenerateManagedKey("actor", SITE_A);
-  assert.match(rotated.key, /^smm_/);
+  assert.equal(rotated.rotated, true);
+  assert.match(rotated.prefix, /^smm_/);
+  assert.equal("key" in rotated, false);
   assert.equal(audits[0].siteId, SITE_A);
   assert.equal(audits[0].action, "MANAGED_UPSTREAM_KEY_REGENERATE");
-  assert.equal(JSON.stringify(audits).includes(rotated.key), false);
+  assert.equal(JSON.stringify(rotated).includes("old-managed-secret"), false);
 });
