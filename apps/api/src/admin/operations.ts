@@ -3122,6 +3122,8 @@ export class AdminOperationsService {
   async publicSettings(siteId = ROOT_SITE_ID) {
     const allowed = [
       "siteName",
+      "brandName",
+      "siteDescription",
       "defaultLanguage",
       "currency",
       "announcement",
@@ -3135,6 +3137,7 @@ export class AdminOperationsService {
       "supportEmail",
       "supportPhoneEnabled",
       "supportPhone",
+      "supportSummary",
       "logoUrl",
       "faviconUrl",
       "footerText",
