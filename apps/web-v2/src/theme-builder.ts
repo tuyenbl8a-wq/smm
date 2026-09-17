@@ -1,4 +1,9 @@
 import { authPage, landingPage } from "./page.js";
+import {
+  renderAiCosmicAuth,
+  renderAiCosmicDashboard,
+  renderAiCosmicLanding,
+} from "./ai-cosmic-pages.js";
 import { customerPage } from "./customer.js";
 import {
   renderReferenceComposition,
@@ -10,7 +15,7 @@ import {
 
 export type PreviewScope = "landing" | "auth" | "customer";
 const safeTheme = (value: string | null): ThemeId =>
-  themeIds.includes(value as ThemeId) ? (value as ThemeId) : "DARK_LUXURY";
+  themeIds.includes(value as ThemeId) ? (value as ThemeId) : "AURORA_MODERN";
 const safeScope = (value: string | null): PreviewScope =>
   value === "auth" || value === "customer" ? value : "landing";
 const stripRuntime = (html: string) =>
@@ -40,9 +45,25 @@ export function fullPageThemePreview(
       .join(" ")}>`,
   );
   const body = /<body>([\s\S]*?)<\/body>/.exec(html)?.[1] || "";
+  const dedicatedBody =
+    theme === "AI_COSMIC_FUTURE"
+      ? scope === "landing"
+        ? renderAiCosmicLanding()
+        : scope === "auth"
+          ? renderAiCosmicAuth(
+              /<section class="auth-card">[\s\S]*?<\/section>/.exec(body)?.[0] ||
+                "",
+            )
+          : (() => {
+              const sidebar = /<aside class="sidebar">[\s\S]*?<\/aside>/.exec(body)?.[0] || "";
+              const topbar = /<header class="topbar">[\s\S]*?<\/header>/.exec(body)?.[0] || "";
+              const content = /<main class="customer-content"[\s\S]*?<\/main>/.exec(body)?.[0] || "";
+              return renderAiCosmicDashboard(sidebar, topbar, content);
+            })()
+      : renderReferenceComposition(theme, scope, body);
   html = html.replace(
     /<body>[\s\S]*?<\/body>/,
-    `<body>${renderReferenceComposition(theme, scope, body)}${bridge}</body>`,
+    `<body>${dedicatedBody}${bridge}</body>`,
   );
   return html;
 }

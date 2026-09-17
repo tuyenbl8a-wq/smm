@@ -653,7 +653,7 @@ test("provider sync translates an incorrect provider order id", async () => {
   );
 });
 
-test("runtime theme settings allow 20 presets and safe structured content", async () => {
+test("runtime theme settings accept exactly the current 11 presets", async () => {
   const writes: any[] = [];
   const audits: any[] = [];
   const tx = {
@@ -663,26 +663,87 @@ test("runtime theme settings allow 20 presets and safe structured content", asyn
   const service = new AdminOperationsService({
     $transaction: async (run: any) => run(tx),
   });
-  const result = await service.updateSettings("admin", {
-    themeMode: "SEPARATE",
-    themePublic: "JAPANESE_ZEN",
-    themeAuth: "CYBER_NEON",
-    themeCustomer: "DASHBOARD_FOCUSED",
+  const themeIds = [
+    "AURORA_MODERN",
+    "AI_COSMIC_FUTURE",
+    "CREATOR_POP",
+    "URBAN_LIME_BRUTAL",
+    "OCEAN_PREMIUM",
+    "ZEN_JAPANESE",
+    "BLACK_GOLD_LUXURY",
+    "PRISM_GLASS",
+    "BEIGE_EDITORIAL",
+    "BLUE_BUSINESS",
+    "CYBER_NEON_CITY",
+  ];
+  const themeFields = [
+    "themeGlobal",
+    "themePublic",
+    "themeAuth",
+    "themeCustomer",
+  ];
+  for (const themeId of themeIds) {
+    for (const field of themeFields) {
+      const result = await service.updateSettings("admin", {
+        [field]: themeId,
+      });
+      assert.deepEqual(result.updated, [field]);
+    }
+    const draftResult = await service.updateSettings("admin", {
+      themeDraft: {
+        themeId,
+        overrides: { colors: { primary: "#087ea4" } },
+      },
+    });
+    assert.deepEqual(draftResult.updated, ["themeDraft"]);
+  }
+  assert.equal(writes.length, themeIds.length * 5);
+  assert.equal(audits[0].data.action, "SETTINGS_UPDATE");
+  const contentResult = await service.updateSettings("admin", {
     themeContent: {
       brandTitle: "Dịch Vụ Việt",
       heroTitle: "Tăng trưởng bền vững",
       featureBullets: ["Nhanh chóng", "Minh bạch"],
     },
   });
-  assert.deepEqual(result.updated, [
-    "themeMode",
-    "themePublic",
-    "themeAuth",
-    "themeCustomer",
-    "themeContent",
-  ]);
-  assert.equal(writes.length, 5);
-  assert.equal(audits[0].data.action, "SETTINGS_UPDATE");
+  assert.deepEqual(contentResult.updated, ["themeContent"]);
+
+  const removedThemeIds = [
+    "DARK_LUXURY",
+    "MINIMAL_LIGHT",
+    "CYBER_NEON",
+    "SOFT_PASTEL",
+    "NATURE_GREEN",
+    "GLASSMORPHISM",
+    "BOLD_COMMERCE",
+    "DASHBOARD_FOCUSED",
+    "CREATIVE_AGENCY",
+    "PREMIUM_CORPORATE",
+    "JAPANESE_ZEN",
+    "BLACK_GOLD_ELITE",
+    "AI_FUTURISTIC",
+    "EDITORIAL_BRUTALIST",
+    "SOCIAL_CREATOR",
+    "OCEAN_PROFESSIONAL",
+    "EMERALD_BUSINESS",
+    "MIDNIGHT_SAAS",
+    "SOFT_BEIGE_PREMIUM",
+  ];
+  for (const themeId of removedThemeIds) {
+    for (const field of themeFields) {
+      await assert.rejects(
+        () => service.updateSettings("admin", { [field]: themeId }),
+        (error: AdminOperationError) => error.code === "SETTING_INVALID",
+      );
+    }
+    await assert.rejects(
+      () =>
+        service.updateSettings("admin", {
+          themeDraft: { themeId, overrides: {} },
+        }),
+      (error: AdminOperationError) => error.code === "SETTING_INVALID",
+    );
+  }
   await assert.rejects(
     () =>
       service.updateSettings("admin", {
@@ -734,7 +795,7 @@ test("structured theme overrides reject raw executable and unknown properties", 
   );
   await service.updateSettings("admin", {
     themeDraft: {
-      themeId: "OCEAN_PROFESSIONAL",
+      themeId: "OCEAN_PREMIUM",
       overrides: {
         colors: { primary: "#087ea4" },
         layout: { density: "comfortable" },
