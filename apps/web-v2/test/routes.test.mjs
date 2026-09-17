@@ -795,7 +795,7 @@ test("three new references render nine distinct and responsive interfaces", asyn
 test("references 01-03 keep distinct compositions and Aurora stays unnumbered", async () => {
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const expected = {
-    AI_COSMIC_FUTURE: ["aiv2-robot", "aiv2-auth-portal", "aiv2-customer-signature"],
+    AI_COSMIC_FUTURE: ["aiv3-robot", "aiv3-portal", "aiv3-dashboard"],
     CREATOR_POP: ["creator-portrait", "creator-auth-poster", "creator-channel-cards"],
     URBAN_LIME_BRUTAL: ["brutal-building", "brutal-auth-title", "brutal-metrics"],
   };
@@ -824,26 +824,33 @@ test("AI cosmic reference keeps one navigation and dense runtime landmarks", asy
   const auth = fullPageThemePreview("", "AI_COSMIC_FUTURE", "auth");
   const customer = fullPageThemePreview("", "AI_COSMIC_FUTURE", "customer");
   for (const token of [
-    "aiv2-planet",
-    "aiv2-robot-head",
-    "aiv2-road",
-    "aiv2-float-analysis",
-    "aiv2-platforms",
+    "aiv3-planet",
+    "aiv3-robot",
+    "aiv3-road",
+    "aiv3-floats",
+    "aiv3-platforms",
   ])
     assert.match(landing, new RegExp(token));
-  assert.match(auth, /aiv2-auth-portal/);
-  assert.match(auth, /aiv2-auth-manifesto/);
-  assert.match(customer, /aiv2-customer-signature/);
-  assert.match(landing, /data-renderer="ai-reference-landing-v2"/);
-  assert.match(auth, /data-renderer="ai-reference-auth-v2"/);
-  assert.match(customer, /data-renderer="ai-reference-customer-v2"/);
-  assert.match(themeStyles, /AI_COSMIC_FUTURE.*\.header\{display:none\}/s);
+  assert.match(auth, /aiv3-portal/);
+  assert.match(auth, /aiv3-manifesto/);
+  assert.match(customer, /aiv3-dashboard/);
+  assert.match(landing, /data-renderer="ai-cosmic-landing-page"/);
+  assert.match(auth, /data-renderer="ai-cosmic-auth-page"/);
+  assert.match(customer, /data-renderer="ai-cosmic-customer-page"/);
+  assert.match(themeStyles, /AI_COSMIC_FUTURE.*body>\.header.*display:none/s);
   assert.match(admin, /ai_cosmic_future \.thumb-ai-v2/);
-  assert.match(customer, /aiv2-overview-grid/);
-  assert.match(customer, /aiv2-growth-chart/);
-  assert.match(customer, /aiv2-assistant-panel/);
-  assert.match(themeStyles, /grid-template-columns:1\.28fr \.72fr \.72fr/);
-  assert.match(themeStyles, /aiv2-overview-grid\{display:grid/);
+  assert.match(customer, /aiv3-kpis/);
+  assert.match(customer, /aiv3-chart/);
+  assert.match(customer, /aiv3-assistant/);
+  assert.match(themeStyles, /grid-template-columns:2fr 1fr 1fr/);
+  assert.match(themeStyles, /aiv3-content\{display:grid/);
+  for (const html of [landing, auth, customer]) {
+    const body = /<body>([\s\S]*?)<\/body>/.exec(html)?.[1] || "";
+    assert.doesNotMatch(body, /theme-story|theme-offer|dashboard-wallet|dashboard-kpis|dashboard-orders/);
+  }
+  assert.doesNotMatch(landing, /Dữ liệu thật|Phiên HttpOnly và CSRF|Danh mục được cập nhật trực tiếp/);
+  assert.match(auth, /class="aiv3-auth-left"[\s\S]*class="auth-card"/);
+  assert.match(customer, /class="aiv3-sidebar"[\s\S]*class="aiv3-topbar"/);
   const obsoleteAiSelectors = [
     "ai-cosmic-orbit",
     "ai-neural-core",
@@ -887,13 +894,13 @@ test("final reference pair completes exactly ten unique three-scope architecture
       "ticket-desk",
     ],
     AI_COSMIC_FUTURE: [
-      "ai-reference-nav-v2",
-      "ai-reference-hero-v2",
-      "ai-reference-auth-v2",
-      "ai-reference-sidebar-v2",
-      "ai-reference-dashboard-v2",
-      "ai-reference-services-v2",
-      "ai-reference-order-v2",
+      "ai-dedicated-nav-v3",
+      "ai-dedicated-hero-v3",
+      "ai-dedicated-auth-v3",
+      "ai-dedicated-sidebar-v3",
+      "ai-dedicated-dashboard-v3",
+      "ai-dedicated-services-v3",
+      "ai-dedicated-order-v3",
     ],
   };
   for (const [id, variants] of Object.entries(expected)) {
@@ -935,7 +942,7 @@ test("final reference pair completes exactly ten unique three-scope architecture
   assert.match(admin, /\.thumb-ai-v2/);
 });
 
-test("reference themes provide 30 concrete renderers without document wrappers", async () => {
+test("nine generic reference themes keep 27 concrete renderers without document wrappers", async () => {
   const { renderReferenceComposition } = await import("../dist/themes.js");
   const { referenceRenderers, isMeaningfulReferenceRender } =
     await import("../dist/reference-theme-renderers.js");
@@ -950,7 +957,6 @@ test("reference themes provide 30 concrete renderers without document wrappers",
     "OCEAN_PREMIUM",
     "CREATOR_POP",
     "URBAN_LIME_BRUTAL",
-    "AI_COSMIC_FUTURE",
   ];
   for (const scope of ["landing", "auth", "customer"]) {
     const fingerprints = new Set();
@@ -1020,20 +1026,20 @@ test("reference themes provide 30 concrete renderers without document wrappers",
     }
     assert.equal(
       fingerprints.size,
-      10,
-      scope + " architectures must be 10/10 unique",
+      9,
+      scope + " architectures must be 9/9 unique",
     );
     assert.equal(
       domArchitectures.size,
-      10,
-      scope + " must use ten different nested DOM compositions",
+      9,
+      scope + " must use nine different nested DOM compositions",
     );
   }
   const oldEmptyHack = `<div class="hero"><nav class="theme-navigation"></nav><section class="theme-story"></section><aside class="theme-offer"></aside><footer class="theme-cta"></footer></div>`;
   assert.equal(isMeaningfulReferenceRender(oldEmptyHack, "landing"), false);
   assert.equal(
     new Set(ids.flatMap((id) => Object.values(referenceRenderers[id]))).size,
-    30,
+    27,
   );
   const runtime = await readFile(
     new URL("../dist/themes.js", import.meta.url),
