@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { createHmac } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { loadConfig } from "@smm/config";
 import { authPage, landingPage } from "./page.js";
 import { customerPage } from "./customer.js";
@@ -107,6 +108,25 @@ const server = createServer(async (request, response) => {
     );
     return;
   }
+  const themeAsset = {
+    "/theme-assets/ai-cosmic/auth-portal.png": "auth-portal.png",
+    "/theme-assets/ai-cosmic/landing-hero.png": "landing-hero.png",
+  }[path];
+  if (themeAsset) {
+    try {
+      const bytes = await readFile(
+        new URL(`../public/theme-assets/ai-cosmic/${themeAsset}`, import.meta.url),
+      );
+      response.setHeader("content-type", "image/png");
+      response.setHeader("cache-control", "public, max-age=31536000, immutable");
+      response.setHeader("x-content-type-options", "nosniff");
+      response.end(bytes);
+    } catch {
+      response.statusCode = 404;
+      response.end("Asset not found");
+    }
+    return;
+  }
   const pages: Record<string, () => string> = {
     "/": () => landingPage(""),
     "/services": () => landingPage(""),
@@ -156,7 +176,7 @@ const server = createServer(async (request, response) => {
   response.setHeader("referrer-policy", "strict-origin-when-cross-origin");
   response.setHeader(
     "content-security-policy",
-    `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src https: data:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors ${path === "/admin/theme-preview" ? "'self'" : "'none'"}`,
+    `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors ${path === "/admin/theme-preview" ? "'self'" : "'none'"}`,
   );
   if (!render) {
     response.statusCode = 404;

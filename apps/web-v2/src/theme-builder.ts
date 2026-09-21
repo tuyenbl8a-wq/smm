@@ -3,6 +3,7 @@ import {
   renderAiCosmicAuth,
   renderAiCosmicDashboard,
   renderAiCosmicLanding,
+  renderAiCosmicOverview,
 } from "./ai-cosmic-pages.js";
 import { customerPage } from "./customer.js";
 import {
@@ -48,16 +49,26 @@ export function fullPageThemePreview(
   const dedicatedBody =
     theme === "AI_COSMIC_FUTURE"
       ? scope === "landing"
-        ? renderAiCosmicLanding()
+        ? renderAiCosmicLanding().replace(
+            "</main>",
+            (/<section id="pricing"[\s\S]*?(?=<section id="process")/.exec(
+              body,
+            )?.[0] || "") + "</main>",
+          )
         : scope === "auth"
           ? renderAiCosmicAuth(
-              /<section class="auth-card">[\s\S]*?<\/section>/.exec(body)?.[0] ||
-                "",
+              /<section class="auth-card">[\s\S]*?<\/section>/.exec(
+                body,
+              )?.[0] || "",
             )
           : (() => {
-              const sidebar = /<aside class="sidebar">[\s\S]*?<\/aside>/.exec(body)?.[0] || "";
-              const topbar = /<header class="topbar">[\s\S]*?<\/header>/.exec(body)?.[0] || "";
-              const content = /<main class="customer-content"[\s\S]*?<\/main>/.exec(body)?.[0] || "";
+              const sidebar =
+                /<aside class="sidebar">[\s\S]*?<\/aside>/.exec(body)?.[0] ||
+                "";
+              const topbar =
+                /<header class="topbar">[\s\S]*?<\/header>/.exec(body)?.[0] ||
+                "";
+              const content = `<main id="app" class="customer-content">${renderAiCosmicOverview()}</main>`;
               return renderAiCosmicDashboard(sidebar, topbar, content);
             })()
       : renderReferenceComposition(theme, scope, body);
