@@ -105,6 +105,19 @@ a{color:inherit;text-decoration:none}
 .aiv3-assistant nav a{border:1px solid #2b6599;border-radius:10px;padding:12px 9px;font-size:12px;background:#082039}
 .aiv3-assistant-note{font-size:12px;line-height:1.6;color:#a9c4e6;margin:20px 0 12px}
 .aiv3-assistant>.aiv3-primary{display:flex;font-size:14px;padding:11px}
+.aiv3-dashboard .aiv3-customer-content label{display:grid;gap:8px;margin:0 0 16px;font-weight:650;color:#dcecff}
+.aiv3-dashboard .aiv3-customer-content input:not([type=checkbox]):not([type=radio]),.aiv3-dashboard .aiv3-customer-content select,.aiv3-dashboard .aiv3-customer-content textarea{display:block;width:100%;min-width:0;min-height:48px;padding:12px 14px;border:1px solid #2d6fa3;border-radius:11px;background:#061b31;color:#f7fbff;font:inherit;outline:none}
+.aiv3-dashboard .aiv3-customer-content input:not([type=checkbox]):not([type=radio]):focus,.aiv3-dashboard .aiv3-customer-content select:focus,.aiv3-dashboard .aiv3-customer-content textarea:focus{border-color:#45dfff;box-shadow:0 0 0 3px #28cfff22}
+.aiv3-dashboard .order-layout{grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr);gap:20px;align-items:start}
+.aiv3-dashboard .order-picker,.aiv3-dashboard .order-input{min-width:0}
+.aiv3-dashboard .coupon{grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:end}
+.aiv3-dashboard .coupon label{margin-bottom:0}
+.aiv3-dashboard .coupon button{min-height:48px;padding:0 16px;white-space:nowrap}
+.aiv3-dashboard #bulk-form{display:block;width:100%}
+.aiv3-dashboard #bulk-input{display:block;width:100%;max-width:none;min-height:260px;padding:16px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.6}
+.aiv3-dashboard #bulk-form .muted{margin:14px 0;color:#9dbbd9;line-height:1.6}
+@media(max-width:1050px){.aiv3-dashboard .order-layout{grid-template-columns:1fr}}
+
 @media(max-width:1200px){
 .aiv3-landing{margin:12px}
 .aiv3-nav{gap:16px;padding-inline:0}
