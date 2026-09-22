@@ -939,6 +939,91 @@ test("three new references render nine distinct and responsive interfaces", asyn
   for (const thumb of ["thumb-glass", "thumb-ocean", "thumb-creator"])
     assert.ok(admin.includes(thumb));
 });
+test("references 01-03 keep distinct compositions and Aurora stays unnumbered", async () => {
+  const { fullPageThemePreview } = await import("../dist/theme-builder.js");
+  const expected = {
+    AI_COSMIC_FUTURE: ["landing-hero.png", "auth-portal.png", "aiv3-dashboard"],
+    CREATOR_POP: ["creator-portrait", "creator-auth-poster", "creator-channel-cards"],
+    URBAN_LIME_BRUTAL: ["brutal-building", "brutal-auth-title", "brutal-metrics"],
+  };
+  for (const [theme, signatures] of Object.entries(expected)) {
+    const pages = ["landing", "auth", "customer"].map((scope) =>
+      fullPageThemePreview("", theme, scope),
+    );
+    signatures.forEach((signature, index) =>
+      assert.match(pages[index], new RegExp(signature)),
+    );
+    pages.forEach((html) => {
+      assert.doesNotMatch(html, /TÃ|Ä‘|áº|á»|â€|ï¿½|�/);
+      assert.match(html, /data-theme-content="brandTitle"/);
+    });
+  }
+  assert.match(adminOperations, /AURORA_MODERN'\?'MẶC ĐỊNH'/);
+  assert.match(adminOperations, /AI_COSMIC_FUTURE:'01'/);
+  assert.match(adminOperations, /CREATOR_POP:'02'/);
+  assert.match(adminOperations, /URBAN_LIME_BRUTAL:'03'/);
+  assert.doesNotMatch(adminOperations, /presets\.indexOf\(p\)\+1/);
+});
+test("AI cosmic reference keeps one navigation and dense runtime landmarks", async () => {
+  const { fullPageThemePreview } = await import("../dist/theme-builder.js");
+  const { themeStyles } = await import("../dist/themes.js");
+  const landing = fullPageThemePreview("", "AI_COSMIC_FUTURE", "landing");
+  const auth = fullPageThemePreview("", "AI_COSMIC_FUTURE", "auth");
+  const customer = fullPageThemePreview("", "AI_COSMIC_FUTURE", "customer");
+  for (const token of [
+    "/theme-assets/ai-cosmic/landing-hero.png",
+    "aiv3-platforms",
+  ])
+    assert.match(landing, new RegExp(token));
+  assert.match(auth, /\/theme-assets\/ai-cosmic\/auth-portal\.png/);
+  assert.match(auth, /aiv3-portal/);
+  assert.match(auth, /aiv3-manifesto/);
+  assert.match(customer, /aiv3-dashboard/);
+  assert.match(landing, /data-renderer="ai-cosmic-landing-page"/);
+  assert.match(auth, /data-renderer="ai-cosmic-auth-page"/);
+  assert.match(customer, /data-renderer="ai-cosmic-customer-page"/);
+  assert.match(themeStyles, /AI_COSMIC_FUTURE.*body>\.header.*display:none/s);
+  assert.match(admin, /ai_cosmic_future \.thumb-ai-v2/);
+  assert.match(customer, /aiv3-kpis/);
+  assert.match(customer, /aiv3-chart/);
+  assert.match(customer, /aiv3-assistant/);
+  assert.match(themeStyles, /grid-template-columns:2fr 1fr 1fr/);
+  assert.match(themeStyles, /aiv3-content\{display:grid/);
+  for (const html of [landing, auth, customer]) {
+    const body = /<body>([\s\S]*?)<\/body>/.exec(html)?.[1] || "";
+    assert.doesNotMatch(body, /theme-story|theme-offer|dashboard-wallet|dashboard-kpis|dashboard-orders/);
+  }
+  assert.doesNotMatch(landing, /Dữ liệu thật|Phiên HttpOnly và CSRF|Danh mục được cập nhật trực tiếp/);
+  assert.match(auth, /class="aiv3-auth-left"[\s\S]*class="auth-card"/);
+  assert.match(customer, /class="aiv3-sidebar"[\s\S]*class="aiv3-topbar"/);
+  assert.doesNotMatch(themeStyles, /aiv3-(planet|city|road|orb|robot|floats)/);
+  assert.doesNotMatch(themeStyles, /\.aiv3-portal (?:i|b)\{/);
+  assert.match(main, /theme-assets\/ai-cosmic\/auth-portal\.png/);
+  assert.match(main, /theme-assets\/ai-cosmic\/landing-hero\.png/);
+  assert.match(main, /img-src 'self' https: data:/);
+  for (const asset of ["auth-portal.png", "landing-hero.png"]) {
+    const bytes = await readFile(
+      new URL(`../public/theme-assets/ai-cosmic/${asset}`, import.meta.url),
+    );
+    assert.deepEqual([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+    assert.ok(bytes.length > 500_000, `${asset} must contain production artwork`);
+  }
+  const obsoleteAiSelectors = [
+    "ai-cosmic-orbit",
+    "ai-neural-core",
+    "ai-orbit-nav",
+    "ai-identity-orbit",
+    "ai-city-window",
+    "ai-intelligence-console",
+    "ai-prediction",
+    "ai-model-stack",
+    "ai-queue",
+  ];
+  for (const selector of obsoleteAiSelectors) {
+    assert.doesNotMatch(themeStyles, new RegExp(selector));
+    assert.doesNotMatch(landing + auth + customer, new RegExp(selector));
+  }
+});
 test("final reference pair completes exactly ten unique three-scope architectures", async () => {
   const { themeStructure } = await import("../dist/themes.js");
   const { fullPageThemePreview, themeEditorPage } =
@@ -966,6 +1051,9 @@ test("final reference pair completes exactly ten unique three-scope architecture
       "ticket-desk",
     ],
     AI_COSMIC_FUTURE: [
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
       "ai-command",
       "neural-orbit",
       "cognitive-gateway",
@@ -973,6 +1061,25 @@ test("final reference pair completes exactly ten unique three-scope architecture
       "intelligence-grid",
       "model-modules",
       "prompt-pipeline",
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+      "ai-dedicated-nav-v3",
+      "ai-dedicated-hero-v3",
+      "ai-dedicated-auth-v3",
+      "ai-dedicated-sidebar-v3",
+      "ai-dedicated-dashboard-v3",
+      "ai-dedicated-services-v3",
+      "ai-dedicated-order-v3",
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
     ],
   };
   for (const [id, variants] of Object.entries(expected)) {
@@ -1011,10 +1118,10 @@ test("final reference pair completes exactly ten unique three-scope architecture
   assert.ok(adminOperations.includes("Đô thị · lime brutalist"));
   assert.ok(adminOperations.includes("AI · quỹ đạo neural đa sắc"));
   assert.match(admin, /\.thumb-brutalist/);
-  assert.match(admin, /\.thumb-stage/);
+  assert.match(admin, /\.thumb-ai-v2/);
 });
 
-test("reference themes provide 30 concrete renderers without document wrappers", async () => {
+test("nine generic reference themes keep 27 concrete renderers without document wrappers", async () => {
   const { renderReferenceComposition } = await import("../dist/themes.js");
   const { referenceRenderers, isMeaningfulReferenceRender } =
     await import("../dist/reference-theme-renderers.js");
@@ -1029,7 +1136,16 @@ test("reference themes provide 30 concrete renderers without document wrappers",
     "OCEAN_PREMIUM",
     "CREATOR_POP",
     "URBAN_LIME_BRUTAL",
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
     "AI_COSMIC_FUTURE",
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
   ];
   for (const scope of ["landing", "auth", "customer"]) {
     const fingerprints = new Set();
@@ -1099,20 +1215,20 @@ test("reference themes provide 30 concrete renderers without document wrappers",
     }
     assert.equal(
       fingerprints.size,
-      10,
-      scope + " architectures must be 10/10 unique",
+      9,
+      scope + " architectures must be 9/9 unique",
     );
     assert.equal(
       domArchitectures.size,
-      10,
-      scope + " must use ten different nested DOM compositions",
+      9,
+      scope + " must use nine different nested DOM compositions",
     );
   }
   const oldEmptyHack = `<div class="hero"><nav class="theme-navigation"></nav><section class="theme-story"></section><aside class="theme-offer"></aside><footer class="theme-cta"></footer></div>`;
   assert.equal(isMeaningfulReferenceRender(oldEmptyHack, "landing"), false);
   assert.equal(
     new Set(ids.flatMap((id) => Object.values(referenceRenderers[id]))).size,
-    30,
+    27,
   );
   const runtime = await readFile(
     new URL("../dist/themes.js", import.meta.url),

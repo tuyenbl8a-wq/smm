@@ -9,6 +9,9 @@ type ThemeScreens = Record<
 const brand = `<span data-theme-content="brandTitle">Thương hiệu của bạn</span>`;
 const tagline = `<span data-theme-content="tagline">Nền tảng tăng trưởng mạng xã hội</span>`;
 const themedScreens: Record<string, ThemeScreens> = {
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
   AI_COSMIC_FUTURE: {
     landing: {
       renderer: "ai-cosmic-orbit",
@@ -35,11 +38,38 @@ const themedScreens: Record<string, ThemeScreens> = {
     customer: {
       renderer: "creator-performance-studio",
       regions: `<nav class="dashboard-navigation creator-ribbon"><mark>CREATOR<br>HUB</mark></nav><section class="dashboard-wallet creator-score"><mark><small>CREATOR SCORE</small><h2>Đang lên xu hướng</h2><b>9.4</b></mark></section><aside class="dashboard-kpis creator-channel-cards"><mark><span>TikTok ↗</span><span>Instagram ↗</span><span>YouTube ↗</span></mark></aside><footer class="dashboard-orders creator-campaigns"><mark><b>Chiến dịch của bạn</b><a href="/orders">Xem tất cả →</a></mark></footer>`,
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+  CREATOR_POP: {
+    landing: {
+      renderer: "creator-pop-collage",
+      regions: `<nav class="theme-navigation creator-ticker"><mark>${brand}</mark><span>CREATORS GROW TOGETHER ♥</span><a href="#services">DỊCH VỤ</a><a href="/login">ĐĂNG NHẬP</a></nav><section class="theme-story creator-cutout"><mark><small>✦ NỀN TẢNG SMM HÀNG ĐẦU VIỆT NAM</small><strong data-theme-content="heroTitle">TĂNG TRƯỞNG THƯƠNG HIỆU CỦA BẠN BẮT ĐẦU TỪ ĐÂY</strong><p data-theme-content="heroSubtitle">Dịch vụ Social Media Marketing chất lượng cao, nhanh chóng, an toàn và giá tốt nhất thị trường.</p><i class="creator-portrait" aria-hidden="true"></i></mark><i class="creator-sticker">CREATE!</i><i class="creator-sticker">1K ♥</i></section><aside class="theme-offer creator-social-card"><mark><b>GOOD CONTENT</b><span>BRIGHTER TOMORROW</span><span>EVERYONE!</span></mark></aside><footer class="theme-cta creator-swipe"><mark>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">Bắt đầu ngay</span> →</a></mark></footer>`,
+    },
+    auth: {
+      renderer: "creator-studio-pass",
+      regions: `<nav class="auth-navigation creator-auth-nav"><mark>${brand}</mark></nav><section class="auth-visual creator-auth-poster"><mark><small>CREATE · CONNECT · CONVERT</small><h1>Chào mừng bạn trở lại!</h1><i>♥</i><i>↗</i></mark></section><aside class="auth-form-region creator-auth-note"><mark><b>MỖI THƯƠNG HIỆU</b><span>Đều có một tương lai rạng rỡ hơn.</span></mark></aside><footer class="auth-assurance creator-auth-foot"><mark>MORE CREATORS · BRIGHTER TOMORROW</mark></footer>`,
+    },
+    customer: {
+      renderer: "creator-performance-studio",
+      regions: `<nav class="dashboard-navigation creator-ribbon"><mark>CREATOR<br>HUB</mark></nav><section class="dashboard-wallet creator-score"><mark><small>DOANH THU 7 NGÀY GẦN ĐÂY</small><h2>Tổng quan</h2><b>Dữ liệu trực tiếp</b></mark></section><aside class="dashboard-kpis creator-channel-cards"><mark><span>TikTok 28%</span><span>Instagram 22%</span><span>YouTube 18%</span></mark></aside><footer class="dashboard-orders creator-campaigns"><mark><b>Small Step · Big Growth</b><a href="/orders">Xem đơn hàng →</a></mark></footer>`,
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
     },
   },
   URBAN_LIME_BRUTAL: {
     landing: {
       renderer: "urban-lime-poster",
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
       regions: `<nav class="theme-navigation brutal-index"><hgroup><b>INDEX / 001</b>${brand}<a href="#services">SERVICES ↓</a></hgroup></nav><section class="theme-story brutal-manifesto"><hgroup><small>NO BORING GROWTH</small><strong data-theme-content="heroTitle">Ý TƯỞNG LỚN.<br>THƯƠNG HIỆU LỚN.</strong><p data-theme-content="heroSubtitle">TỐC ĐỘ. MINH BẠCH. HIỆU QUẢ.</p></hgroup></section><aside class="theme-offer brutal-stamp"><hgroup><b>24/7</b><span>GROWTH<br>DEPARTMENT</span></hgroup></aside><footer class="theme-cta brutal-marquee"><hgroup>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">HÀNH ĐỘNG NGAY</span> →</a></hgroup></footer>`,
     },
     auth: {
@@ -49,6 +79,27 @@ const themedScreens: Record<string, ThemeScreens> = {
     customer: {
       renderer: "urban-data-newsroom",
       regions: `<nav class="dashboard-navigation brutal-dashboard-index"><hgroup>01<br>DATA<br>DESK</hgroup></nav><section class="dashboard-wallet brutal-ledger"><hgroup><small>BALANCE / LIVE</small><h2>SỔ CÁI</h2><b>READY</b></hgroup></section><aside class="dashboard-kpis brutal-metrics"><hgroup><span>ORDERS / 01</span><span>REACH / 02</span><span>SPEED / 03</span></hgroup></aside><footer class="dashboard-orders brutal-orders"><hgroup><b>ORDER GRID</b><a href="/orders">OPEN →</a></hgroup></footer>`,
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+      regions: `<nav class="theme-navigation brutal-index"><hgroup>${brand}<a href="#services">DỊCH VỤ</a><a href="#pricing">BẢNG GIÁ</a><a href="/login">ĐĂNG NHẬP</a></hgroup></nav><section class="theme-story brutal-manifesto"><hgroup><small>KẾT NỐI THƯƠNG HIỆU · VƯƠN TẦM GIÁ TRỊ</small><strong data-theme-content="heroTitle">TĂNG TRƯỞNG THƯƠNG HIỆU CỦA BẠN <em>BẮT ĐẦU TỪ ĐÂY.</em></strong><p data-theme-content="heroSubtitle">Nhanh chóng, an toàn và giá tốt nhất thị trường. Đồng hành cùng bạn kiến tạo thương hiệu bền vững.</p><i class="brutal-building" aria-hidden="true"></i></hgroup></section><aside class="theme-offer brutal-stamp"><hgroup><b>MORE THAN SERVICE</b><span>SOCIAL BUILDS<br>REAL BRANDS</span></hgroup></aside><footer class="theme-cta brutal-marquee"><hgroup>${tagline}<a data-theme-href="primaryCtaUrl" href="/register"><span data-theme-content="primaryCta">ĐĂNG KÝ NGAY</span> →</a></hgroup></footer>`,
+    },
+    auth: {
+      renderer: "urban-access-sheet",
+      regions: `<nav class="auth-navigation brutal-auth-index"><hgroup>${brand}</hgroup></nav><section class="auth-visual brutal-auth-title"><hgroup><small>IDEAS GROW BRANDS</small><h1>Chào mừng<br>bạn trở lại!</h1></hgroup></section><aside class="auth-form-region brutal-auth-rule"><hgroup><b>ĐĂNG NHẬP →</b><span>KẾT NỐI HÔM NAY · THƯƠNG HIỆU NGÀY MAI</span></hgroup></aside><footer class="auth-assurance brutal-auth-foot"><hgroup>VIETNAM SMM PLATFORM · EST. 2024</hgroup></footer>`,
+    },
+    customer: {
+      renderer: "urban-data-newsroom",
+      regions: `<nav class="dashboard-navigation brutal-dashboard-index"><hgroup>DATA<br>DESK</hgroup></nav><section class="dashboard-wallet brutal-ledger"><hgroup><small>DOANH THU 7 NGÀY GẦN ĐÂY</small><h2>TỔNG QUAN</h2><b>DỮ LIỆU TRỰC TIẾP</b></hgroup></section><aside class="dashboard-kpis brutal-metrics"><hgroup><span>TỔNG ĐƠN HÀNG / 248</span><span>KHÁCH HÀNG / 1.024</span><span>ĐƠN HOÀN THÀNH / 99.8%</span></hgroup></aside><footer class="dashboard-orders brutal-orders"><hgroup><b>KẾT NỐI HÔM NAY</b><a href="/orders">MỞ ĐƠN HÀNG →</a></hgroup></footer>`,
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
     },
   },
   CYBER_NEON_CITY: {
