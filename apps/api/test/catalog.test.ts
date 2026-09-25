@@ -161,6 +161,13 @@ test("child service edits persist only tenant overrides and never mutate the mas
   let overrideData: any;
   const db: any = {
     $transaction: async (fn: any) => fn(db),
+    site: {
+      findUnique: async () => ({
+        id: "child",
+        parentSiteId: "parent",
+        panelType: "CHILD_PANEL",
+      }),
+    },
     siteServiceRule: {
       findUnique: async () => ({
         id: "rule",
@@ -175,6 +182,7 @@ test("child service edits persist only tenant overrides and never mutate the mas
     service: {
       findFirst: async () => ({
         id: "service",
+        siteId: "parent",
         active: true,
         deletedAt: null,
         min: 1,
@@ -247,12 +255,14 @@ test("customer catalog is scoped to active categories and never exposes provider
         serviceWhere = where;
         return 1;
       },
-      findMany: async (query: any) =>
-        query.select.providerCost
+      findMany: async (query: any) => {
+        if (query.select.name) assert.equal(query.select.serviceNumber, true);
+        return query.select.providerCost
           ? [{ id: "service-1", providerCost: "5", rate: "10" }]
           : [
               {
                 id: "service-1",
+                serviceNumber: 123n,
                 categoryId: category.id,
                 name: "Followers",
                 description: null,
@@ -265,7 +275,8 @@ test("customer catalog is scoped to active categories and never exposes provider
                 cancel: false,
                 customFields: null,
               },
-            ],
+            ];
+      },
     },
     priceRule: {
       findMany: async () => [
@@ -294,6 +305,7 @@ test("customer catalog is scoped to active categories and never exposes provider
   });
   assert.deepEqual(serviceWhere.categoryId, { in: [category.id] });
   assert.equal(result.services[0].rate, "5.50000000");
+  assert.equal(result.services[0].serviceNumber, "123");
   assert.equal("providerCost" in result.services[0], false);
 });
 
@@ -388,6 +400,7 @@ test("public catalog returns only explicitly selected safe fields", async () => 
     service: {
       count: async () => 1,
       findMany: async ({ select }: any) => {
+        if (select?.categoryId) return [{ categoryId: "c" }];
         assert.equal(select.providerCost, undefined);
         assert.equal(select.providerId, undefined);
         return [
@@ -428,6 +441,13 @@ test("child catalog exposes only explicitly inherited services with site overrid
     maxOverride: 500,
   };
   const db: any = {
+    site: {
+      findUnique: async () => ({
+        id: child,
+        parentSiteId: "parent",
+        panelType: "CHILD_PANEL",
+      }),
+    },
     serviceCategory: {
       findMany: async () => [
         { id: "category", name: "Social", slug: "social", platformId: null },
@@ -526,4 +546,113 @@ test("child category presentation rejects unassigned cross-tenant category", asy
       ),
     (error: any) => error.code === "CATEGORY_NOT_FOUND",
   );
+});
+
+test("public panel catalog exposes categories only through services visible to that tenant", async () => {
+  const root = "00000000-0000-4000-8000-000000000001";
+  const childA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const childB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const categories = [
+    { id: "root-cat", name: "Root only", slug: "root-only", platformId: null },
+    { id: "a-cat", name: "Child A private", slug: "child-a", platformId: null },
+    { id: "b-cat", name: "Child B private", slug: "child-b", platformId: null },
+  ];
+  const services = [
+    { id: "root-service", siteId: root, categoryId: "root-cat" },
+    { id: "a-service", siteId: root, categoryId: "a-cat" },
+    { id: "b-service", siteId: root, categoryId: "b-cat" },
+  ];
+  const rules: Record<string, string[]> = {
+    [childA]: ["a-service"],
+  };
+  const db: any = {
+    site: {
+      findUnique: async ({ where }: any) => ({
+        id: where.id,
+        parentSiteId: where.id === root ? null : root,
+        panelType: "CHILD_PANEL",
+      }),
+    },
+    serviceCategory: {
+      findMany: async ({ where }: any) =>
+        categories.filter((category) => where.id.in.includes(category.id)),
+    },
+    platform: { findMany: async () => [] },
+    siteServiceRule: {
+      findMany: async ({ where }: any) =>
+        (rules[where.siteId] || []).map((serviceId) => ({ serviceId })),
+    },
+    service: {
+      findMany: async ({ where, select }: any) => {
+        const visible = services.filter(
+          (service) =>
+            (!where.siteId || service.siteId === where.siteId) &&
+            (!where.id?.in || where.id.in.includes(service.id)),
+        );
+        return select?.categoryId
+          ? visible.map(({ categoryId }) => ({ categoryId }))
+          : visible.map((service) => ({ ...service, name: service.id }));
+      },
+      count: async () => 0,
+    },
+  };
+  const catalog = new CatalogService(db);
+  const load = (siteId: string) =>
+    catalog.publicCatalog({ siteId, page: 1, limit: 20 });
+  const [rootResult, aResult, bResult] = await Promise.all([
+    load(root),
+    load(childA),
+    load(childB),
+  ]);
+  assert.deepEqual(rootResult.categories.map((x: any) => x.name), ["Root only", "Child A private", "Child B private"]);
+  assert.deepEqual(aResult.categories.map((x: any) => x.name), ["Child A private"]);
+  assert.deepEqual(bResult.categories.map((x: any) => x.name), []);
+  assert.deepEqual(bResult.services, []);
+  assert.equal(aResult.categories.some((x: any) => x.id === "b-cat" || x.slug === "child-b"), false);
+  assert.equal(bResult.categories.some((x: any) => x.id === "a-cat" || x.slug === "child-a"), false);
+});
+
+
+test("public catalog search preserves PANEL ancestry scope and tenant presentation overlays", async () => {
+  const root = "00000000-0000-4000-8000-000000000001";
+  const services = [
+    { id: "owned", siteId: "panel-a", categoryId: "shared", name: "match owned", rate: "1" },
+    { id: "inherited", siteId: root, categoryId: "shared", name: "match parent", rate: "1" },
+    { id: "foreign", siteId: "panel-b", categoryId: "shared", name: "match foreign", rate: "1" },
+  ].map((row, index) => ({ ...row, active: true, deletedAt: null, serviceNumber: BigInt(index + 1) }));
+  const matches = (row: any, where: any): boolean => Object.entries(where).every(([key, value]: [string, any]) => {
+    if (key === "OR") return value.some((part: any) => matches(row, part));
+    if (key === "AND") return value.every((part: any) => matches(row, part));
+    if (value && typeof value === "object") {
+      if (value.in) return value.in.includes(row[key]);
+      if (value.contains) return row[key].includes(value.contains);
+      if (value.equals !== undefined) return row[key] === value.equals;
+    }
+    return row[key] === value;
+  });
+  let panelType = "PANEL", hidden = false;
+  const db: any = {
+    site: { findUnique: async () => ({ id: "panel-a", parentSiteId: root, panelType }) },
+    siteServiceRule: { findMany: async () => [{ serviceId: "inherited", active: true }] },
+    service: {
+      findMany: async ({ where }: any) => services.filter((row) => matches(row, where)),
+      count: async ({ where }: any) => services.filter((row) => matches(row, where)).length,
+    },
+    serviceCategory: { findMany: async () => [{ id: "shared", name: "Master category", slug: "shared", platformId: null }] },
+    platform: { findMany: async () => [] },
+    siteCategoryRule: { findMany: async ({ where }: any) => {
+      assert.equal(where.siteId, "panel-a");
+      return [{ categoryId: "shared", displayName: "Tenant category", active: !hidden }];
+    } },
+  };
+  const catalog = new CatalogService(db);
+  const load = () => catalog.publicCatalog({ siteId: "panel-a", page: 1, limit: 20, search: "match" });
+  const panel = await load();
+  assert.deepEqual(panel.services.map((row: any) => row.id), ["owned", "inherited"]);
+  assert.equal(panel.total, 2);
+  assert.equal(panel.categories[0]!.name, "Tenant category");
+  panelType = "CHILD_PANEL";
+  assert.deepEqual((await load()).services.map((row: any) => row.id), ["inherited"]);
+  hidden = true;
+  assert.deepEqual((await load()).services, []);
 });

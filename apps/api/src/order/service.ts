@@ -1,6 +1,7 @@
 import { PricingResolver } from "../catalog/resolver.js";
 import { PromotionService } from "../promotion/service.js";
 import { SiteSettlementService } from "./site-settlement.js";
+import { ROOT_SITE_ID } from "../tenant/context.js";
 export class OrderError extends Error {
   constructor(
     readonly code: string,
@@ -55,27 +56,53 @@ export class OrderService {
     if (existing) return this.serialize(existing);
     try {
       return await this.db.$transaction(async (tx: any) => {
+        if (tx.site && tx.$queryRawUnsafe)
+          await tx.$queryRawUnsafe(
+            'SELECT "id" FROM "sites" WHERE "id"=$1::uuid FOR SHARE',
+            siteId,
+          );
+        const currentSite = tx.site
+          ? await tx.site.findUnique({ where: { id: siteId } })
+          : null;
+        if (tx.site && (!currentSite || currentSite.status !== "ACTIVE"))
+          throw new OrderError("PANEL_SUSPENDED", "Panel is unavailable");
         const candidate = await tx.service.findFirst({
           where: /^\d+$/.test(serviceReference)
             ? { serviceNumber: BigInt(serviceReference) }
             : { id: serviceReference },
         });
         const siteRule =
-          candidate && siteId !== "00000000-0000-4000-8000-000000000001"
+          candidate && siteId !== ROOT_SITE_ID && currentSite?.parentSiteId
             ? await tx.siteServiceRule.findUnique({
                 where: {
                   siteId_serviceId: { siteId, serviceId: candidate.id },
                 },
               })
             : null;
-        const service =
-          candidate &&
-          (candidate.siteId === siteId || Boolean(siteRule?.active))
+        const isRoot = siteId === ROOT_SITE_ID;
+        const isOwnPanelService =
+          candidate?.siteId === siteId &&
+          (isRoot || currentSite?.panelType === "PANEL");
+        const isDirectParentService =
+          Boolean(siteRule?.active) &&
+          Boolean(currentSite?.parentSiteId) &&
+          candidate?.siteId === currentSite?.parentSiteId;
+        let service =
+          candidate && (isOwnPanelService || isDirectParentService)
             ? candidate
             : null;
         const serviceId = service?.id ?? serviceReference;
         if (!service || !service.active || service.deletedAt)
           throw new OrderError("SERVICE_UNAVAILABLE", "Service unavailable");
+        if (tx.site && service.siteId !== siteId && tx.$queryRawUnsafe) {
+          await tx.$queryRawUnsafe(
+            'SELECT "id" FROM "sites" WHERE "id"=$1::uuid FOR SHARE',
+            service.siteId,
+          );
+          service = await tx.service.findUnique({ where: { id: service.id } });
+          if (!service || !service.active || service.deletedAt)
+            throw new OrderError("SERVICE_UNAVAILABLE", "Service unavailable");
+        }
         const minimum = siteRule?.minOverride ?? service.min;
         const maximum = siteRule?.maxOverride ?? service.max;
         if (quantity < minimum || quantity > maximum)
@@ -91,12 +118,6 @@ export class OrderService {
           : null;
         if (tx.site && !user)
           throw new OrderError("USER_NOT_FOUND", "User not found");
-        const currentSite =
-          siteId && tx.site
-            ? await tx.site.findUnique({ where: { id: siteId } })
-            : null;
-        if (tx.site && (!currentSite || currentSite.status !== "ACTIVE"))
-          throw new OrderError("PANEL_SUSPENDED", "Panel is unavailable");
         const edges =
           siteId && tx.siteServiceRule
             ? await this.settlements.quote(tx, siteId, service, quantity)
@@ -108,6 +129,15 @@ export class OrderService {
         );
         const { mapping, providerService: ps, provider, group } = resolved;
         const manual = service.source === "MANUAL";
+        if (
+          !manual &&
+          provider?.siteId &&
+          provider.siteId !== service.siteId
+        )
+          throw new OrderError(
+            "PROVIDER_MAPPING_UNAVAILABLE",
+            "Service is not mapped to a provider owned by its source Panel",
+          );
         if (!manual && (!mapping || !ps || !provider))
           throw new OrderError(
             "PROVIDER_MAPPING_UNAVAILABLE",

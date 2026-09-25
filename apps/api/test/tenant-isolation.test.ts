@@ -46,6 +46,7 @@ test("a root SUPER_ADMIN session cannot authenticate on a child hostname", async
       id: CHILD_A,
       siteNumber: 100001n,
       parentSiteId: ROOT_SITE_ID,
+      panelType: "CHILD_PANEL",
       status: "ACTIVE",
       depth: 1,
     },

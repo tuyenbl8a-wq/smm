@@ -751,7 +751,7 @@ test("provider sync translates an incorrect provider order id", async () => {
   );
 });
 
-test("runtime theme settings accept exactly the current 11 presets", async () => {
+test("runtime theme settings accept exactly the two current Panel presets", async () => {
   const writes: any[] = [];
   const audits: any[] = [];
   const tx = {
@@ -764,15 +764,6 @@ test("runtime theme settings accept exactly the current 11 presets", async () =>
   const themeIds = [
     "AURORA_MODERN",
     "AI_COSMIC_FUTURE",
-    "CREATOR_POP",
-    "URBAN_LIME_BRUTAL",
-    "OCEAN_PREMIUM",
-    "ZEN_JAPANESE",
-    "BLACK_GOLD_LUXURY",
-    "PRISM_GLASS",
-    "BEIGE_EDITORIAL",
-    "BLUE_BUSINESS",
-    "CYBER_NEON_CITY",
   ];
   const themeFields = [
     "themeGlobal",
@@ -893,7 +884,7 @@ test("structured theme overrides reject raw executable and unknown properties", 
   );
   await service.updateSettings("admin", {
     themeDraft: {
-      themeId: "OCEAN_PREMIUM",
+      themeId: "AURORA_MODERN",
       overrides: {
         colors: { primary: "#087ea4" },
         layout: { density: "comfortable" },

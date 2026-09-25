@@ -75,6 +75,7 @@ const server = createServer(async (request, response) => {
       "content-type",
       "cookie",
       "x-csrf-token",
+      "x-api-key",
       "idempotency-key",
       "accept",
     ]) {
@@ -122,17 +123,9 @@ const server = createServer(async (request, response) => {
     );
     return;
   }
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
   const validatedHost = browserHost(request.headers.host);
   const hostname = validatedHost ? new URL(`http://${validatedHost}`).hostname : "localhost";
   const branding = await resolveBranding(hostname);
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
   const themeAsset = {
     "/theme-assets/ai-cosmic/auth-portal.png": "auth-portal.png",
     "/theme-assets/ai-cosmic/landing-hero.png": "landing-hero.png",
@@ -152,13 +145,6 @@ const server = createServer(async (request, response) => {
     }
     return;
   }
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
   const pages: Record<string, () => string> = {
     "/": () => landingPage("", branding),
     "/services": () => landingPage("", branding),

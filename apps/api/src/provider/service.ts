@@ -3,6 +3,7 @@ import { repriceMappedServices } from "../catalog/repricing.js";
 import { decryptSecret, encryptSecret, maskSecret } from "./crypto.js";
 import { StandardSmmAdapter } from "./adapter.js";
 import { decimalInput, resolveCustomerRate } from "../catalog/pricing.js";
+import { ROOT_SITE_ID } from "../tenant/context.js";
 export class ProviderConfigError extends Error {
   constructor(
     readonly code: string,

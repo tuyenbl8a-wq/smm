@@ -6,6 +6,7 @@ export interface TenantSite {
   id: string;
   siteNumber: bigint;
   parentSiteId: string | null;
+  panelType: "PANEL" | "CHILD_PANEL";
   status: string;
   depth: number;
 }

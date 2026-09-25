@@ -15,6 +15,11 @@ enum SiteStatus {
   ARCHIVED
 }
 
+enum PanelType {
+  PANEL
+  CHILD_PANEL
+}
+
 enum SiteDomainType {
   SUBDOMAIN
   CUSTOM
@@ -448,6 +453,7 @@ model PaymentWebhook {
 model Provider {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   siteId String @map("site_id") @db.Uuid
+  site Site @relation(fields: [siteId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "providers_site_fk")
   managedParentSiteId String? @map("managed_parent_site_id") @db.Uuid
   managedApiKeyId String? @map("managed_api_key_id") @db.Uuid
   name String @db.VarChar(120)
@@ -1094,6 +1100,8 @@ model Site {
   id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   siteNumber   BigInt     @unique @default(autoincrement()) @map("site_number")
   parentSiteId String?    @map("parent_site_id") @db.Uuid
+  panelType    PanelType  @default(CHILD_PANEL) @map("panel_type")
+  providers    Provider[]
   ownerUserId  String?    @map("owner_user_id") @db.Uuid
   name         String     @db.VarChar(160)
   slug         String     @unique @db.VarChar(80)

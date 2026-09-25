@@ -18,6 +18,10 @@ const customer = await readFile(
   new URL("../dist/customer.js", import.meta.url),
   "utf8",
 );
+const customerUx = await readFile(
+  new URL("../dist/customer-ux.js", import.meta.url),
+  "utf8",
+);
 const client = await readFile(
   new URL("../dist/api-client.js", import.meta.url),
   "utf8",
@@ -160,11 +164,16 @@ test("resolved Admin API data replaces the initial loading skeleton", async () =
     adminRole: simpleNode,
     avatar: simpleNode,
   };
+  context.window = context;
   new vm.Script(inlineAdminScript("/admin/panel-plans")).runInNewContext(context);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.doesNotMatch(contentNode.innerHTML, /admin-skeleton/);
   assert.match(contentNode.innerHTML, /Chưa có dữ liệu/);
 });
+const adminRefinementStyles = await readFile(
+  new URL("../dist/admin-refinement-styles.js", import.meta.url),
+  "utf8",
+);
 test("public experience includes real catalog, navigation and responsive UI", () => {
   assert.match(page, /api\/v1\/public\/catalog/);
   assert.match(page, /DỊCH VỤ CỦA CHÚNG TÔI/);
@@ -248,7 +257,10 @@ test("authenticated API client includes cookies, CSRF, timeout and normalized er
   assert.match(client, /method:'PUT'/);
   assert.match(client, /method:'PATCH'/);
   assert.match(client, /method:'DELETE'/);
-  assert.doesNotMatch(client + customer, /localStorage/);
+  assert.doesNotMatch(client, /localStorage/);
+  assert.match(customer, /panel-renew:/);
+  assert.match(customer, /localStorage\.getItem\(storageKey\)/);
+  assert.match(customer, /localStorage\.removeItem\(storageKey\)/);
   assert.doesNotMatch(client, /Failed to fetch|\[object Object\]/);
 });
 test("create order validates quantity and preserves one logical idempotency key", () => {
@@ -708,9 +720,19 @@ test("panel customer and admin routes are wired", () => {
   assert.match(customer, /Không cần cấu hình CNAME hoặc TXT/);
   assert.match(customer, /auto-renew/);
 });
+test("customer panel detail rehydrates saved branding and renewal retries reuse one key", () => {
+  assert.ok(customer.includes("branding=x.branding||{}"));
+  assert.ok(customer.includes("branding.siteName||x.name"));
+  assert.ok(customer.includes("branding.logo||''"));
+  assert.ok(customer.includes("branding.siteDescription||''"));
+  assert.ok(customer.includes("toast('Đã lưu thương hiệu');panelDetail()"));
+  assert.ok(customer.includes("localStorage.getItem(storageKey)"));
+  assert.ok(customer.includes("localStorage.removeItem(storageKey)"));
+});
 test("same-origin API proxy is constrained to API paths and fixed config target", () => {
   assert.match(main, /path\.startsWith\("\/api\/"\)/);
   assert.match(main, /new URL\(path\s*\+\s*url\.search, config\.apiUrl\)/);
+  assert.match(main, /"x-api-key"/);
   assert.doesNotMatch(main, /searchParams\.get\(["'](?:url|target)/);
 });
 test("visual theme builder routes render real landing auth and customer architectures", async () => {
@@ -1051,21 +1073,6 @@ test("final reference pair completes exactly ten unique three-scope architecture
       "ticket-desk",
     ],
     AI_COSMIC_FUTURE: [
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-      "ai-command",
-      "neural-orbit",
-      "cognitive-gateway",
-      "agent-console",
-      "intelligence-grid",
-      "model-modules",
-      "prompt-pipeline",
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
       "ai-dedicated-nav-v3",
       "ai-dedicated-hero-v3",
       "ai-dedicated-auth-v3",
@@ -1073,13 +1080,6 @@ test("final reference pair completes exactly ten unique three-scope architecture
       "ai-dedicated-dashboard-v3",
       "ai-dedicated-services-v3",
       "ai-dedicated-order-v3",
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
     ],
   };
   for (const [id, variants] of Object.entries(expected)) {
@@ -1136,16 +1136,6 @@ test("nine generic reference themes keep 27 concrete renderers without document 
     "OCEAN_PREMIUM",
     "CREATOR_POP",
     "URBAN_LIME_BRUTAL",
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-    "AI_COSMIC_FUTURE",
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
   ];
   for (const scope of ["landing", "auth", "customer"]) {
     const fingerprints = new Set();
@@ -1402,4 +1392,101 @@ test("order selection is page-local and advanced filters are collapsed", () => {
   assert.match(html, /selectedIds\.clear\(\);page=1;orderFilters=/);
   assert.match(html, /id="bulkBar" hidden/);
   assert.match(html, /Cập nhật từ NCC/);
+});
+
+test("customer API keys are masked on read and shown only in a disposable create dialog", () => {
+  const customerUi = customer + customerUx;
+  assert.match(customerUi, /••••••••••••/);
+  assert.match(customerUi, /Đổi API key/);
+  assert.match(customerUi, /API key hiện tại sẽ ngừng hoạt động ngay sau khi tạo key mới/);
+  assert.match(customerUi, /API key này chỉ hiển thị một lần\. Hãy sao chép và lưu lại\./);
+  assert.match(customerUi, /Sao chép key/);
+  assert.match(customerUi, /dialog\.replaceChildren\(\)/);
+  assert.match(customerUi, /clipboard\.writeText\(transientKey\)/);
+  assert.match(customerUi, /created\.key\|\|created\.rawKey/);
+  assert.match(customerUi, /keyPrefix|lastUsedAt/);
+});
+
+test("customer UX overrides are installed before the route renders", () => {
+  const html = customerPage("http://localhost:4004", "/orders/new");
+  const override = html.indexOf("const originalDashboard=dashboard");
+  const router = html.indexOf("const route=ROUTE");
+  assert.ok(override >= 0 && router > override);
+  assert.ok(html.indexOf("newOrder=async function()", override) < router);
+});
+
+test("customer ordering and Panel pages hide internal IDs and expose useful sections", () => {
+  const customerUi = customer + customerUx;
+  assert.match(customerUi, /serviceNumber\)\+'/);
+  assert.match(customerUi, /quantity-hint/);
+  assert.match(customerUi, /Number\.isSafeInteger\(q\)/);
+  assert.match(customerUi, /Child Panel/);
+  assert.match(customerUi, /panel-tabs/);
+  assert.match(customerUi, /Quản lý/);
+  assert.match(customerUi, /data-label="Số tiền"/);
+});
+
+test("admin refinement groups order actions, hides Child Panel provider controls and gates themes", () => {
+  assert.match(adminUx, /Cập nhật từ NCC/);
+  assert.match(adminUx, /Thao tác khác/);
+  assert.match(adminUx, /danger-zone/);
+  assert.match(adminUx, /Dịch vụ của Child Panel được cung cấp từ Panel cha\./);
+  assert.match(adminUx, /allowThemes===false/);
+  assert.match(adminUx, /Gói Panel hiện tại không hỗ trợ tùy chỉnh giao diện\./);
+  assert.match(adminUx, /panel-admin-history/);
+  assert.match(adminUx, /row-menu/);
+  assert.match(admin, /adminRefinementStyles/);
+  assert.match(adminRefinementStyles, /@media\(max-width:780px\)/);
+  assert.match(adminRefinementStyles, /@media\(max-width:460px\)/);
+});
+
+test("admin Panel conversion previews impact and uses the explicit type-change route", () => {
+  assert.match(adminUx, /Nâng lên Child Panel|Nâng lên Panel/);
+  assert.match(adminUx, /Hạ xuống Child Panel/);
+  assert.match(adminUx, /type-preview\?targetType=/);
+  assert.match(adminUx, /activeExternalOrders/);
+  assert.match(adminUx, /api\.patch\('\/api\/v1\/admin\/panels\/'\+d\.panelNumber\+'\/type'/);
+  assert.match(adminUx, /confirmBox\('Xác nhận chuyển Panel sang /);
+  assert.match(adminUx, /panel-conversion-impact/);
+  assert.doesNotMatch(adminUx, /openPanelTypeChange/);
+});
+
+
+test("rendered Panel conversion controls preview and submit the selected explicit type", async () => {
+  const { adminUxScript } = await import("../dist/admin-ux.js");
+  const calls = [];
+  const nodes = new Map();
+  const node = (selector) => {
+    if (!nodes.has(selector)) nodes.set(selector, {
+      value: selector === "#panelTypeTarget" ? "PANEL" : selector === "#panelTypeReason" ? "Approved upgrade" : "",
+      disabled: true,
+      classList: { add() {}, toggle() {} },
+      querySelector: (child) => node(selector + child),
+    });
+    return nodes.get(selector);
+  };
+  const context = {
+    api: {
+      get: async (path) => (calls.push(["GET", path]), { allowed: true, impact: { activeExternalOrders: 0 } }),
+      patch: async (path, body) => calls.push(["PATCH", path, body]),
+    },
+    document: { querySelector: node, querySelectorAll: () => [] },
+    content: {}, window: {}, PATH: "/admin/panels/100001", DETAIL: ["panels", "100001"],
+    savePanelPermissions: node("#savePanelPermissions"),
+    resourceTable() {}, openForm() {}, renderDetail() {}, renderAdminModule() {},
+    can: () => true, escapeHtml: (value) => String(value ?? ""), money: String, date: String, status: String,
+    confirmBox: async () => true, toast() {}, load() {},
+    detail: { panelNumber: "100001", panelType: "CHILD_PANEL", status: "ACTIVE" },
+  };
+  new vm.Script(adminUxScript + "\nrenderPanelDetail(detail);").runInNewContext(context);
+  await node("#previewPanelType").onclick();
+  assert.equal(node("#convertPanelType").disabled, false);
+  await node("#convertPanelType").onclick();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ["GET", "/api/v1/admin/panels/100001/type-preview?targetType=PANEL"],
+    ["PATCH", "/api/v1/admin/panels/100001/type", { panelType: "PANEL", reason: "Approved upgrade" }],
+  ]);
+  node("#panelTypeTarget").value = "CHILD_PANEL";
+  node("#panelTypeTarget").onchange();
+  assert.equal(node("#convertPanelType").disabled, true);
 });

@@ -41,17 +41,19 @@ export class ResellerService {
   async generate(userId: string, siteId?: string) {
     const raw = `smm_${randomBytes(32).toString("base64url")}`,
       keyHash = hash(raw);
-    await this.db.apiKey.updateMany({
-      where: { userId, ...(siteId ? { siteId } : {}) },
-      data: { active: false },
-    });
-    await this.db.apiKey.create({
-      data: {
-        userId,
-        ...(siteId ? { siteId } : {}),
-        keyPrefix: raw.slice(0, 12),
-        keyHash,
-      },
+    await this.db.$transaction(async (tx: any) => {
+      await tx.apiKey.updateMany({
+        where: { userId, ...(siteId ? { siteId } : {}) },
+        data: { active: false },
+      });
+      await tx.apiKey.create({
+        data: {
+          userId,
+          ...(siteId ? { siteId } : {}),
+          keyPrefix: raw.slice(0, 12),
+          keyHash,
+        },
+      });
     });
     return { key: raw, prefix: raw.slice(0, 12) };
   }
@@ -82,18 +84,40 @@ export class ResellerService {
         select: { priceGroupId: true, siteId: true },
       });
       if (!user) throw new ResellerError("USER_NOT_FOUND", "User not found");
+      const site = key.siteId === "00000000-0000-4000-8000-000000000001"
+        ? null
+        : await this.db.site.findUnique({
+            where: { id: key.siteId },
+            select: { parentSiteId: true, panelType: true },
+          });
       const inherited = await this.db.siteServiceRule.findMany({
         where: { siteId: key.siteId, active: true },
         select: { serviceId: true },
       });
+      const serviceScope = key.siteId === "00000000-0000-4000-8000-000000000001"
+        ? { siteId: key.siteId }
+        : !site?.parentSiteId
+          ? { id: { in: [] } }
+          : site.panelType === "PANEL"
+            ? {
+                OR: [
+                  { siteId: key.siteId },
+                  {
+                    siteId: site.parentSiteId,
+                    id: { in: inherited.map((rule: any) => rule.serviceId) },
+                  },
+                ],
+              }
+            : {
+                siteId: site.parentSiteId,
+                id: { in: inherited.map((rule: any) => rule.serviceId) },
+              };
       const [services, group, rules] = await Promise.all([
         this.db.service.findMany({
           where: {
             active: true,
             restrictFromApi: false,
-            ...(key.siteId === "00000000-0000-4000-8000-000000000001"
-              ? { siteId: key.siteId }
-              : { id: { in: inherited.map((rule: any) => rule.serviceId) } }),
+            ...serviceScope,
           },
           select: {
             id: true,

@@ -6,6 +6,7 @@ const panel = {
   id: "child",
   siteNumber: 100001n,
   parentSiteId: "root",
+  panelType: "PANEL",
   ownerUserId: "owner",
   name: "SMMLike",
   slug: "smmlike",
@@ -70,7 +71,8 @@ test("numeric and UUID panel references return safe human-readable detail withou
     assert.equal(detail.panelNumber, "100001");
     assert.equal(detail.primaryDomain, "smmlike.site");
     assert.equal(detail.systemDomain, "shop.dichvu1st.com");
-    assert.equal(detail.type, "Panels");
+    assert.equal(detail.type, "PANELS");
+    assert.equal(detail.panelType, "PANEL");
     assert.equal("apiKey" in detail, false);
     assert.equal("configEncrypted" in detail, false);
   }
@@ -174,6 +176,7 @@ test("per-panel overrides can remove plan permissions but never add outside the 
 
 test("reseller authorization is current, hard-denies Childpanels, and does not require SUPER_ADMIN", async () => {
   let code = "PANEL_250K";
+  let panelType = "PANEL";
   let resale = true;
   let permission = true;
   let planActive = true;
@@ -184,7 +187,7 @@ test("reseller authorization is current, hard-denies Childpanels, and does not r
     site: {
       findUnique: async ({ where }: any) =>
         where.id === "seller"
-          ? { id: "seller", parentSiteId: "root", status: siteStatus }
+          ? { id: "seller", parentSiteId: "root", panelType, status: siteStatus }
           : { id: "root", parentSiteId: null, status: "ACTIVE" },
     },
     panelSubscription: {
@@ -214,6 +217,9 @@ test("reseller authorization is current, hard-denies Childpanels, and does not r
   };
   const service = new PanelManagementService(db, {} as any, {} as any);
   assert.equal(await service.assertResellerAccess("seller"), "seller");
+  panelType = "CHILD_PANEL";
+  await assert.rejects(() => service.assertResellerAccess("seller"), (error: any) => error.code === "PANEL_RESALE_DENIED");
+  panelType = "PANEL";
   planActive = false;
   assert.equal(await service.assertResellerAccess("seller"), "seller");
   planActive = true;
@@ -261,7 +267,7 @@ test("reseller customer sales re-check current entitlement before listing plans,
     site: {
       findUnique: async ({ where }: any) =>
         where.id === "seller"
-          ? { id: "seller", parentSiteId: "root", status: "ACTIVE" }
+          ? { id: "seller", parentSiteId: "root", panelType: "PANEL", status: "ACTIVE" }
           : { id: "root", parentSiteId: null, status: "ACTIVE" },
     },
     panelSubscription: {

@@ -317,11 +317,6 @@ export class PanelService {
     const depth = parent.depth + 1;
     if (depth > plan.maxDepth)
       throw new TenantError("PANEL_MAX_DEPTH", "Maximum depth reached");
-    const count = await this.db.site.count({
-      where: { parentSiteId, deletedAt: null, status: { not: "ARCHIVED" } },
-    });
-    if (count >= plan.maxDirectChildren)
-      throw new TenantError("PANEL_CHILD_LIMIT", "Direct child limit reached");
     const customDomain = String(input.domain ?? "").trim()
       ? normalizeHostname(String(input.domain))
       : null;
@@ -336,60 +331,83 @@ export class PanelService {
     if (RESERVED_PANEL_SLUGS.has(panelSlug))
       throw new TenantError("PANEL_SLUG_RESERVED", "Reserved panel subdomain");
     const systemHostname = `${panelSlug}.dichvu1st.com`;
-    const [claimed, pendingSlug] = await Promise.all([
-      this.db.siteDomain?.findFirst
-        ? this.db.siteDomain.findFirst({
-            where: { hostname: systemHostname },
-            select: { id: true },
-          })
-        : null,
-      this.db.panelRentalIntent.findFirst
-        ? this.db.panelRentalIntent.findFirst({
-            where: {
-              slug: panelSlug,
-              status: {
-                in: [
-                  "PENDING_DNS",
-                  "PAYMENT_REQUIRED",
-                  "ROUTING_REQUIRED",
-                  "ACTIVATED",
-                ],
-              },
-              expiresAt: { gt: new Date() },
-            },
-            select: { id: true },
-          })
-        : null,
-    ]);
-    if (claimed || pendingSlug)
-      throw new TenantError(
-        "PANEL_SUBDOMAIN_TAKEN",
-        "Panel subdomain is already used",
-      );
     const hostname = customDomain ?? systemHostname;
     const name = String(input.name ?? "").trim();
     if (name.length < 2 || name.length > 160)
       throw new TenantError("PANEL_NAME_INVALID", "Invalid panel name");
-    const zone = customDomain
-      ? await this.dns.createZone(hostname)
-      : { zoneId: null, nameservers: [], created: false };
+    let zone = { zoneId: null as string | null, nameservers: [] as string[], created: false };
     try {
-      const intent = await this.db.panelRentalIntent.create({
-        data: {
-          sellerSiteId: parentSiteId,
-          renterUserId,
-          planId: plan.id,
-          name,
-          slug: panelSlug,
-          hostname,
-          providerZoneId: zone.zoneId,
-          assignedNameservers: zone.nameservers,
-          status: customDomain ? "PENDING_DNS" : "PENDING_DNS",
-          autoRenew: Boolean(input.autoRenew),
-          requestKey,
-          activationKey: `panel-activate:${randomUUID()}`,
-          expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
-        },
+      const runTransaction = this.db.$transaction
+        ? this.db.$transaction.bind(this.db)
+        : (fn: (tx: any) => Promise<any>) => fn(this.db);
+      const intent = await runTransaction(async (tx: any) => {
+        await tx.$executeRawUnsafe?.(
+          "SELECT pg_advisory_xact_lock(hashtext($1))",
+          `panel-quota:${parentSiteId}`,
+        );
+        const existingIntent = await tx.panelRentalIntent.findUnique({
+          where: { requestKey },
+        });
+        if (existingIntent) return existingIntent;
+        const [childCount, pendingCount, claimed, pendingSlug] =
+          await Promise.all([
+            tx.site.count({
+              where: {
+                parentSiteId,
+                deletedAt: null,
+                status: { not: "ARCHIVED" },
+              },
+            }),
+            tx.panelRentalIntent.count?.({
+              where: {
+                sellerSiteId: parentSiteId,
+                status: { in: ["PENDING_DNS", "PAYMENT_REQUIRED", "ROUTING_REQUIRED"] },
+                expiresAt: { gt: new Date() },
+              },
+            }),
+            tx.siteDomain?.findFirst?.({
+              where: { hostname: systemHostname },
+              select: { id: true },
+            }),
+            tx.panelRentalIntent.findFirst?.({
+              where: {
+                slug: panelSlug,
+                status: { in: ["PENDING_DNS", "PAYMENT_REQUIRED", "ROUTING_REQUIRED", "ACTIVATED"] },
+                expiresAt: { gt: new Date() },
+              },
+              select: { id: true },
+            }),
+          ]).then((rows: any[]) => [rows[0], rows[1] ?? 0, rows[2], rows[3]]);
+        if (childCount + pendingCount >= plan.maxDirectChildren)
+          throw new TenantError(
+            "PANEL_CHILD_LIMIT",
+            "Direct child limit reached",
+          );
+        if (claimed || pendingSlug)
+          throw new TenantError(
+            "PANEL_SUBDOMAIN_TAKEN",
+            "Panel subdomain is already used",
+          );
+        zone = customDomain
+          ? await this.dns.createZone(hostname)
+          : { zoneId: null, nameservers: [], created: false };
+        return tx.panelRentalIntent.create({
+          data: {
+            sellerSiteId: parentSiteId,
+            renterUserId,
+            planId: plan.id,
+            name,
+            slug: panelSlug,
+            hostname,
+            providerZoneId: zone.zoneId,
+            assignedNameservers: zone.nameservers,
+            status: "PENDING_DNS",
+            autoRenew: Boolean(input.autoRenew),
+            requestKey,
+            activationKey: `panel-activate:${randomUUID()}`,
+            expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+          },
+        });
       });
       return this.intentResult(intent);
     } catch (error) {
@@ -469,7 +487,14 @@ export class PanelService {
       }
       const [parent, plan, renter] = await Promise.all([
         tx.site.findUnique({ where: { id: sellerSiteId } }),
-        tx.panelRentalPlan.findUnique({ where: { id: intent.planId } }),
+        tx.panelRentalPlan.findUnique({
+          where: { id: intent.planId },
+          include: {
+            permissions: {
+              select: { permission: { select: { code: true } } },
+            },
+          },
+        }),
         tx.user.findFirst({
           where: { id: renterUserId, siteId: sellerSiteId, status: "ACTIVE" },
         }),
@@ -496,10 +521,14 @@ export class PanelService {
       const now = new Date();
       const expiresAt = new Date(now.getTime() + plan.billingDays * 86_400_000);
       const siteId = randomUUID();
+      // Set the initial type from the named product, independently of permission grants.
+      // Custom plans start as CHILD_PANEL and use the explicit conversion workflow.
+      const panelType = plan.code === "PANEL_250K" ? "PANEL" : "CHILD_PANEL";
       await tx.site.create({
         data: {
           id: siteId,
           parentSiteId: sellerSiteId,
+          panelType,
           name: intent.name,
           slug: intent.slug,
           status: "PENDING",
@@ -701,6 +730,11 @@ export class PanelService {
   }
 
   async renew(siteId: string, renterUserId: string, key: string) {
+    if (!/^[A-Za-z0-9:_-]{12,128}$/.test(key))
+      throw new TenantError(
+        "IDEMPOTENCY_KEY_INVALID",
+        "A valid renewal idempotency key is required",
+      );
     const txKey = `panel-renew:${siteId}:${key}`.slice(0, 128);
     return this.db.$transaction(async (tx: any) => {
       const existing = await tx.walletTransaction.findUnique({
@@ -778,6 +812,8 @@ export class PanelManagementService {
     let current = await this.db.site.findUnique({ where: { id: siteId } });
     if (!current)
       throw new TenantError("PANEL_UNAVAILABLE", "Panel is unavailable");
+    if (current.panelType !== "PANEL")
+      throw new TenantError("PANEL_RESALE_DENIED", "Child Panel cannot resell panels");
     let traversed = 0;
     while (current) {
       if (current.status !== "ACTIVE")
@@ -830,6 +866,36 @@ export class PanelManagementService {
       );
     return siteId;
   }
+
+  private async rentedPanelScope(
+    siteId: string,
+    userId: string,
+    siteNumber?: string,
+  ) {
+    const subscriptions = await this.db.panelSubscription.findMany({
+      where: { sellerSiteId: siteId, renterUserId: userId },
+      orderBy: { createdAt: "desc" },
+    });
+    const subscriptionBySite = new Map<string, any>();
+    for (const subscription of subscriptions)
+      if (!subscriptionBySite.has(subscription.siteId))
+        subscriptionBySite.set(subscription.siteId, subscription);
+    if (!subscriptionBySite.size) return [];
+
+    const sites = await this.db.site.findMany({
+      where: {
+        id: { in: [...subscriptionBySite.keys()] },
+        parentSiteId: siteId,
+        deletedAt: null,
+        ...(siteNumber ? { siteNumber: BigInt(siteNumber) } : {}),
+      },
+      ...(!siteNumber ? { orderBy: { createdAt: "desc" } } : {}),
+    });
+    return sites.map((site: any) => ({
+      site,
+      subscription: subscriptionBySite.get(site.id),
+    }));
+  }
   async plans(siteId: string) {
     await this.assertResellerAccess(siteId);
     const rows = await this.db.panelRentalPlan.findMany({
@@ -854,63 +920,70 @@ export class PanelManagementService {
     return this.withPermissionCodes(rows);
   }
   async panels(siteId: string, userId: string) {
-    const sites = await this.db.site.findMany({
-      where: { parentSiteId: siteId, ownerUserId: userId, deletedAt: null },
-      orderBy: { createdAt: "desc" },
-    });
+    const ownedPanels = await this.rentedPanelScope(siteId, userId);
     return Promise.all(
-      sites.map(async (site: any) => {
-        const domains = await this.db.siteDomain.findMany({
-          where: { siteId: site.id, isPrimary: true, status: "VERIFIED" },
-          select: { hostname: true },
-        });
-        const subscriptions = await this.db.panelSubscription.findMany({
-          where: { siteId: site.id },
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          select: {
-            status: true,
-            expiresAt: true,
-            graceUntil: true,
-            autoRenew: true,
-          },
-        });
+      ownedPanels.map(async ({ site, subscription }: any) => {
+        const [domains, plan] = await Promise.all([
+          this.db.siteDomain.findMany({
+            where: { siteId: site.id, isPrimary: true, status: "VERIFIED" },
+            select: { hostname: true },
+          }),
+          subscription?.planId && this.db.panelRentalPlan?.findUnique
+            ? this.db.panelRentalPlan.findUnique({
+                where: { id: subscription.planId },
+                select: {
+                  id: true, name: true, code: true, allowThemes: true,
+                },
+              })
+            : null,
+        ]);
+        const planSummary = plan ? { id: plan.id, name: plan.name, code: plan.code, allowThemes: plan.allowThemes === true } : null;
+        const summary = {
+          status: subscription.status,
+          expiresAt: subscription.expiresAt,
+          graceUntil: subscription.graceUntil,
+          autoRenew: subscription.autoRenew,
+        };
         return {
           ...site,
           domains,
-          subscriptions,
+          panelType: site.panelType ?? "CHILD_PANEL",
+          type: site.panelType === "PANEL" ? "PANELS" : "CHILDPANELS",
+          plan: planSummary,
+          subscriptions: [{ ...summary, plan: planSummary }],
           primaryDomain: domains[0]?.hostname ?? null,
-          subscription: subscriptions[0] ?? null,
+          subscription: { ...summary, plan: planSummary },
         };
       }),
     );
   }
   async owned(siteId: string, userId: string, siteNumber: string) {
-    const site = await this.db.site.findFirst({
-      where: {
-        siteNumber: BigInt(siteNumber),
-        parentSiteId: siteId,
-        ownerUserId: userId,
-        deletedAt: null,
-      },
-    });
-    if (!site)
+    const [ownedPanel] = await this.rentedPanelScope(
+      siteId,
+      userId,
+      siteNumber,
+    );
+    if (!ownedPanel)
       throw new TenantError(
         "PANEL_FORBIDDEN",
         "Panel is outside your ownership scope",
       );
-    const subscriptions = await this.db.panelSubscription.findMany({
-      where: { siteId: site.id },
-      orderBy: { createdAt: "desc" },
-      take: 1,
+    const { site, subscription } = ownedPanel;
+    const plan = await this.db.panelRentalPlan.findUnique({
+      where: { id: subscription.planId },
     });
-    const plan = subscriptions[0]
-      ? await this.db.panelRentalPlan.findUnique({
-          where: { id: subscriptions[0].planId },
+    const brandingRows = this.db.setting?.findMany
+      ? await this.db.setting.findMany({
+          where: { siteId: site.id, group: "branding" },
+          select: { key: true, value: true },
         })
-      : null;
-    return {
-      ...site,
+      : [];
+      return {
+        ...site,
+        panelType: site.panelType ?? "CHILD_PANEL",
+      branding: Object.fromEntries(
+        brandingRows.map((row: any) => [row.key, row.value]),
+      ),
       domains: await this.db.siteDomain.findMany({
         where: { siteId: site.id },
         select: {
@@ -925,7 +998,7 @@ export class PanelManagementService {
           assignedNameservers: true,
         },
       }),
-      subscriptions: subscriptions.map((x: any) => ({ ...x, plan })),
+      subscriptions: [{ ...subscription, plan }],
       children: await this.db.site.findMany({
         where: { parentSiteId: site.id, deletedAt: null },
         select: { siteNumber: true, name: true, status: true },
@@ -1083,13 +1156,49 @@ export class PanelManagementService {
     siteNumber: string,
     value: unknown,
   ) {
+    if (typeof value !== "boolean")
+      throw new TenantError(
+        "AUTO_RENEW_VALUE_INVALID",
+        "autoRenew must be a boolean",
+      );
     const panel = await this.owned(siteId, userId, siteNumber),
       subscription = panel.subscriptions[0];
     if (!subscription)
       throw new TenantError("SUBSCRIPTION_NOT_FOUND", "Subscription not found");
-    return this.db.panelSubscription.update({
-      where: { id: subscription.id },
-      data: { autoRenew: Boolean(value) },
+    return this.db.$transaction(async (tx: any) => {
+      const [current] = await tx.$queryRawUnsafe(
+        'SELECT "auto_renew" FROM "panel_subscriptions" WHERE "id"=$1::uuid AND "site_id"=$2::uuid AND "seller_site_id"=$3::uuid AND "renter_user_id"=$4::uuid FOR UPDATE',
+        subscription.id,
+        panel.id,
+        siteId,
+        userId,
+      );
+      if (!current)
+        throw new TenantError(
+          "PANEL_FORBIDDEN",
+          "Panel is outside your ownership scope",
+        );
+      const previous = current.auto_renew === true;
+      if (previous === value)
+        return tx.panelSubscription.findUnique({
+          where: { id: subscription.id },
+        });
+      const updated = await tx.panelSubscription.update({
+        where: { id: subscription.id },
+        data: { autoRenew: value },
+      });
+      await tx.auditLog.create({
+        data: {
+          siteId: panel.id,
+          actorId: userId,
+          action: "PANEL_AUTO_RENEW_CHANGED",
+          resource: "PanelSubscription",
+          resourceId: subscription.id,
+          before: { autoRenew: previous },
+          after: { autoRenew: value },
+        },
+      });
+      return updated;
     });
   }
   async primaryDomain(
@@ -1204,6 +1313,7 @@ export class PanelManagementService {
         id: true,
         siteNumber: true,
         parentSiteId: true,
+        panelType: true,
         ownerUserId: true,
         name: true,
         slug: true,
@@ -1232,7 +1342,10 @@ export class PanelManagementService {
             select: {
               planId: true,
               status: true,
+              startedAt: true,
               expiresAt: true,
+              graceUntil: true,
+              autoRenew: true,
             },
           }),
           this.db.site.findUnique({
@@ -1240,22 +1353,21 @@ export class PanelManagementService {
             select: { siteNumber: true, name: true },
           }),
         ]);
-        const plan = subscription
+        const plan = subscription?.planId && this.db.panelRentalPlan?.findUnique
           ? await this.db.panelRentalPlan.findUnique({
               where: { id: subscription.planId },
               select: {
-                name: true,
-                code: true,
-                permissions: {
-                  select: { permission: { select: { code: true } } },
-                },
+                id: true, name: true, code: true, allowThemes: true,
+                permissions: { select: { permission: { select: { code: true } } } },
               },
             })
           : null;
-        const permissionCodes =
-          plan?.permissions?.map((row: any) => row.permission.code) ?? [];
+        const permissionCodes = plan?.permissions?.map(
+          (row: any) => row.permission.code,
+        ) ?? [];
         return {
           ...site,
+          panelType: site.panelType ?? "CHILD_PANEL",
           owner,
           parent,
           primaryDomain: domain?.hostname ?? null,
@@ -1265,14 +1377,9 @@ export class PanelManagementService {
             new Date(subscription.expiresAt) > new Date()
               ? "ACTIVE"
               : "UNAVAILABLE",
-          type: permissionCodes.includes("providers.manage")
-            ? "Panels"
-            : "Childpanels",
+          type: site.panelType === "PANEL" ? "PANELS" : "CHILDPANELS",
           subscription: subscription
-            ? {
-                ...subscription,
-                plan: plan ? { ...plan, permissionCodes } : null,
-              }
+            ? { ...subscription, plan: plan ? { ...plan, permissionCodes } : null }
             : null,
         };
       }),
@@ -1324,9 +1431,8 @@ export class PanelManagementService {
     return {
       ...panel,
       panelNumber: String(panel.siteNumber),
-      type: plan?.permissionCodes.includes("providers.manage")
-        ? "Panels"
-        : "Childpanels",
+      panelType: panel.panelType ?? "CHILD_PANEL",
+      type: panel.panelType === "PANEL" ? "PANELS" : "CHILDPANELS",
       owner,
       parent,
       plan,
@@ -1403,6 +1509,177 @@ export class PanelManagementService {
         },
       });
       return updated;
+    });
+  }
+
+  private async panelTypeConversionImpact(db: any, panelId: string) {
+    const providers = await db.provider.findMany({
+      where: { siteId: panelId, managedParentSiteId: null, deletedAt: null },
+      select: { id: true },
+    });
+    const providerIds = providers.map((row: any) => row.id);
+    const providerServices = providerIds.length
+      ? await db.providerService.findMany({
+          where: { providerId: { in: providerIds } },
+          select: { id: true },
+        })
+      : [];
+    const providerServiceIds = providerServices.map((row: any) => row.id);
+    const [mappings, services, activeExternalOrders] = await Promise.all([
+      providerServiceIds.length
+        ? db.serviceMapping.findMany({
+            where: { providerServiceId: { in: providerServiceIds } },
+            select: { id: true, serviceId: true, active: true },
+          })
+        : [],
+      db.service.findMany({
+        where: {
+          siteId: panelId,
+          source: { not: "MANUAL" },
+          active: true,
+          deletedAt: null,
+        },
+        select: { id: true },
+      }),
+      providerIds.length && db.order?.count
+        ? db.order.count({
+            where: {
+              providerId: { in: providerIds },
+              status: { in: ["PENDING", "PROCESSING", "IN_PROGRESS"] },
+            },
+          })
+        : 0,
+    ]);
+    const serviceIds = new Set([
+      ...services.map((row: any) => row.id),
+      ...mappings.map((row: any) => row.serviceId),
+    ]);
+    return {
+      externalProviders: providerIds.length,
+      mappings: mappings.length,
+      servicesRemovedFromCatalog: services.length,
+      activeExternalOrders,
+      affectedServiceIds: [...serviceIds],
+      providerIds,
+      providerServiceIds,
+    };
+  }
+
+  async panelTypeConversionPreview(reference: string, targetType: unknown, sellerSiteId: string | null = null) {
+    if (targetType !== "PANEL" && targetType !== "CHILD_PANEL")
+      throw new TenantError("PANEL_TYPE_INVALID", "Invalid Panel type");
+    const panel = await this.panelByReference(reference, sellerSiteId);
+    const impact =
+      targetType === "CHILD_PANEL" && panel.panelType === "PANEL"
+        ? await this.panelTypeConversionImpact(this.db, panel.id)
+        : {
+            externalProviders: 0,
+            mappings: 0,
+            servicesRemovedFromCatalog: 0,
+            activeExternalOrders: 0,
+          };
+    const { providerIds: _providerIds, providerServiceIds: _providerServiceIds, affectedServiceIds: _affectedServiceIds, ...summary } = impact as any;
+    return {
+      siteId: panel.id,
+      currentType: panel.panelType ?? "CHILD_PANEL",
+      targetType,
+      impact: summary,
+      allowed: summary.activeExternalOrders === 0,
+    };
+  }
+
+  async convertPanelType(
+    actorId: string,
+    reference: string,
+    targetType: unknown,
+    reason: unknown,
+    sellerSiteId: string | null = null,
+  ) {
+    if (targetType !== "PANEL" && targetType !== "CHILD_PANEL")
+      throw new TenantError("PANEL_TYPE_INVALID", "Invalid Panel type");
+    const explanation = String(reason ?? "").trim();
+    if (explanation.length < 3)
+      throw new TenantError("REASON_REQUIRED", "Conversion reason is required");
+    const panel = await this.panelByReference(reference, sellerSiteId);
+    return this.db.$transaction(async (tx: any) => {
+      if (tx.$queryRawUnsafe)
+        await tx.$queryRawUnsafe(
+          'SELECT "id" FROM "sites" WHERE "id"=$1::uuid FOR UPDATE',
+          panel.id,
+        );
+      const current = await tx.site.findUnique({ where: { id: panel.id } });
+      if (!current || (sellerSiteId && current.parentSiteId !== sellerSiteId))
+        throw new TenantError("PANEL_NOT_FOUND", "Panel not found");
+      const currentType = current.panelType ?? "CHILD_PANEL";
+      if (currentType === targetType)
+        return { siteId: panel.id, panelType: currentType, unchanged: true };
+      let impact: any = {
+        externalProviders: 0,
+        mappings: 0,
+        servicesRemovedFromCatalog: 0,
+        activeExternalOrders: 0,
+      };
+      if (targetType === "CHILD_PANEL") {
+        impact = await this.panelTypeConversionImpact(tx, panel.id);
+        if (impact.activeExternalOrders > 0)
+          throw new TenantError(
+            "PANEL_ACTIVE_EXTERNAL_ORDERS",
+            `Cannot convert while ${impact.activeExternalOrders} external-provider order(s) are active`,
+          );
+        if (impact.providerIds.length) {
+          await tx.provider.updateMany({
+            where: { id: { in: impact.providerIds }, siteId: panel.id },
+            data: {
+              status: "INACTIVE",
+              autoSyncEnabled: false,
+              nextSyncAt: null,
+            },
+          });
+        }
+        if (impact.providerServiceIds.length)
+          await tx.serviceMapping.updateMany({
+            where: {
+              providerServiceId: { in: impact.providerServiceIds },
+              active: true,
+            },
+            data: { active: false },
+          });
+        if (impact.affectedServiceIds.length)
+          await tx.service.updateMany({
+            where: {
+              id: { in: impact.affectedServiceIds },
+              siteId: panel.id,
+              active: true,
+            },
+            data: { active: false },
+          });
+      }
+      const updated = await tx.site.update({
+        where: { id: panel.id },
+        data: { panelType: targetType },
+      });
+      const {
+        affectedServiceIds: _affected,
+        providerIds: _providerIds,
+        providerServiceIds: _providerServiceIds,
+        ...impactSummary
+      } = impact;
+      await tx.auditLog.create({
+        data: {
+          siteId: panel.id,
+          actorId,
+          action: "PANEL_TYPE_CONVERSION",
+          resource: "Site",
+          resourceId: panel.id,
+          before: { panelType: currentType },
+          after: {
+            panelType: targetType,
+            reason: explanation,
+            impact: impactSummary,
+          },
+        },
+      });
+      return { siteId: updated.id, panelType: updated.panelType, impact: impactSummary };
     });
   }
   async setPermissionOverrides(
@@ -1548,6 +1825,7 @@ export class PanelManagementService {
               name: true,
               ownerUserId: true,
               status: true,
+              panelType: true,
             },
           }),
           this.db.site.findUnique({
@@ -1577,10 +1855,11 @@ export class PanelManagementService {
           ? await this.db.user.findFirst({
               where: { id: site.ownerUserId, siteId: row.siteId },
               select: { username: true, email: true },
-            })
+          })
           : null;
         const permissionCodes =
           plan?.permissions?.map((entry: any) => entry.permission.code) ?? [];
+        const panelType = site?.panelType ?? "CHILD_PANEL";
         return {
           ...row,
           site,
@@ -1595,9 +1874,8 @@ export class PanelManagementService {
             new Date(row.expiresAt) > new Date()
               ? "ACTIVE"
               : "UNAVAILABLE",
-          type: permissionCodes.includes("providers.manage")
-            ? "Panels"
-            : "Childpanels",
+          panelType,
+          type: panelType === "PANEL" ? "PANELS" : "CHILDPANELS",
         };
       }),
     );

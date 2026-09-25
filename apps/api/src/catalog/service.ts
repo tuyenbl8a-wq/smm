@@ -122,7 +122,7 @@ export class CatalogService {
       description: rule?.displayDescription ?? row.description,
       icon: rule?.displayIcon ?? row.icon,
       sortOrder: rule?.sortOrder ?? row.sortOrder,
-      active: row.active && (rule?.active ?? true),
+      active: row.active !== false && (rule?.active ?? true),
       tenantOverride: rule ?? null,
     });
     return {
@@ -152,9 +152,66 @@ export class CatalogService {
     const limit = integer(query.limit, "limit", 1);
     if (limit > 50)
       throw new CatalogError("PAGINATION_INVALID", "Limit cannot exceed 50");
+    const tenantSite = query.siteId === ROOT_SITE_ID
+      ? null
+      : await this.db.site.findUnique({
+          where: { id: query.siteId },
+          select: { id: true, parentSiteId: true, panelType: true },
+        });
+    const siteRules =
+      query.siteId === ROOT_SITE_ID || !tenantSite?.parentSiteId
+        ? []
+        : await this.db.siteServiceRule.findMany({
+            where: { siteId: query.siteId, active: true },
+            select: {
+              serviceId: true,
+              displayName: true,
+              displayDescription: true,
+              fixedRate: true,
+              markupPercent: true,
+              fixedProfit: true,
+              minProfit: true,
+              minOverride: true,
+              maxOverride: true,
+            },
+          });
+    const ruleMap = new Map(
+      siteRules.map((rule: any) => [rule.serviceId, rule]),
+    );
+    const visibleServiceScope =
+      query.siteId === ROOT_SITE_ID
+        ? { siteId: query.siteId }
+        : !tenantSite?.parentSiteId
+          ? { id: { in: [] } }
+          : tenantSite.panelType === "PANEL"
+            ? {
+                OR: [
+                  { siteId: query.siteId },
+                  {
+                    siteId: tenantSite.parentSiteId,
+                    id: { in: siteRules.map((rule: any) => rule.serviceId) },
+                  },
+                ],
+              }
+            : {
+                siteId: tenantSite.parentSiteId,
+                id: { in: siteRules.map((rule: any) => rule.serviceId) },
+              };
+    const visibleServiceCategories = await this.db.service.findMany({
+      where: {
+        active: true,
+        deletedAt: null,
+        ...visibleServiceScope,
+      },
+      select: { categoryId: true },
+      distinct: ["categoryId"],
+    });
+    const categoryIds = [
+      ...new Set(visibleServiceCategories.map((row: any) => row.categoryId)),
+    ];
     const [categoryRows, platformRows] = await Promise.all([
       this.db.serviceCategory.findMany({
-        where: { active: true, deletedAt: null },
+        where: { id: { in: categoryIds }, active: true, deletedAt: null },
         select: {
           id: true,
           platformId: true,
@@ -187,36 +244,14 @@ export class CatalogService {
       categories = categories.filter(
         (item: any) => item.slug === slug(query.category),
       );
-    const siteRules =
-      query.siteId === ROOT_SITE_ID
-        ? []
-        : await this.db.siteServiceRule.findMany({
-            where: { siteId: query.siteId, active: true },
-            select: {
-              serviceId: true,
-              displayName: true,
-              displayDescription: true,
-              fixedRate: true,
-              markupPercent: true,
-              fixedProfit: true,
-              minProfit: true,
-              minOverride: true,
-              maxOverride: true,
-            },
-          });
-    const ruleMap = new Map(
-      siteRules.map((rule: any) => [rule.serviceId, rule]),
-    );
     const where = {
       active: true,
       deletedAt: null,
-      ...(query.siteId === ROOT_SITE_ID
-        ? { siteId: query.siteId }
-        : { id: { in: siteRules.map((rule: any) => rule.serviceId) } }),
+      ...visibleServiceScope,
       categoryId: { in: categories.map((category: any) => category.id) },
       ...(query.search
         ? {
-            OR: [
+            AND: [{ OR: [
               {
                 name: {
                   contains: query.search.slice(0, 100),
@@ -226,7 +261,7 @@ export class CatalogService {
               ...(/^\d+$/.test(query.search)
                 ? [{ serviceNumber: { equals: BigInt(query.search) } }]
                 : []),
-            ],
+            ] }],
           }
         : {}),
     };
@@ -348,8 +383,58 @@ export class CatalogService {
     const limit = integer(query.limit, "limit", 1);
     if (limit > 100)
       throw new CatalogError("PAGINATION_INVALID", "Limit cannot exceed 100");
+    const tenantSite = query.siteId === ROOT_SITE_ID
+      ? null
+      : await this.db.site.findUnique({
+          where: { id: query.siteId },
+          select: { id: true, parentSiteId: true, panelType: true },
+        });
+    const siteRules =
+      query.siteId === ROOT_SITE_ID || !tenantSite?.parentSiteId
+        ? []
+        : await this.db.siteServiceRule.findMany({
+            where: { siteId: query.siteId, active: true },
+            select: {
+              serviceId: true,
+              displayName: true,
+              displayDescription: true,
+              fixedRate: true,
+              markupPercent: true,
+              fixedProfit: true,
+              minProfit: true,
+              minOverride: true,
+              maxOverride: true,
+            },
+          });
+    const siteRuleMap = new Map(
+      siteRules.map((rule: any) => [rule.serviceId, rule]),
+    );
+    const visibleServiceScope = query.siteId === ROOT_SITE_ID
+      ? { siteId: query.siteId }
+      : !tenantSite?.parentSiteId
+        ? { id: { in: [] } }
+        : tenantSite.panelType === "PANEL"
+          ? {
+              OR: [
+                { siteId: query.siteId },
+                {
+                  siteId: tenantSite.parentSiteId,
+                  id: { in: siteRules.map((rule: any) => rule.serviceId) },
+                },
+              ],
+            }
+          : {
+              siteId: tenantSite.parentSiteId,
+              id: { in: siteRules.map((rule: any) => rule.serviceId) },
+            };
+    const visibleCategories = await this.db.service.findMany({
+      where: { active: true, deletedAt: null, ...visibleServiceScope },
+      select: { categoryId: true },
+      distinct: ["categoryId"],
+    });
     const categoryRows = await this.db.serviceCategory.findMany({
       where: {
+        id: { in: [...new Set(visibleCategories.map((row: any) => row.categoryId))] },
         active: true,
         deletedAt: null,
         ...(query.category ? { slug: slug(query.category) } : {}),
@@ -383,32 +468,10 @@ export class CatalogService {
           ? (platformMap.get(item.platformId) ?? null)
           : null,
       }));
-    const siteRules =
-      query.siteId === ROOT_SITE_ID
-        ? []
-        : await this.db.siteServiceRule.findMany({
-            where: { siteId: query.siteId, active: true },
-            select: {
-              serviceId: true,
-              displayName: true,
-              displayDescription: true,
-              fixedRate: true,
-              markupPercent: true,
-              fixedProfit: true,
-              minProfit: true,
-              minOverride: true,
-              maxOverride: true,
-            },
-          });
-    const siteRuleMap = new Map(
-      siteRules.map((rule: any) => [rule.serviceId, rule]),
-    );
     const where = {
       active: true,
       deletedAt: null,
-      ...(query.siteId === ROOT_SITE_ID
-        ? { siteId: query.siteId }
-        : { id: { in: siteRules.map((rule: any) => rule.serviceId) } }),
+      ...visibleServiceScope,
       categoryId: { in: categories.map((category: any) => category.id) },
       ...(query.search
         ? {
@@ -426,6 +489,7 @@ export class CatalogService {
         where,
         select: {
           id: true,
+          serviceNumber: true,
           categoryId: true,
           name: true,
           description: true,
@@ -533,17 +597,25 @@ export class CatalogService {
 
   async tenantAdminOverview(siteId: string) {
     if (siteId === ROOT_SITE_ID) return this.adminOverview(false);
+    const tenantSite = await this.db.site.findUnique({
+      where: { id: siteId },
+      select: { id: true, parentSiteId: true, panelType: true },
+    });
     const rules = await this.db.siteServiceRule.findMany({
       where: { siteId },
       orderBy: { updatedAt: "desc" },
     });
+    const allowedRuleIds = rules.map((rule: any) => rule.serviceId);
+    const serviceScopes = [
+      ...(tenantSite?.parentSiteId
+        ? [{ siteId: tenantSite.parentSiteId, id: { in: allowedRuleIds } }]
+        : []),
+      ...(tenantSite?.panelType === "PANEL" ? [{ siteId }] : []),
+    ];
     const services = await this.db.service.findMany({
       where: {
-        OR: [
-          { siteId },
-          { id: { in: rules.map((rule: any) => rule.serviceId) } },
-        ],
         deletedAt: null,
+        OR: serviceScopes.length ? serviceScopes : [{ id: { in: [] } }],
       },
       select: {
         id: true,
@@ -587,19 +659,31 @@ export class CatalogService {
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     });
     const presented = await this.applyCatalogPresentation(siteId, platformRows, categoryRows);
+    const serviceMap = new Map(
+      services.map((service: any) => [service.id, service]),
+    );
+    const ruleMap = new Map(rules.map((rule: any) => [rule.serviceId, rule]));
     return {
       platforms: presented.platforms.filter((row: any) => row.active),
       categories: presented.categories.filter((row: any) => row.active),
-      services: services.flatMap((service: any) => {
-        const rule = rules.find((item: any) => item.serviceId === service.id);
-        if (service.siteId !== siteId && !rule) return [];
-        return [
-          {
-            ...this.applySiteRule(service, rule),
-            active: service.siteId === siteId ? service.active : rule.active && service.active,
-          },
-        ];
-      }),
+      services: [
+        ...rules.flatMap((rule: any) => {
+        const service: any = serviceMap.get(rule.serviceId);
+        return service && service.siteId === tenantSite?.parentSiteId
+          ? [
+              {
+                ...this.applySiteRule(service, rule),
+                active: rule.active && service.active,
+              },
+            ]
+          : [];
+        }),
+        ...(tenantSite?.panelType === "PANEL"
+          ? services
+              .filter((service: any) => service.siteId === siteId && !ruleMap.has(service.id))
+              .map((service: any) => ({ ...service, active: service.active }))
+          : []),
+      ],
       providers: [],
       providerServices: [],
       mappings: [],
@@ -608,31 +692,56 @@ export class CatalogService {
   }
 
   async tenantServiceEditor(siteId: string, serviceId: string) {
-    const [rule, service] = await Promise.all([
+    const [tenantSite, rule, service] = await Promise.all([
+      this.db.site.findUnique({
+        where: { id: siteId },
+        select: { id: true, parentSiteId: true, panelType: true },
+      }),
       this.db.siteServiceRule.findUnique({
         where: { siteId_serviceId: { siteId, serviceId } },
       }),
       this.db.service.findFirst({ where: { id: serviceId, deletedAt: null } }),
     ]);
-    if (!rule || !service)
+    const isParentService =
+      Boolean(rule) && service?.siteId === tenantSite?.parentSiteId;
+    const isOwnedPanelService =
+      tenantSite?.panelType === "PANEL" && service?.siteId === siteId;
+    if (!tenantSite || !service || (!isParentService && !isOwnedPanelService))
       throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
+    const mappings = isOwnedPanelService
+      ? await this.db.serviceMapping.findMany({
+          where: { serviceId, active: true },
+          orderBy: [{ active: "desc" }, { priority: "asc" }],
+        })
+      : [];
+    const providerServices = mappings.length
+      ? await this.db.providerService.findMany({
+          where: { id: { in: mappings.map((row: any) => row.providerServiceId) } },
+        })
+      : [];
+    const providerIds = [...new Set(providerServices.map((row: any) => row.providerId))];
+    const providers = providerIds.length
+      ? await this.db.provider.findMany({
+          where: { id: { in: providerIds }, siteId, deletedAt: null },
+          select: { id: true, name: true, status: true },
+        })
+      : [];
     return {
       service: {
         ...this.applySiteRule(service, rule),
-        active: rule.active && service.active,
+        active: rule ? rule.active && service.active : service.active,
       },
       tenantOverride: {
-        displayName: rule.displayName,
-        displayDescription: rule.displayDescription,
-        active: rule.active,
-        pricingMode: rule.pricingMode,
-        fixedRate: rule.fixedRate == null ? null : String(rule.fixedRate),
-        markupPercent:
-          rule.markupPercent == null ? null : String(rule.markupPercent),
+        displayName: rule?.displayName ?? null,
+        displayDescription: rule?.displayDescription ?? null,
+        active: rule?.active ?? true,
+        pricingMode: rule?.pricingMode ?? service.pricingMode,
+        fixedRate: rule?.fixedRate == null ? null : String(rule.fixedRate),
+        markupPercent: rule?.markupPercent == null ? null : String(rule.markupPercent),
       },
-      mappings: [],
-      providerServices: [],
-      providers: [],
+      mappings,
+      providerServices: providerServices.map((row: any) => ({ ...row, raw: undefined })),
+      providers,
       pricing: [],
     };
   }
@@ -670,10 +779,23 @@ export class CatalogService {
         "No tenant-editable fields supplied",
       );
     return this.db.$transaction(async (tx: any) => {
+      const tenantSite = await tx.site.findUnique({
+        where: { id: siteId },
+        select: { id: true, parentSiteId: true, panelType: true },
+      });
+      const sourceService = await tx.service.findFirst({
+        where: { id: serviceId, deletedAt: null },
+        select: { id: true, siteId: true },
+      });
       const before = await tx.siteServiceRule.findUnique({
         where: { siteId_serviceId: { siteId, serviceId } },
       });
-      if (!before)
+      if (
+        !before ||
+        !tenantSite ||
+        !sourceService ||
+        sourceService.siteId !== tenantSite.parentSiteId
+      )
         throw new CatalogError(
           "SERVICE_NOT_FOUND",
           "Assigned service not found",
@@ -960,6 +1082,17 @@ export class CatalogService {
     providerServiceId: string,
     siteId = ROOT_SITE_ID,
   ) {
+    const tenantSite = siteId === ROOT_SITE_ID
+      ? null
+      : await this.db.site.findUnique({
+          where: { id: siteId },
+          select: { id: true, panelType: true },
+        });
+    if (siteId !== ROOT_SITE_ID && tenantSite?.panelType !== "PANEL")
+      throw new CatalogError(
+        "CHILD_PANEL_PROVIDER_FORBIDDEN",
+        "Child Panel cannot preview external provider mappings",
+      );
     const ownedService = await this.db.service.findFirst({
       where: { id, siteId, deletedAt: null },
       select: { id: true },
@@ -967,11 +1100,15 @@ export class CatalogService {
     if (!ownedService)
       throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
     const [current, target] = await Promise.all([
-      this.serviceEditor(id, true),
+      siteId === ROOT_SITE_ID
+        ? this.serviceEditor(id, true)
+        : this.tenantServiceEditor(siteId, id),
       this.db.providerService.findFirst({
         where: { id: providerServiceId, active: true, stale: false },
       }),
     ]);
+    if (siteId !== ROOT_SITE_ID && current.service.siteId !== siteId)
+      throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
     if (!target)
       throw new CatalogError(
         "PROVIDER_SERVICE_NOT_FOUND",

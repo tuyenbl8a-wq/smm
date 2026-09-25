@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { readFileSync, readdirSync } from "node:fs";
 const schema = readFileSync(
@@ -307,44 +308,38 @@ test("admin profile migration is additive and canonical tiers preserve users", (
   assert.doesNotMatch(profile + tiers, /DELETE FROM "users"|TRUNCATE/i);
 });
 
-test("canonical tier migration maps the real legacy fixture without tier-order inference", () => {
+test("production-applied tier and panel migrations retain exact checksums", () => {
+  const historical = [
+    [
+      "20260904120000_rbac_customer_tiers",
+      "aa0035211d6583fead9236836afbb2774ac36d6bf318beb4a7f975579372598c",
+    ],
+    [
+      "20260907120000_multi_tenant_panels",
+      "0b0ad3652462b8c8cc3acbc134ce1f7860fece0c616f8f53182ac1aa509f3be4",
+    ],
+  ];
+  for (const [name, expected] of historical) {
+    const sql = readFileSync(
+      new URL(`../prisma/migrations/${name}/migration.sql`, import.meta.url),
+    );
+    assert.equal(createHash("sha256").update(sql).digest("hex"), expected);
+  }
+});
+
+test("fresh tier compatibility only deconflicts the legacy name", () => {
   const sql = readFileSync(
     new URL(
-      "../prisma/migrations/20260904120000_rbac_customer_tiers/migration.sql",
+      "../prisma/migrations/20260904115000_legacy_price_group_compat/migration.sql",
       import.meta.url,
     ),
     "utf8",
   );
-  assert.match(sql, /'KHACH_LE',customer_id/);
-  assert.match(sql, /'NORMAL',customer_id/);
-  assert.match(sql, /'CTV',agent_id/);
-  assert.match(sql, /'DAI_LY',distributor_id/);
-  assert.match(sql, /'DAI_LY_VIP',distributor_id/);
-  assert.match(sql, /WHERE name='Đại lý'/);
-  assert.doesNotMatch(sql, /old\."tier_order"|old\.tier_order/);
-  assert.match(sql, /ON CONFLICT\(price_group_id,service_id\) DO NOTHING/);
-  assert.match(sql, /UPDATE price_groups SET active=false/);
+  assert.match(sql, /"code" = 'DAI_LY' AND "name" = 'Đại lý'/);
+  assert.match(sql, /NOT EXISTS \([\s\S]*"code" = 'AGENT'/);
+  assert.match(sql, /SET "name" = 'Legacy DAI_LY'/);
+  assert.doesNotMatch(sql, /default_markup_percent|price_rules|wallet|provider|panel_type/i);
 });
-
-test("legacy grants are copied to canonical Vietnamese permissions", () => {
-  const sql = readFileSync(
-    new URL(
-      "../prisma/migrations/20260904120000_rbac_customer_tiers/migration.sql",
-      import.meta.url,
-    ),
-    "utf8",
-  );
-  for (const pair of [
-    "'orders.read','orders.view'",
-    "'users.read','users.view'",
-    "'wallet.manage','users.balance.manage'",
-    "'wallets.adjust','users.balance.manage'",
-  ])
-    assert.match(sql, new RegExp(pair.replaceAll(".", "\\.")));
-  assert.match(sql, /Xem đơn hàng/);
-  assert.match(sql, /Điều chỉnh số dư khách hàng/);
-});
-
 test("provider retry permission migration is additive and restricted to super admin", () => {
   const sql = readFileSync(
     new URL(
@@ -442,7 +437,7 @@ test("catalog ownership and presentation overlay migrations are additive and ten
     new URL("../prisma/migrations/20260914150000_catalog_presentation_overlays/migration.sql", import.meta.url),
     "utf8",
   );
-  assert.match(ownership, /UPDATE "platforms" SET "site_id" = '00000000-0000-4000-8000-000000000001'/);
+  assert.match(ownership, /UPDATE "platforms"\s+SET "site_id" = '00000000-0000-4000-8000-000000000001'/);
   assert.match(ownership, /platforms_site_id_slug_key/);
   assert.match(ownership, /service_categories_site_id_slug_key/);
   assert.doesNotMatch(ownership, /DELETE FROM "(?:platforms|service_categories)"/i);

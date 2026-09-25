@@ -147,13 +147,18 @@ test("API DNS bootstrap is optional and panel rent fails clearly when unconfigur
   );
 });
 
-test("activation persists provider metadata before routing and activates afterward", async () => {
+for (const [planCode, permissionCodes, expectedType] of [
+  ["PANEL_250K", [], "PANEL"],
+  ["CHILLPANEL", ["providers.manage"], "CHILD_PANEL"],
+  ["CUSTOM", ["providers.manage"], "CHILD_PANEL"],
+] as const) test(`activation for ${planCode} persists explicit type independently of permissions and preserves managed upstream`, async () => {
   const provider = dns();
   const state: any = { ...intent };
   let domainData: any;
   let childOwnerData: any;
   let assignedOwnerId: string | undefined;
   let siteStatus = "PENDING";
+  let createdType: string | undefined;
   let transactionCount = 0;
   let inheritedRules: any[] = [];
   let managedProvider: any;
@@ -175,6 +180,7 @@ test("activation persists provider metadata before routing and activates afterwa
       }),
       create: async ({ data }: any) => {
         siteStatus = data.status;
+        createdType = data.panelType;
         return data;
       },
       update: async ({ data }: any) => {
@@ -186,7 +192,8 @@ test("activation persists provider metadata before routing and activates afterwa
     panelRentalPlan: {
       findUnique: async () => ({
         id: "plan",
-        code: "PRO",
+        code: planCode,
+        permissions: permissionCodes.map((code) => ({ permission: { code } })),
         active: true,
         price: "100.00000000",
         billingDays: 30,
@@ -273,6 +280,7 @@ test("activation persists provider metadata before routing and activates afterwa
     intent.id,
   );
   assert.equal(result.activated, true);
+  assert.equal(createdType, expectedType);
   assert.equal(transactionCount, 2);
   assert.equal(siteStatus, "ACTIVE");
   assert.equal(state.status, "ACTIVATED");
@@ -486,7 +494,7 @@ test("panel activation executes advisory locks without expecting query rows", as
         /\$executeRawUnsafe\?\.\(\s*"SELECT pg_advisory_xact_lock/g,
       ) ?? []
     ).length,
-    2,
+    3,
   );
   assert.equal(
     /\$queryRawUnsafe\?\.\(\s*"SELECT pg_advisory_xact_lock/.test(source),
@@ -562,6 +570,7 @@ test("legacy panel owner repair is idempotent and never touches billing ledger",
   assert.equal(first.ownerUserId, "child-owner");
   assert.equal(first.renterUserId, "root-renter");
   assert.equal(second.ownerUserId, "child-owner");
+  assert.equal(childOwner.siteId, childSiteId);
   assert.equal(createdUsers, 1);
   assert.equal(walletUpserts, 2);
   assert.equal(affiliateUpserts, 2);
@@ -710,4 +719,62 @@ test("inactive rental plans remain unavailable for new sales", async () => {
   );
   assert.equal(planWhere.active, true);
   assert.equal(planWhere.sellerSiteId, "seller");
+});
+
+test("concurrent rentals reserve the parent child quota under a parent-scoped lock", async () => {
+  let tail = Promise.resolve();
+  const intents: any[] = [];
+  const provider = dns();
+  const db: any = {
+    panelRentalIntent: {
+      findUnique: async ({ where }: any) =>
+        intents.find((item) => item.requestKey === where.requestKey) ?? null,
+      findFirst: async ({ where }: any) =>
+        intents.find((item) => item.slug === where.slug) ?? null,
+      count: async () => intents.filter((item) => item.status !== "ACTIVATED").length,
+      create: async ({ data }: any) => {
+        const intent = { ...data, id: `intent-${intents.length + 1}` };
+        intents.push(intent);
+        return intent;
+      },
+    },
+    siteDomain: { findFirst: async () => null },
+    site: {
+      findUnique: async () => ({ id: "seller", status: "ACTIVE", depth: 0 }),
+      count: async () => 0,
+    },
+    panelRentalPlan: {
+      findFirst: async () => ({
+        id: "plan",
+        active: true,
+        allowCustomDomain: false,
+        maxDepth: 2,
+        maxDirectChildren: 1,
+      }),
+    },
+    user: { findFirst: async () => ({ id: "user" }) },
+    $transaction: async (fn: any) => {
+      const previous = tail;
+      let release!: () => void;
+      tail = new Promise<void>((resolve) => (release = resolve));
+      await previous;
+      try {
+        return await fn({
+          ...db,
+          $executeRawUnsafe: async () => undefined,
+        });
+      } finally {
+        release();
+      }
+    },
+  };
+  const service = new PanelService(db, provider);
+  const results = await Promise.allSettled([
+    service.rent("seller", "user", { planId: "plan", name: "Shop A", slug: "shop-a" }, "quota-request-a"),
+    service.rent("seller", "user", { planId: "plan", name: "Shop B", slug: "shop-b" }, "quota-request-b"),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+  assert.equal(intents.length, 1);
+  assert.equal(intents[0].sellerSiteId, "seller");
 });

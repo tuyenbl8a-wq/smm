@@ -2885,6 +2885,38 @@ export class AdminOperationsService {
   }
 
   async updateSettings(actorId: string, input: any, siteId = ROOT_SITE_ID) {
+    const themeSettingKeys = new Set([
+      "themeMode",
+      "themeGlobal",
+      "themePublic",
+      "themeAuth",
+      "themeCustomer",
+      "themeOptions",
+      "themeContent",
+      "themeOverrides",
+      "themeDraft",
+    ]);
+    if (
+      siteId !== ROOT_SITE_ID &&
+      Object.keys(input ?? {}).some((key) => themeSettingKeys.has(key))
+    ) {
+      const subscription = await this.db.panelSubscription.findFirst({
+        where: { siteId, status: { in: ["ACTIVE", "PAST_DUE"] } },
+        orderBy: { createdAt: "desc" },
+        select: { planId: true },
+      });
+      const plan = subscription
+        ? await this.db.panelRentalPlan.findUnique({
+            where: { id: subscription.planId },
+            select: { allowThemes: true },
+          })
+        : null;
+      if (plan?.allowThemes === false)
+        throw new AdminOperationError(
+          "PANEL_THEME_NOT_ALLOWED",
+          "The active panel plan does not allow theme customization",
+        );
+    }
     const allowed = new Set([
         "siteName",
         "metaDescription",
@@ -2924,15 +2956,6 @@ export class AdminOperationsService {
       themeIds = new Set([
         "AURORA_MODERN",
         "AI_COSMIC_FUTURE",
-        "CREATOR_POP",
-        "URBAN_LIME_BRUTAL",
-        "OCEAN_PREMIUM",
-        "ZEN_JAPANESE",
-        "BLACK_GOLD_LUXURY",
-        "PRISM_GLASS",
-        "BEIGE_EDITORIAL",
-        "BLUE_BUSINESS",
-        "CYBER_NEON_CITY",
       ]),
       entries = Object.entries(input).filter(([key, value]) => {
         if (!allowed.has(key)) return false;

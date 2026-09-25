@@ -176,6 +176,7 @@ test("active subscription entitlement is read on every request so stale grants c
   const db: any = {
     site: { findUnique: async () => ({ ownerUserId: "owner" }) },
     panelSubscription: { findFirst: async () => ({ planId: "plan" }) },
+    panelRentalPlan: { findUnique: async () => ({ allowThemes: true }) },
     panelRentalPlanPermission: {
       findMany: async () => entitled.map((code) => ({ permissionId: code })),
     },
@@ -189,6 +190,7 @@ test("active subscription entitlement is read on every request so stale grants c
     (await store.panelEntitlements("child"))!.permissionCodes,
     entitled,
   );
+  assert.equal((await store.panelEntitlements("child"))!.allowThemes, true);
   entitled = ["services.view"];
   assert.deepEqual((await store.panelEntitlements("child"))!.permissionCodes, [
     "services.view",

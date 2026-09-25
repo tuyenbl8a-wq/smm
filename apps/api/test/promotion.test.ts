@@ -189,3 +189,29 @@ test("coupon preview, reserve, list, save, and archive are tenant-scoped", async
     true,
   );
 });
+
+test("referral summary resolves affiliate, referrals, and commissions within the authenticated site", async () => {
+  const seen: any[] = [];
+  const siteId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const db: any = {
+    affiliate: {
+      findFirst: async ({ where }: any) => (seen.push(["affiliate", where]), {
+        id: "affiliate-a",
+        siteId,
+        userId: "user-a",
+        code: "A-CODE",
+      }),
+    },
+    referral: {
+      count: async ({ where }: any) => (seen.push(["referrals", where]), 2),
+    },
+    affiliateCommission: {
+      findMany: async ({ where }: any) => (seen.push(["commissions", where]), []),
+    },
+  };
+  const summary = await new PromotionService(db).referralSummary("user-a", siteId);
+  assert.equal(summary.code, "A-CODE");
+  assert.deepEqual(seen[0], ["affiliate", { siteId, userId: "user-a" }]);
+  assert.deepEqual(seen[1][1], { affiliateId: "affiliate-a", siteId });
+  assert.deepEqual(seen[2][1], { affiliateId: "affiliate-a", siteId });
+});

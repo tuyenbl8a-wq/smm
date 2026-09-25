@@ -61,6 +61,7 @@ test("inactive sale plan does not stop an existing valid subscription", async ()
   const child = {
     id: "child",
     siteNumber: 100001n,
+    panelType: "CHILD_PANEL" as const,
     parentSiteId: ROOT_SITE_ID,
     status: "ACTIVE",
     depth: 1,
@@ -89,6 +90,7 @@ test("expired and suspended subscriptions remain unavailable", async () => {
   const child = {
     id: "child",
     siteNumber: 100001n,
+    panelType: "CHILD_PANEL" as const,
     parentSiteId: ROOT_SITE_ID,
     status: "ACTIVE",
     depth: 1,
@@ -111,15 +113,19 @@ test("accepts only signed fresh internal tenant forwarding", async () => {
   const child = {
     id: "child",
     siteNumber: 100001n,
+    panelType: "CHILD_PANEL" as const,
     parentSiteId: ROOT_SITE_ID,
     status: "ACTIVE",
     depth: 1,
   };
   const db = {
-    site: { findUniqueOrThrow: async () => ({ id: ROOT_SITE_ID }) },
+    site: {
+      findUniqueOrThrow: async () => ({ id: ROOT_SITE_ID }),
+      findUnique: async ({ where }: any) => (where.id === "child" ? child : null),
+    },
     siteDomain: {
       findFirst: async ({ where }: any) =>
-        where.hostname === "smmlike.site" ? { site: child } : null,
+        where.hostname === "smmlike.site" ? { siteId: child.id } : null,
     },
   };
   const secret = "test-internal-secret",

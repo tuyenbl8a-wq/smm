@@ -136,7 +136,11 @@ export interface AuthStore {
   ): Promise<{ roles: string[]; permissions: string[] }>;
   panelEntitlements(
     siteId: string,
-  ): Promise<{ ownerUserId: string | null; permissionCodes: string[] } | null>;
+  ): Promise<{
+    ownerUserId: string | null;
+    permissionCodes: string[];
+    allowThemes: boolean;
+  } | null>;
   recordLogin(input: {
     siteId: string;
     userId?: string;
@@ -353,8 +357,16 @@ export class PrismaAuthStore implements AuthStore {
       }),
     ]);
     if (!site || !subscription)
-      return { ownerUserId: site?.ownerUserId ?? null, permissionCodes: [] };
-    const [links, disabled] = await Promise.all([
+      return {
+        ownerUserId: site?.ownerUserId ?? null,
+        permissionCodes: [],
+        allowThemes: false,
+      };
+    const [plan, links, disabled] = await Promise.all([
+      this.db.panelRentalPlan.findUnique({
+        where: { id: subscription.planId },
+        select: { allowThemes: true },
+      }),
       this.db.panelRentalPlanPermission.findMany({
         where: { planId: subscription.planId },
         select: { permissionId: true },
@@ -382,6 +394,7 @@ export class PrismaAuthStore implements AuthStore {
     return {
       ownerUserId: site.ownerUserId,
       permissionCodes: permissions.map((permission: any) => permission.code),
+      allowThemes: plan?.allowThemes === true,
     };
   }
   recordLogin(input: any) {

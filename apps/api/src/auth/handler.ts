@@ -104,6 +104,7 @@ export class AuthHandler {
       id: ROOT_SITE_ID,
       siteNumber: 100000n,
       parentSiteId: null,
+      panelType: "PANEL",
       status: "ACTIVE",
       depth: 0,
     },
@@ -175,6 +176,30 @@ export class AuthHandler {
           "GLOBAL_ENDPOINT_ROOT_ONLY",
           "Tác vụ quản trị nền tảng chỉ khả dụng trên website gốc",
         );
+      const providerAdminPath =
+        path === "/api/v1/admin/providers" ||
+        path.startsWith("/api/v1/admin/providers/");
+      if (providerAdminPath && tenant.id !== ROOT_SITE_ID) {
+        if (tenant.panelType !== "PANEL")
+          return this.error(
+            response,
+            403,
+            "CHILD_PANEL_PROVIDER_FORBIDDEN",
+            "Child Panel cannot manage external providers",
+          );
+        const hasProviderPermission =
+          request.method === "GET"
+            ? canAccessAdmin(auth.access, "providers.view") ||
+              canAccessAdmin(auth.access, "providers.manage")
+            : canAccessAdmin(auth.access, "providers.manage");
+        if (!hasProviderPermission)
+          return this.error(
+            response,
+            403,
+            "PERMISSION_DENIED",
+            "Provider permission required",
+          );
+      }
       if (
         path.startsWith("/api/v1/customer") &&
         this.admin &&
@@ -190,9 +215,15 @@ export class AuthHandler {
           );
       }
       if (this.panels && path.startsWith("/api/v1/admin/panel")) {
+        const planRoute =
+          path === "/api/v1/admin/panel-plans" ||
+          /^\/api\/v1\/admin\/panel-plans\/[0-9a-f-]{36}$/.test(path);
         if (
-          tenant.id === ROOT_SITE_ID &&
-          !auth.access.roles.includes("SUPER_ADMIN")
+          planRoute
+            ? !canAccessAdmin(auth.access, "settings.manage")
+            : tenant.id === ROOT_SITE_ID
+              ? !auth.access.roles.includes("SUPER_ADMIN")
+              : !canAccessAdmin(auth.access, "panels.resale.manage")
         )
           return this.error(
             response,
@@ -200,6 +231,8 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
+        if (tenant.id !== ROOT_SITE_ID && tenant.panelType !== "PANEL")
+          return this.error(response, 403, "PANEL_RESALE_DENIED", "Child Panel cannot manage panel resale");
         const sellerScope =
           tenant.id === ROOT_SITE_ID
             ? null
@@ -216,6 +249,37 @@ export class AuthHandler {
             response,
             await this.panels.adminPanel(panelDetail[1]!, sellerScope),
           );
+        const panelTypePreview =
+          /^\/api\/v1\/admin\/panels\/([0-9]+|[0-9a-f-]{36})\/type-preview$/.exec(
+            path,
+          );
+        if (request.method === "GET" && panelTypePreview)
+          return this.ok(
+            response,
+            await this.panels.panelTypeConversionPreview(
+              panelTypePreview[1]!,
+              url.searchParams.get("targetType"),
+              sellerScope,
+            ),
+          );
+        const panelTypeChange =
+          /^\/api\/v1\/admin\/panels\/([0-9]+|[0-9a-f-]{36})\/type$/.exec(
+            path,
+          );
+        if (request.method === "PATCH" && panelTypeChange) {
+          this.csrf(request, auth.rawToken);
+          const body = await this.body(request);
+          return this.ok(
+            response,
+            await this.panels.convertPanelType(
+              auth.user.id,
+              panelTypeChange[1]!,
+              body.panelType,
+              body.reason,
+              sellerScope,
+            ),
+          );
+        }
         const panelPlanChange =
           /^\/api\/v1\/admin\/panels\/([0-9]+|[0-9a-f-]{36})\/plan$/.exec(path);
         if (request.method === "PATCH" && panelPlanChange) {
@@ -317,6 +381,7 @@ export class AuthHandler {
         return this.ok(response, {
           user: this.publicUser(auth.user),
           ...auth.access,
+          panelEntitlement: auth.panelEntitlement ? { allowThemes: auth.panelEntitlement.allowThemes === true, panelType: tenant.panelType } : null,
         });
       if (request.method === "GET" && path === "/api/v1/auth/sessions")
         return this.ok(response, {
@@ -1265,6 +1330,22 @@ export class AuthHandler {
             "PERMISSION_DENIED",
             "Permission denied",
           );
+        if (tenant.id !== ROOT_SITE_ID) {
+          if (tenant.panelType !== "PANEL")
+            return this.error(
+              response,
+              403,
+              "CHILD_PANEL_PROVIDER_FORBIDDEN",
+              "Child Panel cannot preview external provider mappings",
+            );
+          if (!canAccessAdmin(auth.access, "providers.manage"))
+            return this.error(
+              response,
+              403,
+              "PERMISSION_DENIED",
+              "Provider permission required",
+            );
+        }
         const body = await this.body(request);
         return this.ok(
           response,
@@ -2472,7 +2553,7 @@ export class AuthHandler {
         if (importApply)
           return this.ok(
             response,
-            await this.providers.importApply(
+              await this.providers.importApply(
               auth.user.id,
               tenant.id,
               importApply[1]!,
@@ -2891,6 +2972,7 @@ export class AuthHandler {
       session,
       user,
       access: effectiveAccess,
+      panelEntitlement: entitlement,
     };
   }
   private async issueSession(

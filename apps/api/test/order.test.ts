@@ -37,7 +37,10 @@ test("order list is strictly scoped to authenticated user", async () => {
   });
 });
 
-const routingDatabase = (source: "MANUAL" | "API") => {
+const routingDatabase = (
+  source: "MANUAL" | "API",
+  providerSiteId = "00000000-0000-4000-8000-000000000001",
+) => {
   let outbox = 0;
   const service = {
       id: "service-1",
@@ -88,7 +91,7 @@ const routingDatabase = (source: "MANUAL" | "API") => {
       },
       provider: {
         findMany: async () =>
-          source === "API" ? [{ id: "provider-1", status: "ACTIVE" }] : [],
+          source === "API" ? [{ id: "provider-1", siteId: providerSiteId, status: "ACTIVE" }] : [],
       },
       order: {
         findFirst: async () => null,
@@ -141,6 +144,50 @@ test("API order snapshots mapping and creates exactly one provider outbox", asyn
     "provider-order-123",
   );
   assert.equal(outbox(), 1);
+});
+
+test("an external provider owned by another Panel cannot receive this service order", async () => {
+  const { db, outbox } = routingDatabase("API", "unrelated-panel");
+  await assert.rejects(
+    () =>
+      new OrderService(db).create(
+        "user-1",
+        "00000000-0000-4000-8000-000000000001",
+        { serviceId: "service-1", quantity: 1, link: "https://example.com/post" },
+        "foreign-provider-order-123",
+      ),
+    (error: any) => error.code === "PROVIDER_MAPPING_UNAVAILABLE",
+  );
+  assert.equal(outbox(), 0);
+});
+
+test("Child Panel cannot submit a service owned by a sibling tenant", async () => {
+  const child = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  let orderCreated = false;
+  const tx: any = {
+    site: { findUnique: async () => ({ id: child, parentSiteId: "direct-parent", panelType: "CHILD_PANEL", status: "ACTIVE" }) },
+    siteServiceRule: { findUnique: async () => ({ siteId: child, serviceId: "sibling-service", active: true }) },
+    service: {
+      findFirst: async () => ({ id: "sibling-service", siteId: "sibling-panel", active: true, deletedAt: null }),
+    },
+    order: { create: async () => (orderCreated = true) },
+    $queryRawUnsafe: async () => [],
+  };
+  const db: any = {
+    order: { findFirst: async () => null },
+    $transaction: async (run: any) => run(tx),
+  };
+  await assert.rejects(
+    () =>
+      new OrderService(db).create(
+        "child-user",
+        child,
+        { serviceId: "sibling-service", quantity: 1, link: "https://example.com/post" },
+        "sibling-source-order-123",
+      ),
+    (error: any) => error.code === "SERVICE_UNAVAILABLE",
+  );
+  assert.equal(orderCreated, false);
 });
 
 test("foreign service UUID guessing is hidden from child order creation", async () => {
