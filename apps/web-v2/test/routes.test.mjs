@@ -49,6 +49,63 @@ const inlineAdminScript = (route) => {
   return match[1];
 };
 
+// Execute the actual rendered admin theme function with inert UI/API dependencies.
+function themeAdminHarness(allowed) {
+  const script = inlineAdminScript("/admin/themes");
+  const start = script.indexOf("function renderThemes(d)");
+  const end = script.indexOf("function renderAffiliate", start);
+  assert.ok(start >= 0 && end > start);
+  const frame = {},
+    scope = { value: "landing" };
+  const modal = {
+    classList: { add() {}, remove() {} },
+    querySelector: (selector) =>
+      selector === "iframe" ? frame : selector === "#previewScope" ? scope : {},
+    querySelectorAll: () => [],
+    showModal() {},
+    close() {},
+  };
+  const writes = [];
+  const context = {
+    panelThemesAllowed: allowed,
+    content: {},
+    listOf: (data) => data,
+    escapeHtml: (value) => String(value ?? ""),
+    button: (label, action, id) =>
+      '<button data-action="' +
+      action +
+      '" data-id="' +
+      id +
+      '">' +
+      label +
+      "</button>",
+    can: () => true,
+    themeMode: {},
+    themeContent: {},
+    openPreview: {},
+    location: {},
+    document: {
+      querySelector: (selector) => (selector === "#modal" ? modal : {}),
+    },
+    FormData: class {
+      get(key) {
+        return key === "mode" ? "GLOBAL" : null;
+      }
+    },
+    bindActions: (action) => {
+      context.action = action;
+    },
+    confirmBox: async () => true,
+    api: { post: async (...args) => writes.push(args) },
+    toast() {},
+    load() {},
+  };
+  new vm.Script(
+    script.slice(start, end) + "\nrenderThemes([]);",
+  ).runInNewContext(context);
+  return { context, writes, frame, scope, modal };
+}
+
 test("server-rendered branding is tenant-safe across public, auth, customer and admin shells", () => {
   const root = tenantBranding("dichvu1st.com");
   const tenant = tenantBranding("smmlike.site");
@@ -195,7 +252,7 @@ test("auth routes provide validation, password visibility and safe session fetch
   assert.doesNotMatch(page, /localStorage/);
 });
 test("operational errors are mapped to Vietnamese messages", () => {
-  assert.match(page, /Email hoặc mật khẩu không đúng/);
+  assert.match(page, /INVALID_CREDENTIALS:'auth\.invalid'/);
   assert.doesNotMatch(page, /Failed to fetch/);
 });
 test("all customer routes and real modules are registered", () => {
@@ -501,7 +558,7 @@ test("numeric public user and service IDs replace UUID presentation", () => {
   assert.match(adminOperations, /key:'serviceNumber',label:'Mã DV'/);
   assert.doesNotMatch(adminOperations, /id\?\.slice\(0,8\)/);
   assert.match(customer, /ID '\+esc\(s\.serviceNumber\)/);
-  assert.match(customer, /esc\(s\.serviceNumber\)\+' — '/);
+  assert.match(customer, /filter\(v=>v!==null&&v!==undefined&&v!==''\)/);
   assert.match(admin, /o\.user\?\.userNumber/);
   assert.match(admin, /o\.service\?\.serviceNumber/);
 });
@@ -668,19 +725,36 @@ test("required theme architecture, safe preview and enum status contract", async
     "AI_COSMIC_FUTURE",
     "CREATOR_POP",
     "URBAN_LIME_BRUTAL",
+    "CYBER_NEON_CITY",
+    "PRISM_GLASS",
     "OCEAN_PREMIUM",
+    "BLUE_BUSINESS",
     "ZEN_JAPANESE",
     "BLACK_GOLD_LUXURY",
-    "PRISM_GLASS",
     "BEIGE_EDITORIAL",
-    "BLUE_BUSINESS",
-    "CYBER_NEON_CITY",
   ];
   assert.deepEqual([...themes.themeIds], required);
+  assert.deepEqual([...themes.numberedThemeIds], required.slice(1));
+  assert.equal(themes.numberedThemeIds.length, 10);
+  assert.ok(!themes.numberedThemeIds.includes("AURORA_MODERN"));
   assert.equal(themes.themeIds.length, 11);
   assert.equal(new Set(themes.themeIds).size, 11);
   assert.deepEqual(themes.legacyThemeAliases, {});
   assert.equal(new Set(themes.themePresets.map((x) => x.name)).size, 11);
+  const { fullPageThemePreview } = await import("../dist/theme-builder.js");
+  for (const scope of ["landing", "auth", "customer"]) {
+    for (const id of required) {
+      assert.ok(
+        fullPageThemePreview("", id, scope).includes(`data-theme="${id}"`),
+      );
+    }
+    for (const id of [null, "UNKNOWN", "NEON_TECH", "LUXURY_GOLD"]) {
+      assert.match(
+        fullPageThemePreview("", id, scope),
+        /data-theme="AURORA_MODERN"/,
+      );
+    }
+  }
   for (const id of required) {
     const v = themes.themeStructure[id];
     for (const key of [
@@ -772,14 +846,14 @@ test("visual editor provides true device viewports, draft controls and safe stru
 test("Soft Beige Premium has its own editorial architectures in every requested scope", async () => {
   const { themeStructure } = await import("../dist/themes.js");
   assert.deepEqual(themeStructure.BEIGE_EDITORIAL, {
-    navigationVariant: "beige-boutique",
-    heroVariant: "beige-editorial",
-    authVariant: "beige-gallery",
-    sidebarVariant: "beige-tailored",
-    dashboardVariant: "beige-ledger",
-    serviceVariant: "beige-showcase",
-    orderFormVariant: "beige-concierge",
-    density: "spacious",
+    navigationVariant: "beige-editorial-nav",
+    heroVariant: "beige-editorial-hero",
+    authVariant: "beige-editorial-auth",
+    sidebarVariant: "beige-editorial-rail",
+    dashboardVariant: "beige-editorial-overview",
+    serviceVariant: "cards",
+    orderFormVariant: "comfortable",
+    density: "comfortable",
   });
   const { fullPageThemePreview, themeEditorPage } =
     await import("../dist/theme-builder.js");
@@ -788,12 +862,12 @@ test("Soft Beige Premium has its own editorial architectures in every requested 
   );
   for (const html of pages) {
     assert.match(html, /data-theme="BEIGE_EDITORIAL"/);
-    assert.match(html, /Soft Beige Premium is an authored editorial system/);
+    assert.match(html, /beige-(?:landing|auth|customer)/);
     assert.doesNotMatch(html, /CustomerChào|AuthĐăng|TÃ|Ä‘/);
   }
-  assert.match(pages[0], /data-hero-variant="beige-editorial"/);
-  assert.match(pages[1], /data-auth-variant="beige-gallery"/);
-  assert.match(pages[2], /data-dashboard-variant="beige-ledger"/);
+  assert.match(pages[0], /data-hero-variant="beige-editorial-hero"/);
+  assert.match(pages[1], /data-auth-variant="beige-editorial-auth"/);
+  assert.match(pages[2], /data-dashboard-variant="beige-editorial-overview"/);
   const editor = themeEditorPage("BEIGE_EDITORIAL");
   for (const token of [
     "landing",
@@ -810,40 +884,40 @@ test("four reference themes have independent three-scope architectures", async (
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const expected = {
     ZEN_JAPANESE: [
-      "zen-pavilion",
-      "ink-landscape",
-      "shoji",
-      "quiet-rail",
-      "garden-ledger",
-      "zen-shelf",
-      "ritual-flow",
+      "zen-japanese-nav",
+      "zen-japanese-hero",
+      "zen-japanese-auth",
+      "zen-japanese-rail",
+      "zen-japanese-overview",
+      "cards",
+      "comfortable",
     ],
     BLACK_GOLD_LUXURY: [
-      "luxury-gallery",
-      "monument",
-      "noir-suite",
-      "gold-rail",
-      "executive-night",
-      "jewel-grid",
-      "private-desk",
+      "black-gold-nav",
+      "black-gold-hero",
+      "black-gold-auth",
+      "black-gold-rail",
+      "black-gold-overview",
+      "cards",
+      "comfortable",
     ],
     BLUE_BUSINESS: [
-      "corporate-bar",
-      "business-tower",
-      "trust-split",
-      "office-rail",
-      "kpi-board",
-      "solution-columns",
-      "proposal-flow",
+      "blue-business-nav",
+      "blue-business-hero",
+      "blue-business-auth",
+      "blue-business-rail",
+      "blue-business-overview",
+      "cards",
+      "comfortable",
     ],
     CYBER_NEON_CITY: [
-      "neon-command",
-      "hologram-stage",
-      "portal",
-      "circuit-rail",
-      "telemetry-bento",
-      "neon-modules",
-      "terminal-flow",
+      "cyber-neon-nav",
+      "cyber-neon-hero",
+      "cyber-neon-auth",
+      "cyber-neon-rail",
+      "cyber-neon-overview",
+      "cards",
+      "comfortable",
     ],
   };
   const signatures = new Set();
@@ -872,31 +946,31 @@ test("three new references render nine distinct and responsive interfaces", asyn
     await import("../dist/theme-builder.js");
   const expected = {
     PRISM_GLASS: [
-      "glass-orbit",
-      "prism-pedestal",
-      "crystal-suite",
-      "floating-dock",
-      "luminous-console",
-      "glass-carousel",
-      "floating-wizard",
+      "prism-glass-nav",
+      "prism-glass-hero",
+      "prism-glass-auth",
+      "prism-glass-rail",
+      "prism-glass-overview",
+      "cards",
+      "comfortable",
     ],
     OCEAN_PREMIUM: [
-      "ocean-command-deck",
-      "lighthouse-horizon",
-      "ocean-secure-access",
-      "nautical-rail",
-      "ocean-operations",
-      "voyage-service-grid",
-      "navigation-desk",
+      "ocean-premium-nav",
+      "ocean-premium-hero",
+      "ocean-premium-auth",
+      "ocean-premium-rail",
+      "ocean-premium-overview",
+      "cards",
+      "comfortable",
     ],
     CREATOR_POP: [
-      "creator-marquee",
-      "viral-collage",
+      "creator-nav",
+      "creator-collage",
       "creator-studio",
-      "pop-ribbon",
-      "social-pulse",
-      "platform-stickers",
-      "boost-composer",
+      "creator-rail",
+      "creator-analytics",
+      "cards",
+      "comfortable",
     ],
   };
   const firstFive = [
@@ -953,20 +1027,20 @@ test("three new references render nine distinct and responsive interfaces", asyn
     "all three references and the completed first five must differ",
   );
   for (const copy of [
-    "Kính mờ · lớp nổi lăng kính",
-    "Đại dương · vận hành cao cấp",
-    "Creator · hồng tím năng lượng",
+    "Prism Glass",
+    "Ocean Premium",
+    "Sáng tạo · collage hồng cam",
   ])
-    assert.ok(adminOperations.includes(copy));
-  for (const thumb of ["thumb-glass", "thumb-ocean", "thumb-creator"])
-    assert.ok(admin.includes(thumb));
+    assert.ok(adminPage("", "/admin/themes").includes(copy));
+  assert.match(adminOperations, /<iframe/);
+  assert.match(adminOperations, /theme-preview/);
 });
 test("references 01-03 keep distinct compositions and Aurora stays unnumbered", async () => {
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
   const expected = {
     AI_COSMIC_FUTURE: ["landing-hero.png", "auth-portal.png", "aiv3-dashboard"],
-    CREATOR_POP: ["creator-portrait", "creator-auth-poster", "creator-channel-cards"],
-    URBAN_LIME_BRUTAL: ["brutal-building", "brutal-auth-title", "brutal-metrics"],
+    CREATOR_POP: ["pop-landing", "pop-auth", "pop-customer"],
+    URBAN_LIME_BRUTAL: ["urban-landing", "urban-auth", "urban-customer"],
   };
   for (const [theme, signatures] of Object.entries(expected)) {
     const pages = ["landing", "auth", "customer"].map((scope) =>
@@ -977,14 +1051,90 @@ test("references 01-03 keep distinct compositions and Aurora stays unnumbered", 
     );
     pages.forEach((html) => {
       assert.doesNotMatch(html, /TÃ|Ä‘|áº|á»|â€|ï¿½|�/);
-      assert.match(html, /data-theme-content="brandTitle"/);
+      assert.match(html, /data-theme-content="brandTitle"|data-tenant-name/);
     });
   }
   assert.match(adminOperations, /AURORA_MODERN'\?'MẶC ĐỊNH'/);
-  assert.match(adminOperations, /AI_COSMIC_FUTURE:'01'/);
-  assert.match(adminOperations, /CREATOR_POP:'02'/);
-  assert.match(adminOperations, /URBAN_LIME_BRUTAL:'03'/);
+  const { numberedThemeIds } = await import("../dist/themes.js");
+  assert.deepEqual(numberedThemeIds.slice(0, 3), [
+    "AI_COSMIC_FUTURE",
+    "CREATOR_POP",
+    "URBAN_LIME_BRUTAL",
+  ]);
   assert.doesNotMatch(adminOperations, /presets\.indexOf\(p\)\+1/);
+  const denied = themeAdminHarness(false);
+  assert.match(
+    denied.context.content.innerHTML,
+    /không cho phép chỉnh sửa giao diện/,
+  );
+  assert.doesNotMatch(
+    denied.context.content.innerHTML,
+    /<iframe|data-action="(?:edit|apply)"|id="themeContent"/,
+  );
+  assert.equal(
+    denied.context.action,
+    undefined,
+    "denied panels never bind edit/apply actions",
+  );
+  assert.deepEqual(denied.writes, []);
+  const enabled = themeAdminHarness(true);
+  const ids = ["AURORA_MODERN", ...numberedThemeIds];
+  assert.equal(
+    (enabled.context.content.innerHTML.match(/<iframe /g) || []).length,
+    11,
+  );
+  for (const [index, id] of ids.entries()) {
+    assert.ok(
+      enabled.context.content.innerHTML.includes(
+        'src="/admin/theme-preview?theme=' + id + '&scope=landing&thumbnail=1"',
+      ),
+    );
+    const article = enabled.context.content.innerHTML
+      .split('data-preset="' + id + '"')[1]
+      .split("</article>")[0];
+    assert.ok(
+      article.includes(
+        index === 0 ? "Mặc định · " : String(index).padStart(2, "0") + " · ",
+      ),
+    );
+    await enabled.context.action("preview", id);
+    assert.equal(
+      enabled.frame.src,
+      "/admin/theme-preview?theme=" + id + "&scope=landing",
+    );
+    enabled.scope.value = "auth";
+    enabled.scope.onchange();
+    assert.equal(
+      enabled.frame.src,
+      "/admin/theme-preview?theme=" + id + "&scope=auth",
+    );
+    enabled.scope.value = "customer";
+    enabled.scope.onchange();
+    assert.equal(
+      enabled.frame.src,
+      "/admin/theme-preview?theme=" + id + "&scope=customer",
+    );
+    enabled.scope.value = "landing";
+    await enabled.context.action("edit", id);
+    assert.equal(
+      enabled.context.location.href,
+      "/admin/themes/" + id + "/editor",
+    );
+  }
+  assert.deepEqual(enabled.writes, [], "preview/edit do not apply a theme");
+  await enabled.context.action("apply", "CREATOR_POP");
+  assert.deepEqual(JSON.parse(JSON.stringify(enabled.writes)), [
+    [
+      "/api/v1/admin/settings",
+      { themeMode: "GLOBAL", themeGlobal: "CREATOR_POP" },
+    ],
+  ]);
+  await enabled.context.action("apply", "UNKNOWN");
+  assert.equal(
+    enabled.writes.length,
+    1,
+    "unsupported themes cannot be applied",
+  );
 });
 test("AI cosmic reference keeps one navigation and dense runtime landmarks", async () => {
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");
@@ -1064,13 +1214,13 @@ test("final reference pair completes exactly ten unique three-scope architecture
   ];
   const expected = {
     URBAN_LIME_BRUTAL: [
-      "brutal-masthead",
-      "concrete-spread",
-      "poster-access",
-      "block-rail",
-      "hard-ledger",
-      "manifesto-grid",
-      "ticket-desk",
+      "urban-lime-nav",
+      "urban-lime-hero",
+      "urban-lime-auth",
+      "urban-lime-rail",
+      "urban-lime-overview",
+      "cards",
+      "comfortable",
     ],
     AI_COSMIC_FUTURE: [
       "ai-dedicated-nav-v3",
@@ -1115,122 +1265,187 @@ test("final reference pair completes exactly ten unique three-scope architecture
     ),
   );
   assert.equal(signatures.size, 10);
-  assert.ok(adminOperations.includes("Đô thị · lime brutalist"));
-  assert.ok(adminOperations.includes("AI · quỹ đạo neural đa sắc"));
-  assert.match(admin, /\.thumb-brutalist/);
-  assert.match(admin, /\.thumb-ai-v2/);
-});
+  assert.ok(adminPage("", "/admin/themes").includes("Urban Lime Brutal"));
+  assert.ok(
+    adminPage("", "/admin/themes").includes("AI vũ trụ, quỹ đạo neural đa sắc"),
+  );
+  assert.match(adminOperations, /<iframe/);
+  assert.match(adminOperations, /theme-preview/);
 
-test("nine generic reference themes keep 27 concrete renderers without document wrappers", async () => {
-  const { renderReferenceComposition } = await import("../dist/themes.js");
-  const { referenceRenderers, isMeaningfulReferenceRender } =
-    await import("../dist/reference-theme-renderers.js");
-  const { fullPageThemePreview } = await import("../dist/theme-builder.js");
-  const ids = [
-    "BEIGE_EDITORIAL",
-    "ZEN_JAPANESE",
-    "BLACK_GOLD_LUXURY",
-    "BLUE_BUSINESS",
-    "CYBER_NEON_CITY",
-    "PRISM_GLASS",
-    "OCEAN_PREMIUM",
-    "CREATOR_POP",
-    "URBAN_LIME_BRUTAL",
+  // Execute the compiled allowlisted asset handler, without starting the app server.
+  const assetStart = main.indexOf("const referenceAsset");
+  const assetEnd = main.indexOf("const validatedHost", assetStart);
+  assert.ok(assetStart >= 0 && assetEnd > assetStart);
+  const assetHandler = main
+    .slice(assetStart, assetEnd)
+    .replaceAll("import.meta.url", "moduleUrl");
+  const moduleUrl = new URL("../dist/main.js", import.meta.url).href;
+  const dirs = [
+    "creator-pop",
+    "urban-lime",
+    "cyber-neon",
+    "prism-glass",
+    "ocean-premium",
+    "blue-business",
+    "zen-japanese",
+    "black-gold",
+    "beige-editorial",
   ];
-  for (const scope of ["landing", "auth", "customer"]) {
-    const fingerprints = new Set();
-    const domArchitectures = new Set();
-    for (const id of ids) {
-      const shell =
-        scope === "landing" ? "hero" : scope === "auth" ? "auth" : "customer";
-      const direct = renderReferenceComposition(
-        id,
-        scope,
-        `<div class="${shell}"><button>safe</button></div>`,
-      );
-      const html = fullPageThemePreview("", id, scope);
-      assert.match(direct, /data-renderer="[^"]+"/);
-      assert.match(html, /data-renderer="[^"]+"/);
-      assert.match(
-        html,
-        new RegExp(`data-theme-architecture="${id.toLowerCase()}-${scope}"`),
-      );
-      const renderer = /data-renderer="([^"]+)"/.exec(html)?.[1];
-      assert.equal(isMeaningfulReferenceRender(html, scope), true);
-      const regionClasses =
-        scope === "landing"
-          ? ["theme-navigation", "theme-story", "theme-offer", "theme-cta"]
-          : scope === "auth"
-            ? [
-                "auth-navigation",
-                "auth-visual",
-                "auth-form-region",
-                "auth-assurance",
-              ]
-            : [
-                "dashboard-navigation",
-                "dashboard-wallet",
-                "dashboard-kpis",
-                "dashboard-orders",
-              ];
-      const regions = regionClasses.map((className) => {
-        const content = new RegExp(
-          `<(?:nav|section|aside|footer) class="[^"]*${className}[^"]*">([\\s\\S]*?)<\\/(?:nav|section|aside|footer)>`,
-        ).exec(html)?.[1];
-        return content
-          ?.replace(/<[^>]+>/g, " ")
-          .replace(/\s+/g, " ")
-          .trim();
-      });
-      assert.equal(
-        regions.every((region) => region && region.length >= 8),
-        true,
-      );
-      assert.doesNotMatch(
-        html,
-        /data-composition-layer|data-theme-runtime-root|data-original-content/,
-      );
-      fingerprints.add(`${renderer}|${regions.join("|")}`);
-      const authoredDom = regionClasses
-        .map(
-          (className) =>
-            new RegExp(
-              `<(?:nav|section|aside|footer) class="[^"]*${className}[^"]*">([\\s\\S]*?)<\\/(?:nav|section|aside|footer)>`,
-            ).exec(html)?.[1] ?? "",
-        )
-        .join("")
-        .replace(/[^<]*(<[^>]+>)[^<]*/g, "$1")
-        .replace(/\shref="[^"]*"/g, "");
-      domArchitectures.add(authoredDom);
-    }
-    assert.equal(
-      fingerprints.size,
-      9,
-      scope + " architectures must be 9/9 unique",
+  const serve = async (path, missing = false) => {
+    const reads = [],
+      headers = {};
+    const response = {
+      statusCode: 200,
+      setHeader: (key, value) => {
+        headers[key] = value;
+      },
+      end: (bytes) => {
+        response.body = bytes;
+      },
+    };
+    await new vm.Script("(async()=>{" + assetHandler + "})()").runInNewContext({
+      path,
+      moduleUrl,
+      URL,
+      response,
+      readFile: async (url) => {
+        reads.push(url.href);
+        if (missing) throw new Error("missing asset");
+        return readFile(url);
+      },
+    });
+    return { reads, headers, response };
+  };
+  for (const dir of dirs) {
+    const served = await serve("/theme-assets/" + dir + "/scene.png");
+    const expected = new URL(
+      "../public/theme-assets/" + dir + "/scene.png",
+      moduleUrl,
     );
-    assert.equal(
-      domArchitectures.size,
-      9,
-      scope + " must use nine different nested DOM compositions",
+    assert.deepEqual(served.reads, [expected.href]);
+    assert.equal(served.response.statusCode, 200);
+    assert.equal(served.headers["content-type"], "image/png");
+    assert.equal(served.headers["x-content-type-options"], "nosniff");
+    assert.deepEqual(served.response.body, await readFile(expected));
+    assert.deepEqual(
+      [...served.response.body.subarray(0, 8)],
+      [137, 80, 78, 71, 13, 10, 26, 10],
     );
   }
-  const oldEmptyHack = `<div class="hero"><nav class="theme-navigation"></nav><section class="theme-story"></section><aside class="theme-offer"></aside><footer class="theme-cta"></footer></div>`;
-  assert.equal(isMeaningfulReferenceRender(oldEmptyHack, "landing"), false);
-  assert.equal(
-    new Set(ids.flatMap((id) => Object.values(referenceRenderers[id]))).size,
-    27,
+  for (const path of [
+    "/theme-assets/unknown/scene.png",
+    "/theme-assets/creator-pop/other.png",
+    "/theme-assets/creator-pop/scene.png/extra",
+    "/theme-assets/../main.ts",
+    "/theme-assets/creator-pop/../../main.ts",
+    "/theme-assets/%2e%2e/scene.png",
+    "/theme-assets/CREATOR-POP/scene.png",
+  ]) {
+    const served = await serve(path);
+    assert.deepEqual(served.reads, [], path + " must not read a file");
+    assert.equal(served.response.body, undefined);
+  }
+  const absent = await serve("/theme-assets/creator-pop/scene.png", true);
+  assert.equal(absent.response.statusCode, 404);
+  assert.equal(absent.response.body, "Asset not found");
+});
+
+test("nine reference themes retain 27 distinct live page compositions", async () => {
+  const { referencePages, referencePreview } =
+    await import("../dist/reference-runtime.js");
+  const { fullPageThemePreview } = await import("../dist/theme-builder.js");
+  const { runtimeThemeScript } = await import("../dist/themes.js");
+  assert.equal(Object.keys(referencePages).length, 9);
+  const topology = (html) =>
+    (html.match(/<\/?[a-z][^>]*>/gi) || [])
+      .map((tag) => tag.match(/^<\/?[a-z0-9-]+/i)[0])
+      .join(" ");
+  for (const scope of ["landing", "auth", "customer"]) {
+    const architectures = new Set();
+    for (const [id, pages] of Object.entries(referencePages)) {
+      architectures.add(topology(pages[scope]));
+      const source =
+        scope === "landing"
+          ? landingPage("")
+          : scope === "auth"
+            ? authPage("", "login")
+            : customerPage("", "/dashboard");
+      const direct = referencePreview(id, scope, source);
+      const html = fullPageThemePreview("", id, scope);
+      assert.ok(html.includes(direct));
+      assert.match(direct, /data-reference-page/);
+      assert.doesNotMatch(
+        direct,
+        /data-composition-layer|data-theme-runtime-root|data-original-content/,
+      );
+      const landmarks =
+        scope === "landing"
+          ? ["pricing", "public-search", "catalog"]
+          : scope === "auth"
+            ? ["message", "password"]
+            : ["app", "drawer-toggle", "top-balance", "side-logout"];
+      for (const landmark of landmarks)
+        assert.ok(
+          direct.includes(`id="${landmark}"`),
+          `${id}/${scope}: ${landmark}`,
+        );
+      assert.doesNotMatch(
+        direct,
+        /data-reference-slot="(?:pricing|form|sidebar|topbar|content)"/,
+      );
+    }
+    assert.equal(
+      architectures.size,
+      9,
+      scope + " must preserve nine distinct element topologies",
+    );
+  }
+  const runtime = runtimeThemeScript("", "customer");
+  assert.match(runtime, /mountReferencePage/);
+  assert.match(runtime, /mountReferenceOverview/);
+  assert.doesNotMatch(runtime, /runtimeReferenceShells|referenceRenderers/);
+  const { aiCosmicStyles } = await import("../dist/ai-cosmic-styles.js");
+  const { themeStyles } = await import("../dist/themes.js");
+  assert.ok(
+    themeStyles.includes(aiCosmicStyles),
+    "the restored stylesheet is used by live theme rendering",
   );
-  const runtime = await readFile(
-    new URL("../dist/themes.js", import.meta.url),
-    "utf8",
-  );
-  const rendererSource = await readFile(
-    new URL("../dist/reference-theme-renderers.js", import.meta.url),
-    "utf8",
-  );
-  assert.doesNotMatch(runtime, /while\s*\(document\.body\.firstChild\)/);
-  assert.doesNotMatch(rendererSource, /DichVu1st/);
-  assert.match(rendererSource, /data-theme-content=\\?"brandTitle/);
+  for (const selector of [
+    ".aiv3-landing",
+    ".aiv3-nav",
+    ".aiv3-hero",
+    ".aiv3-auth",
+    ".aiv3-portal",
+    ".aiv3-manifesto",
+    ".aiv3-dashboard",
+    ".aiv3-sidebar",
+    ".aiv3-workspace",
+    ".aiv3-kpis",
+    ".aiv3-assistant",
+  ])
+    assert.ok(aiCosmicStyles.includes(selector), selector);
+  const child = tenantBranding("child.test", {
+    brandName: "Panel Sao",
+    logoUrl: "https://cdn.test/child-logo.png",
+  });
+  for (const id of Object.keys(referencePages)) {
+    for (const kind of ["login", "register", "forgot", "reset"]) {
+      const original = authPage("", kind, "", child).match(
+        /<section class="auth-card">[\s\S]*?<\/section>/,
+      )[0];
+      const rendered = referencePreview(id, "auth", original);
+      assert.ok(
+        rendered.includes(original),
+        id + "/" + kind + " must preserve the complete tenant form",
+      );
+      assert.doesNotMatch(rendered, /DichVu1st/i);
+    }
+    for (const scope of ["landing", "auth", "customer"]) {
+      const rendered = fullPageThemePreview("", id, scope, child);
+      assert.match(rendered, /Panel Sao/);
+      assert.doesNotMatch(rendered, />DichVu1st</);
+    }
+  }
 });
 
 test("admin forms and operational orders expose polished real contracts", () => {

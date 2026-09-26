@@ -1,8 +1,16 @@
+import { escapeHtml, rootBranding, type TenantBranding } from "./branding.js";
+import {
+  referencePages,
+  referencePreview,
+  applyReferenceBranding,
+  setupReferenceNavigation,
+} from "./reference-runtime.js";
 import { authPage, landingPage } from "./page.js";
 import {
   renderAiCosmicAuth,
   renderAiCosmicDashboard,
   renderAiCosmicLanding,
+  renderAiCosmicOverview,
 } from "./ai-cosmic-pages.js";
 import { customerPage } from "./customer.js";
 import {
@@ -20,24 +28,25 @@ const safeScope = (value: string | null): PreviewScope =>
   value === "auth" || value === "customer" ? value : "landing";
 const stripRuntime = (html: string) =>
   html.replace(/<script>[\s\S]*?<\/script>/g, "");
-const bridge = `<script>(()=>{const allowed={colors:['primary','secondary','accent','background','surface','text','muted','border','success','warning','danger'],content:['heroTitle','heroSubtitle','primaryCta','secondaryCta','tagline','footerText']};addEventListener('message',e=>{if(e.origin!==location.origin||e.data?.type!=='theme-draft')return;const d=e.data.value||{};for(const k of allowed.colors){const v=d.colors?.[k];if(typeof v==='string'&&/^#[0-9a-f]{6}$/i.test(v))document.documentElement.style.setProperty('--theme-'+k,v)}for(const k of allowed.content){const v=d.content?.[k];if(typeof v==='string')document.querySelectorAll('[data-theme-content="'+k+'"]').forEach(n=>n.textContent=v)}const l=d.layout||{};if(['compact','comfortable','spacious'].includes(l.density))document.documentElement.dataset.density=l.density;if(['cards','table','catalog'].includes(l.serviceVariant))document.documentElement.dataset.serviceVariant=l.serviceVariant});document.querySelectorAll('[data-editor-focus],.hero,.header,.footer,.button').forEach(el=>el.addEventListener('click',e=>{e.preventDefault();parent.postMessage({type:'theme-focus',section:el.dataset.editorFocus||el.classList.contains('hero')?'hero':el.classList.contains('header')?'header':el.classList.contains('footer')?'footer':'buttons'},location.origin)}))})()</script>`;
+const bridge = `<script>(()=>{const allowed={colors:['primary','secondary','accent','background','surface','text','muted','border','success','warning','danger'],content:['brandTitle','heroTitle','heroSubtitle','primaryCta','secondaryCta','tagline','footerText']};addEventListener('message',e=>{if(e.origin!==location.origin||e.data?.type!=='theme-draft')return;const d=e.data.value||{};for(const k of allowed.colors){const v=d.colors?.[k];if(typeof v==='string'&&/^#[0-9a-f]{6}$/i.test(v))document.documentElement.style.setProperty('--theme-'+k,v)}for(const k of allowed.content){const v=d.content?.[k];if(typeof v==='string')document.querySelectorAll('[data-theme-content="'+k+'"]'+(k==='brandTitle'?', [data-tenant-name]':'')).forEach(n=>n.textContent=v)}const l=d.layout||{};if(['compact','comfortable','spacious'].includes(l.density))document.documentElement.dataset.density=l.density;if(['cards','table','catalog'].includes(l.serviceVariant))document.documentElement.dataset.serviceVariant=l.serviceVariant});document.querySelectorAll('[data-editor-focus],.hero,.header,.footer,.button').forEach(el=>el.addEventListener('click',e=>{e.preventDefault();parent.postMessage({type:'theme-focus',section:el.dataset.editorFocus||el.classList.contains('hero')?'hero':el.classList.contains('header')?'header':el.classList.contains('footer')?'footer':'buttons'},location.origin)}))})()</script>`;
 export function fullPageThemePreview(
   api: string,
   themeValue: string | null,
   scopeValue: string | null,
+  tenant?: TenantBranding,
 ) {
   const theme = safeTheme(themeValue),
     scope = safeScope(scopeValue),
     structure = themeStructure[theme];
   let html =
     scope === "landing"
-      ? landingPage(api)
+      ? landingPage(api, tenant)
       : scope === "auth"
-        ? authPage(api, "login")
-        : customerPage(api, "/dashboard");
+        ? authPage(api, "login", "", tenant)
+        : customerPage(api, "/dashboard", tenant);
   html = stripRuntime(html).replace(
-    '<html lang="vi">',
-    `<html lang="vi" data-theme="${theme}" ${Object.entries(structure)
+    /<html lang="vi"(?: dir="ltr")?>/,
+    `<html lang="vi" dir="ltr" data-theme="${theme}" ${Object.entries(structure)
       .map(
         ([k, v]) =>
           `data-${k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase())}="${v}"`,
@@ -45,25 +54,41 @@ export function fullPageThemePreview(
       .join(" ")}>`,
   );
   const body = /<body>([\s\S]*?)<\/body>/.exec(html)?.[1] || "";
-  const dedicatedBody =
+  let dedicatedBody =
     theme === "AI_COSMIC_FUTURE"
       ? scope === "landing"
-        ? renderAiCosmicLanding()
+        ? renderAiCosmicLanding(tenant).replace(
+            "</main>",
+            (/<section id="pricing"[\s\S]*?(?=<section id="process")/.exec(
+              body,
+            )?.[0] || "") + "</main>",
+          )
         : scope === "auth"
           ? renderAiCosmicAuth(
-              /<section class="auth-card">[\s\S]*?<\/section>/.exec(body)?.[0] ||
-                "",
+              /<section class="auth-card">[\s\S]*?<\/section>/.exec(
+                body,
+              )?.[0] || "",
+              tenant,
             )
           : (() => {
-              const sidebar = /<aside class="sidebar">[\s\S]*?<\/aside>/.exec(body)?.[0] || "";
-              const topbar = /<header class="topbar">[\s\S]*?<\/header>/.exec(body)?.[0] || "";
-              const content = /<main class="customer-content"[\s\S]*?<\/main>/.exec(body)?.[0] || "";
+              const sidebar =
+                /<aside class="sidebar">[\s\S]*?<\/aside>/.exec(body)?.[0] ||
+                "";
+              const topbar =
+                /<header class="topbar">[\s\S]*?<\/header>/.exec(body)?.[0] ||
+                "";
+              const content = `<main id="app" class="customer-content">${renderAiCosmicOverview()}</main>`;
               return renderAiCosmicDashboard(sidebar, topbar, content);
             })()
-      : renderReferenceComposition(theme, scope, body);
+      : referencePages[theme]
+        ? referencePreview(theme, scope, body)
+        : renderReferenceComposition(theme, scope, body);
+  if (tenant && referencePages[theme]) {
+    dedicatedBody = dedicatedBody.replaceAll("Social Platform", escapeHtml(tenant.name));
+  }
   html = html.replace(
     /<body>[\s\S]*?<\/body>/,
-    `<body>${dedicatedBody}${bridge}</body>`,
+    `<body>${dedicatedBody}${bridge}${referencePages[theme] ? `<script>(()=>{(${setupReferenceNavigation.toString()})(document.querySelector("[data-reference-page]"),true);document.querySelector(".toggle")?.addEventListener("click",()=>{const p=document.querySelector("#password");p.type=p.type==="password"?"text":"password"});fetch("/api/v1/public/settings",{credentials:"include"}).then(r=>r.json()).then(j=>(${applyReferenceBranding.toString()})({...j.data,siteName:${JSON.stringify((tenant || rootBranding).name).replace(/</g, "\\u003c")},logoUrl:${JSON.stringify((tenant || rootBranding).logoUrl || "").replace(/</g, "\\u003c")}})).catch(()=>{});})()</script>` : ""}</body>`,
   );
   return html;
 }
@@ -71,14 +96,17 @@ export const themeThumbnail = (
   theme: (typeof themePresets)[number],
   index: number,
 ) => {
+  if (referencePages[theme.id])
+    return `<iframe title="${theme.name}" src="/admin/theme-preview?theme=${theme.id}&scope=landing&thumbnail=1" loading="lazy" tabindex="-1"></iframe>`;
   const s = themeStructure[theme.id];
   return `<div class="visual-thumb visual-${s.heroVariant} visual-${s.navigationVariant}" style="--thumb-primary:${theme.primary};--thumb-bg:${theme.background}" aria-label="Bản thu nhỏ ${theme.name}"><header><i></i><nav><b></b><b></b><b></b></nav></header><main><section class="thumb-hero"><small>${String(index + 1).padStart(2, "0")}</small><h4>${theme.name}</h4><p>${theme.copy}</p><button></button></section><aside><i></i><i></i><i></i></aside></main><footer><i></i><i></i><i></i></footer></div>`;
 };
-export function themePreviewPage(api: string, url: URL) {
+export function themePreviewPage(api: string, url: URL, tenant?: TenantBranding) {
   return fullPageThemePreview(
     api,
     url.searchParams.get("theme"),
     url.searchParams.get("scope"),
+    tenant,
   );
 }
 export function themeEditorPage(themeValue: string | null) {
@@ -87,5 +115,5 @@ export function themeEditorPage(themeValue: string | null) {
 }
 const controls = `<details open data-group="brand"><summary>Thương hiệu</summary><label>Site name<input name="content.brandTitle"></label><label>Tagline<input name="content.tagline"></label></details><details open data-group="colors"><summary>Màu sắc</summary>${["primary", "secondary", "accent", "background", "surface", "text", "muted", "border", "success", "warning", "danger"].map((x) => `<label>${x}<input type="color" name="colors.${x}" value="#1677ff"></label>`).join("")}</details><details data-group="typography"><summary>Typography</summary><label>Font<select name="typography.font"><option>system</option><option>serif</option><option>display</option></select></label><label>Cỡ chữ<input type="range" min="14" max="20" name="typography.baseSize"></label></details><details data-group="layout"><summary>Bố cục</summary><label>Mật độ<select name="layout.density"><option>compact</option><option selected>comfortable</option><option>spacious</option></select></label><label>Dịch vụ<select name="layout.serviceVariant"><option>cards</option><option>table</option><option>catalog</option></select></label></details>${["header", "hero", "sections", "buttons", "cards", "auth", "customer", "dashboard", "service", "order", "footer"].map((x) => `<details data-group="${x}"><summary>${x.toUpperCase()}</summary><p>Tùy chỉnh cấu trúc ${x} bằng các lựa chọn an toàn của preset.</p>${x === "hero" ? '<label>Tiêu đề<input name="content.heroTitle"></label><label>Mô tả<textarea name="content.heroSubtitle"></textarea></label>' : ""}</details>`).join("")}`;
 const editorScript = (theme: string) =>
-  `const frame=preview,initial={},history=[];fetch("/api/v1/me",{credentials:"include"}).then(r=>r.ok?r.json():null).then(me=>{if(me?.panelEntitlement?.allowThemes===false){document.body.insertAdjacentHTML("afterbegin","<p>Gói hiện tại không cho phép chỉnh sửa giao diện.</p>");document.querySelectorAll(".editor-bar button,#controls input,#controls select,#controls textarea").forEach(x=>x.disabled=true)}}).catch(()=>{});let draft={colors:{},content:{},layout:{}};function url(){return '/admin/theme-preview?theme=${theme}&scope='+scope.value+'&embedded=1'}function load(){frame.src=url();newtab.href=url()}load();scope.onchange=load;document.querySelectorAll('[data-device]').forEach(b=>b.onclick=()=>frame.dataset.device=b.dataset.device);controls.oninput=e=>{const [group,key]=e.target.name.split('.');history.push(structuredClone(draft));draft[group][key]=e.target.value;frame.contentWindow?.postMessage({type:'theme-draft',value:draft},location.origin);state.textContent='Chưa lưu'};frame.onload=()=>frame.contentWindow.postMessage({type:'theme-draft',value:draft},location.origin);undo.onclick=()=>{draft=history.pop()||draft;frame.contentWindow.postMessage({type:'theme-draft',value:draft},location.origin)};reset.onclick=()=>{draft=structuredClone(initial);controls.querySelectorAll('input,select,textarea').forEach(x=>x.value=x.defaultValue);frame.contentWindow.postMessage({type:'theme-draft',value:draft},location.origin)};save.onclick=async()=>{const csrf=document.cookie.match(/(?:^|; )smm_csrf=([^;]+)/)?.[1];const r=await fetch('/api/v1/admin/settings',{method:'POST',credentials:'include',headers:{'content-type':'application/json','x-csrf-token':decodeURIComponent(csrf||'')},body:JSON.stringify({themeDraft:{themeId:'${theme}',overrides:draft}})});state.textContent=r.ok?'Đã lưu · Chưa áp dụng':'Không thể lưu'};apply.onclick=async()=>{if(!confirm('Áp dụng cấu hình giao diện này?'))return;const csrf=document.cookie.match(/(?:^|; )smm_csrf=([^;]+)/)?.[1];const r=await fetch('/api/v1/admin/settings',{method:'POST',credentials:'include',headers:{'content-type':'application/json','x-csrf-token':decodeURIComponent(csrf||'')},body:JSON.stringify({themeMode:'GLOBAL',themeGlobal:'${theme}',themeOverrides:draft})});state.textContent=r.ok?'Đang hoạt động':'Không thể áp dụng'};addEventListener('message',e=>{if(e.origin!==location.origin||e.data?.type!=='theme-focus')return;document.querySelector('[data-group="'+e.data.section+'"]')?.setAttribute('open','')});`;
-const editorStyles = `*{box-sizing:border-box}body{margin:0;background:#071525;color:#eaf4ff;font-family:system-ui;overflow:hidden}.editor-bar{height:64px;display:flex;align-items:center;gap:12px;padding:10px 18px;border-bottom:1px solid #24445f;background:#0b1d30}.editor-bar a,.editor-bar button,.editor-bar select{color:inherit;background:#12314e;border:1px solid #315b7d;border-radius:8px;padding:9px;text-decoration:none}.editor-bar span{margin-left:auto}.editor{height:calc(100vh - 64px);display:grid;grid-template-columns:310px minmax(0,1fr)}#controls{overflow:auto;padding:14px;background:#0a1c2e}details{border-bottom:1px solid #29445c;padding:12px 0}summary{font-weight:700;cursor:pointer}label{display:grid;gap:5px;margin:10px 0;font-size:12px}input,select,textarea{width:100%;min-height:42px}.canvas{overflow:auto;padding:24px;display:grid;place-items:start center;background:#dbe4ec}iframe{width:min(1440px,100%);height:900px;border:0;background:white;box-shadow:0 20px 60px #0015}iframe[data-device="tablet"]{width:768px;height:1024px}iframe[data-device="mobile"]{width:390px;height:844px}@media(max-width:900px){body{overflow:auto}.editor-bar{height:auto;flex-wrap:wrap}.editor{height:auto;grid-template-columns:1fr}#controls{max-height:42vh}.canvas{min-height:600px;padding:10px}}`;
+  `const frame=preview,initial={colors:{},content:{},layout:{},typography:{}},history=[];fetch("/api/v1/me",{credentials:"include"}).then(r=>r.ok?r.json():null).then(j=>{const me=j?.data??j;if(me?.panelEntitlement?.allowThemes===false){document.body.insertAdjacentHTML("afterbegin","<p>Gói hiện tại không cho phép chỉnh sửa giao diện.</p>");document.querySelectorAll(".editor-bar button,#controls input,#controls select,#controls textarea").forEach(x=>x.disabled=true)}}).catch(()=>{});let draft=structuredClone(initial);function url(){return '/admin/theme-preview?theme=${theme}&scope='+scope.value+'&embedded=1'}function load(){frame.src=url();newtab.href=url()}load();scope.onchange=load;document.querySelectorAll('[data-device]').forEach(b=>b.onclick=()=>frame.dataset.device=b.dataset.device);controls.oninput=e=>{const [group,key]=e.target.name.split('.');history.push(structuredClone(draft));(draft[group]||={})[key]=e.target.value;frame.contentWindow?.postMessage({type:'theme-draft',value:draft},location.origin);state.textContent='Chưa lưu'};frame.onload=()=>frame.contentWindow.postMessage({type:'theme-draft',value:draft},location.origin);undo.onclick=()=>{draft=history.pop()||draft;frame.contentWindow.postMessage({type:'theme-draft',value:draft},location.origin)};reset.onclick=()=>{draft=structuredClone(initial);controls.querySelectorAll('input,select,textarea').forEach(x=>x.value=x.defaultValue);frame.contentWindow.postMessage({type:'theme-draft',value:draft},location.origin)};save.onclick=async()=>{const csrf=document.cookie.match(/(?:^|; )smm_csrf=([^;]+)/)?.[1];const r=await fetch('/api/v1/admin/settings',{method:'POST',credentials:'include',headers:{'content-type':'application/json','x-csrf-token':decodeURIComponent(csrf||'')},body:JSON.stringify({themeDraft:{themeId:'${theme}',overrides:draft}})});state.textContent=r.ok?'Đã lưu · Chưa áp dụng':'Không thể lưu'};apply.onclick=async()=>{if(!confirm('Áp dụng cấu hình giao diện này?'))return;const csrf=document.cookie.match(/(?:^|; )smm_csrf=([^;]+)/)?.[1];const r=await fetch('/api/v1/admin/settings',{method:'POST',credentials:'include',headers:{'content-type':'application/json','x-csrf-token':decodeURIComponent(csrf||'')},body:JSON.stringify({themeMode:'GLOBAL',themeGlobal:'${theme}',themeOverrides:draft})});state.textContent=r.ok?'Đang hoạt động':'Không thể áp dụng'};addEventListener('message',e=>{if(e.origin!==location.origin||e.data?.type!=='theme-focus')return;document.querySelector('[data-group="'+e.data.section+'"]')?.setAttribute('open','')});`;
+const editorStyles = `*{box-sizing:border-box}body{margin:0;background:#071525;color:#eaf4ff;font-family:system-ui;overflow:hidden}.editor-bar{height:64px;display:flex;align-items:center;gap:12px;padding:10px 18px;border-bottom:1px solid #24445f;background:#0b1d30}.editor-bar a,.editor-bar button,.editor-bar select{color:inherit;background:#12314e;border:1px solid #315b7d;border-radius:8px;padding:9px;text-decoration:none}.editor-bar span{margin-left:auto}.editor{height:calc(100vh - 64px);display:grid;grid-template-columns:310px minmax(0,1fr)}#controls{overflow:auto;padding:14px;background:#0a1c2e}details{border-bottom:1px solid #29445c;padding:12px 0}summary{font-weight:700;cursor:pointer}label{display:grid;gap:5px;margin:10px 0;font-size:12px}input,select,textarea{width:100%;min-height:42px}.canvas{overflow:auto;padding:24px;display:grid;place-items:start center;background:#dbe4ec}iframe{width:1440px;max-width:none;height:900px;border:0;background:white;box-shadow:0 20px 60px #0015}iframe[data-device="tablet"]{width:768px;height:1024px}iframe[data-device="mobile"]{width:390px;height:844px}@media(max-width:900px){body{overflow:auto}.editor-bar{height:auto;flex-wrap:wrap}.editor{height:auto;grid-template-columns:1fr}#controls{max-height:42vh}.canvas{min-height:600px;padding:10px}}`;

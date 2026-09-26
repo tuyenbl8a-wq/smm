@@ -123,6 +123,26 @@ const server = createServer(async (request, response) => {
     );
     return;
   }
+  const referenceAsset =
+    /^\/theme-assets\/(creator-pop|urban-lime|cyber-neon|prism-glass|ocean-premium|blue-business|zen-japanese|black-gold|beige-editorial)\/scene\.png$/.exec(path);
+  if (referenceAsset) {
+    try {
+      const bytes = await readFile(
+        new URL(
+          `../public/theme-assets/${referenceAsset[1]}/scene.png`,
+          import.meta.url,
+        ),
+      );
+      response.setHeader("content-type", "image/png");
+      response.setHeader("cache-control", "public, max-age=3600");
+      response.setHeader("x-content-type-options", "nosniff");
+      response.end(bytes);
+    } catch {
+      response.statusCode = 404;
+      response.end("Asset not found");
+    }
+    return;
+  }
   const validatedHost = browserHost(request.headers.host);
   const hostname = validatedHost ? new URL(`http://${validatedHost}`).hostname : "localhost";
   const branding = await resolveBranding(hostname);
@@ -133,10 +153,16 @@ const server = createServer(async (request, response) => {
   if (themeAsset) {
     try {
       const bytes = await readFile(
-        new URL(`../public/theme-assets/ai-cosmic/${themeAsset}`, import.meta.url),
+        new URL(
+          `../public/theme-assets/ai-cosmic/${themeAsset}`,
+          import.meta.url,
+        ),
       );
       response.setHeader("content-type", "image/png");
-      response.setHeader("cache-control", "public, max-age=31536000, immutable");
+      response.setHeader(
+        "cache-control",
+        "public, max-age=31536000, immutable",
+      );
       response.setHeader("x-content-type-options", "nosniff");
       response.end(bytes);
     } catch {
@@ -181,7 +207,7 @@ const server = createServer(async (request, response) => {
   const editorMatch = /^\/admin\/themes\/([A-Z0-9_]+)\/editor$/.exec(path);
   const render =
     path === "/admin/theme-preview"
-      ? () => themePreviewPage("", url)
+      ? () => themePreviewPage("", url, branding)
       : editorMatch
         ? () => themeEditorPage(editorMatch[1] ?? null)
         : isAdminRoute(path)
