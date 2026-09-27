@@ -109,41 +109,44 @@ export class AdminOperationsService {
       limit = clamp(query.limit),
       search = optional(query.search),
       type = optional(query.type),
-      user = optional(query.user ?? query.customer),
-      createdAt = {
-        ...(optional(query.from)
-          ? { gte: new Date(`${query.from}T00:00:00.000Z`) }
-          : {}),
-        ...(optional(query.to)
-          ? { lte: new Date(`${query.to}T23:59:59.999Z`) }
-          : {}),
-      },
-      where: any = {
-        siteId,
-        ...(type ? { type } : {}),
-        ...(Object.keys(createdAt).length ? { createdAt } : {}),
-        ...(search
-          ? {
+      user = optional(query.user ?? query.customer);
+    const matchingUserIds = user
+      ? (
+          await this.db.user.findMany({
+            where: {
+              siteId,
               OR: [
-                { id: { contains: search } },
-                { referenceId: { contains: search } },
-                { description: { contains: search, mode: "insensitive" } },
+                { username: { contains: user, mode: "insensitive" } },
+                { email: { contains: user, mode: "insensitive" } },
               ],
-            }
-          : {}),
-        ...(user
-          ? {
-              wallet: {
-                user: {
-                  OR: [
-                    { username: { contains: user, mode: "insensitive" } },
-                    { email: { contains: user, mode: "insensitive" } },
-                  ],
-                },
-              },
-            }
-          : {}),
-      };
+            },
+            select: { id: true },
+          })
+        ).map((item: { id: string }) => item.id)
+      : undefined;
+    const createdAt = {
+      ...(optional(query.from)
+        ? { gte: new Date(`${query.from}T00:00:00.000Z`) }
+        : {}),
+      ...(optional(query.to)
+        ? { lte: new Date(`${query.to}T23:59:59.999Z`) }
+        : {}),
+    };
+    const where: any = {
+      siteId,
+      ...(type ? { type } : {}),
+      ...(Object.keys(createdAt).length ? { createdAt } : {}),
+      ...(search
+        ? {
+            OR: [
+              { id: { contains: search } },
+              { referenceId: { contains: search } },
+              { description: { contains: search, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+      ...(matchingUserIds ? { userId: { in: matchingUserIds } } : {}),
+    };
     const [items, total] = await Promise.all([
       this.db.walletTransaction.findMany({
         where,
@@ -159,14 +162,43 @@ export class AdminOperationsService {
           referenceId: true,
           description: true,
           createdAt: true,
-          wallet: {
-            select: { user: { select: { userNumber: true, username: true } } },
-          },
+          userId: true,
         },
       }),
       this.db.walletTransaction.count({ where }),
     ]);
-    return { items, page, limit, total, pages: Math.ceil(total / limit) };
+    const userIds = [
+      ...new Set(items.map((item: { userId: string }) => item.userId)),
+    ];
+    const users = userIds.length
+      ? await this.db.user.findMany({
+          where: { siteId, id: { in: userIds } },
+          select: { id: true, userNumber: true, username: true },
+        })
+      : [];
+    const usersById = new Map(
+      users.map((item: { id: string }) => [item.id, item]),
+    );
+    return {
+      items: items.map((item: any) => {
+        const resolved: any = usersById.get(item.userId);
+        return {
+          ...item,
+          wallet: {
+            user: resolved
+              ? {
+                  userNumber: String(resolved.userNumber),
+                  username: resolved.username,
+                }
+              : null,
+          },
+        };
+      }),
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+    };
   }
 
   async users(query: any, siteId = ROOT_SITE_ID) {
