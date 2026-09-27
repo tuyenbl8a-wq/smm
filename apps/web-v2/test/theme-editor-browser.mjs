@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { fullPageThemePreview, themeEditorPage } from "../dist/theme-builder.js";
+import { adminPage } from "../dist/admin.js";
 import { landingPage, authPage } from "../dist/page.js";
 import { customerPage } from "../dist/customer.js";
 import { themeEditorManifests, themeIds } from "../dist/themes.js";
@@ -27,13 +28,18 @@ const server = createServer(async (req, res) => {
     res.end(themeEditorPage(url.searchParams.get("theme")));
     return;
   }
+  if (url.pathname === "/__admin/themes") {
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.end(adminPage("", "/admin/themes"));
+    return;
+  }
   if (url.pathname === "/admin/theme-preview") {
     res.setHeader("content-type", "text/html; charset=utf-8");
     res.end(fullPageThemePreview("", url.searchParams.get("theme"), url.searchParams.get("scope"), undefined, url.searchParams.get("editor") === "1"));
     return;
   }
   if (url.pathname === "/api/v1/me") {
-    res.end(JSON.stringify({ data: { user: { username: "Editor QA" }, panelEntitlement: { allowThemes: true } } }));
+    res.end(JSON.stringify({ data: { user: { username: "Editor QA" }, roles: ["SUPER_ADMIN"], panelEntitlement: { allowThemes: true } } }));
     return;
   }
   if (url.pathname === "/api/v1/public/settings") {
@@ -369,6 +375,32 @@ try {
     if (path === "/login") verify(await page.locator("#email").count() === 1, "separate auth scope retains the real login form");
     if (path === "/orders/new") verify(await page.locator("#order-form").count() === 1, "separate customer scope retains the real order form");
   }
+
+  saved.clear();
+  saved.set("themeMode", "GLOBAL");
+  saved.set("themeGlobal", "AI_COSMIC_FUTURE");
+  const admin = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  admin.on("pageerror", (error) => pageErrors.push({ url: admin.url(), message: error.message }));
+  await admin.addInitScript(() => { window.confirmBox = async () => true; });
+  await admin.goto(origin + "/__admin/themes");
+  await admin.locator('.theme-card[data-preset="AI_COSMIC_FUTURE"]').waitFor();
+  const activeCard = admin.locator(".theme-card.theme-active");
+  const visibleBadges = admin.locator(".theme-card [data-active-label]:visible");
+  verify(await activeCard.count() === 1, "Admin shows exactly one active theme card from persisted global settings");
+  verify(await activeCard.getAttribute("data-preset") === "AI_COSMIC_FUTURE", "Admin active card matches the persisted themeGlobal setting");
+  verify(await visibleBadges.count() === 1, "CSS hides inactive card badges despite generic admin-status display styling");
+  await admin.locator('.theme-card[data-preset="CREATOR_POP"] [data-action="preview"]').click();
+  await admin.locator("#modal.theme-full-preview").waitFor({ state: "visible" });
+  verify(await visibleBadges.count() === 1 && await activeCard.getAttribute("data-preset") === "AI_COSMIC_FUTURE", "previewing another theme does not change the applied badge");
+  await admin.goto(origin + "/__admin/themes");
+  await admin.locator('.theme-card[data-preset="CREATOR_POP"] [data-action="apply"]').click();
+  await admin.waitForFunction(() => document.querySelector('.theme-card.theme-active')?.dataset.preset === "CREATOR_POP" && [...document.querySelectorAll(".theme-card [data-active-label]")].filter((badge) => getComputedStyle(badge).display !== "none").length === 1);
+  verify(saved.get("themeGlobal") === "CREATOR_POP", "Admin Apply persists the selected theme in the mock API");
+  verify(await activeCard.count() === 1 && await activeCard.getAttribute("data-preset") === "CREATOR_POP", "successful Apply marks only the newly persisted theme active");
+  await admin.reload();
+  await admin.waitForFunction(() => document.querySelector('.theme-card.theme-active')?.dataset.preset === "CREATOR_POP");
+  verify(await admin.locator(".theme-card.theme-active").count() === 1 && await admin.locator(".theme-card [data-active-label]:visible").count() === 1, "active badge survives Admin refresh without labeling every theme in use");
+  await admin.close();
 
   assert.deepEqual(pageErrors, [], "theme editor and applied theme routes produce no browser runtime errors");
   additionalChecks += 1;
