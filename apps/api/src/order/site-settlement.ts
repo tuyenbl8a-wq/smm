@@ -1,7 +1,8 @@
 import { OrderError, orderAmount } from "./service.js";
+import { moneyText, moneyUnits } from "../catalog/pricing.js";
 const SCALE=100_000_000n;
-const units=(v:unknown)=>{const [a="0",b=""]=String(v).split(".");return BigInt(a)*SCALE+BigInt(b.padEnd(8,"0").slice(0,8))};
-const text=(v:bigint)=>`${v/SCALE}.${String(v%SCALE).padStart(8,"0")}`;
+const units=moneyUnits;
+const text=moneyText;
 export interface SettlementEdge {childSiteId:string;parentSiteId:string;payerUserId:string;upstreamRate:string;upstreamCharge:string}
 export class SiteSettlementService {
  constructor(private readonly db:any){}
@@ -9,7 +10,7 @@ export class SiteSettlementService {
   const chain:any[]=[];let site=await tx.site.findUnique({where:{id:siteId}}),guard=0;
   while(site && site.id!==service.siteId && site.parentSiteId){if(++guard>64)throw new OrderError("SITE_HIERARCHY_INVALID","Invalid hierarchy");chain.push(site);site=await tx.site.findUnique({where:{id:site.parentSiteId}})}
   if(!site || site.id!==service.siteId)throw new OrderError("SERVICE_UNAVAILABLE","Service source is not an ancestor");chain.reverse();let rate=String(service.rate),parent=site,edges:SettlementEdge[]=[];
-  for(const child of chain){const rule=await tx.siteServiceRule.findUnique({where:{siteId_serviceId:{siteId:child.id,serviceId:service.id}}});if(!rule?.active)throw new OrderError("SERVICE_UNAVAILABLE","Service is not inherited");const upstreamRate=rate;if(rule.fixedRate!=null)rate=String(rule.fixedRate);else {const base=units(rate),percent=BigInt(String(rule.markupPercent??0).split('.')[0]||0);const fixed=units(rule.fixedProfit??0),minimum=units(rule.minProfit??0);rate=text(base+(base*percent/100n)+(fixed>minimum?fixed:minimum))}if(units(rate)<units(upstreamRate))throw new OrderError("SITE_PRICE_BELOW_COST","Panel price is below upstream cost");if(!child.ownerUserId)throw new OrderError("SITE_OWNER_MISSING","Panel owner missing");edges.push({childSiteId:child.id,parentSiteId:parent.id,payerUserId:child.ownerUserId,upstreamRate,upstreamCharge:orderAmount(upstreamRate,quantity)});parent=child}
+  for(const child of chain){const rule=await tx.siteServiceRule.findUnique({where:{siteId_serviceId:{siteId:child.id,serviceId:service.id}}});if(!rule?.active)throw new OrderError("SERVICE_UNAVAILABLE","Service is not inherited");const upstreamRate=rate;if(rule.fixedRate!=null)rate=String(rule.fixedRate);else {const base=units(rate),percent=units(rule.markupPercent??0);const fixed=units(rule.fixedProfit??0),minimum=units(rule.minProfit??0);rate=text(base+(base*percent/(100n*SCALE))+(fixed>minimum?fixed:minimum))}if(units(rate)<units(upstreamRate))throw new OrderError("SITE_PRICE_BELOW_COST","Panel price is below upstream cost");if(!child.ownerUserId)throw new OrderError("SITE_OWNER_MISSING","Panel owner missing");edges.push({childSiteId:child.id,parentSiteId:parent.id,payerUserId:child.ownerUserId,upstreamRate,upstreamCharge:orderAmount(upstreamRate,quantity)});parent=child}
   return edges;
  }
  async debitAndSnapshot(tx:any,order:any,edges:SettlementEdge[]){for(const edge of edges){const rows=await tx.$queryRawUnsafe('UPDATE "wallets" SET "balance"="balance"-$1::numeric,"version"="version"+1 WHERE "user_id"=$2::uuid AND "site_id"=$3::uuid AND "balance">=$1::numeric RETURNING "id","balance"+$1::numeric AS "before","balance" AS "after"',edge.upstreamCharge,edge.payerUserId,edge.parentSiteId);if(!rows[0])throw new OrderError("PANEL_UPSTREAM_BALANCE_LOW","Upstream panel balance is insufficient");await tx.walletTransaction.create({data:{siteId:edge.parentSiteId,walletId:rows[0].id,userId:edge.payerUserId,type:"ORDER",amount:`-${edge.upstreamCharge}`,balanceBefore:rows[0].before,balanceAfter:rows[0].after,referenceId:order.publicId,idempotencyKey:`settlement:${order.publicId}:${edge.childSiteId}`,description:"Panel upstream order charge"}});await tx.orderSiteSettlement.create({data:{orderId:order.id,...edge}})}}

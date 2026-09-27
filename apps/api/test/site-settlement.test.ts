@@ -11,7 +11,7 @@ const FOREIGN = "00000000-0000-4000-8000-000000000005";
 const CUSTOMER = "00000000-0000-4000-8000-000000000006";
 const RENTER = "00000000-0000-4000-8000-000000000007";
 
-function fixture(seller: string, source: string, panelType = "PANEL") {
+function fixture(seller: string, source: string, panelType = "PANEL", inheritedRule: any = { active: true, fixedRate: "3.00000000" }) {
   const sites: Record<string, any> = {
     [ROOT]: { id: ROOT, parentSiteId: null, panelType: "PANEL", status: "ACTIVE" },
     [PARENT]: { id: PARENT, parentSiteId: ROOT, panelType: "PANEL", status: "ACTIVE", ownerUserId: "parent-owner" },
@@ -45,7 +45,7 @@ function fixture(seller: string, source: string, panelType = "PANEL") {
     siteServiceRule: {
       findUnique: async ({ where }: any) =>
         where.siteId_serviceId.siteId === CHILD && source === PARENT
-          ? { active: true, fixedRate: "3.00000000" }
+          ? inheritedRule
           : null,
     },
     service: {
@@ -135,6 +135,35 @@ for (const panelType of ["PANEL", "CHILD_PANEL"]) {
     assert.equal(order.charge, "3.00000000");
   });
 }
+
+test("fractional inherited markup is identical in customer order and settlement", async () => {
+  const f = fixture(CHILD, PARENT, "CHILD_PANEL", {
+    active: true, fixedRate: null, markupPercent: "12.50000000",
+    fixedProfit: "0", minProfit: "0",
+  });
+  const order = await place(f.db, CHILD, "fractional-markup-order");
+  assert.equal(order.saleRate, "2.25000000");
+  assert.equal(order.charge, "2.25000000");
+  assert.equal(f.state().settlements[0].upstreamRate, "2.00000000");
+  assert.equal(f.state().wallets.get(`${CHILD}:${CUSTOMER}`), "7.75000000");
+  assert.equal(f.state().transactions.length, 2);
+});
+
+test("multi-level settlement carries fractional parent markup into the next edge", async () => {
+  const sites: Record<string, any> = {
+    [ROOT]: { id: ROOT, parentSiteId: null },
+    [PARENT]: { id: PARENT, parentSiteId: ROOT, ownerUserId: "parent-owner" },
+    [CHILD]: { id: CHILD, parentSiteId: PARENT, ownerUserId: RENTER },
+  };
+  const tx: any = {
+    site: { findUnique: async ({ where }: any) => sites[where.id] },
+    siteServiceRule: { findUnique: async () => ({ active: true, fixedRate: null, markupPercent: "12.50000000", fixedProfit: "0", minProfit: "0" }) },
+  };
+  const edges = await new SiteSettlementService({}).quote(tx, CHILD, { id: "root-service", siteId: ROOT, rate: "100" }, 1000);
+  assert.equal(edges[0]!.upstreamRate, "100");
+  assert.equal(edges[1]!.upstreamRate, "112.50000000");
+  assert.equal(edges[1]!.upstreamCharge, "112.50000000");
+});
 
 test("ROOT own service and descendant PANEL own provider have no upstream settlement", async () => {
   for (const seller of [ROOT, CHILD]) {

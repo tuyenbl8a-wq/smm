@@ -1250,7 +1250,10 @@ export class AuthHandler {
           response,
           tenant.id === ROOT_SITE_ID
             ? await this.catalog.adminOverview()
-            : await this.catalog.tenantAdminOverview(tenant.id),
+            : await this.catalog.tenantAdminOverview(
+                tenant.id,
+                canAccessAdmin(auth.access, "providers.view") || canAccessAdmin(auth.access, "providers.manage"),
+              ),
         );
       }
       if (request.method === "GET" && path === "/api/v1/admin/services") {
@@ -1270,7 +1273,10 @@ export class AuthHandler {
                 canAccessAdmin(auth.access, "services.pricing.manage") ||
                   canAccessAdmin(auth.access, "services.pricing.manage"),
               )
-            : await this.catalog!.tenantAdminOverview(tenant.id),
+            : await this.catalog!.tenantAdminOverview(
+                tenant.id,
+                canAccessAdmin(auth.access, "providers.view") || canAccessAdmin(auth.access, "providers.manage"),
+              ),
         );
       }
       const serviceEditor =
@@ -2392,6 +2398,8 @@ export class AuthHandler {
               "PERMISSION_DENIED",
               "Service creation permission required",
             );
+          else if (String(body.source ?? "MANUAL") === "API" && !canAccessAdmin(auth.access, "providers.manage"))
+            return this.error(response, 403, "PERMISSION_DENIED", "Provider management permission required");
           else
             return this.ok(
               response,
@@ -2461,6 +2469,7 @@ export class AuthHandler {
                   tenant.id,
                   service[1]!,
                   body,
+                  canAccessAdmin(auth.access, "providers.manage"),
                 )
               : await this.catalog.updateTenantService(
                   auth.user.id,

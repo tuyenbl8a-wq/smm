@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { canAccessAdmin } from "../src/admin/dashboard.js";
 import { calculateSaleRate, decimalInput } from "../src/catalog/pricing.js";
+import { PricingResolver } from "../src/catalog/resolver.js";
 import { CatalogService } from "../src/catalog/service.js";
+import { orderAmount } from "../src/order/service.js";
 import { uniqueConflictDetails } from "../src/auth/handler.js";
 
 test("service creation requires a trimmed audit reason and stays tenant scoped", async () => {
@@ -16,7 +18,7 @@ test("service creation requires a trimmed audit reason and stays tenant scoped",
         serviceCategory: {
           findFirst: async (query: any) => {
             categoryQueries.push(query);
-            return { id: "category-1", siteId, active: true };
+            return { id: "category-1", siteId, platformId: "platform-1", active: true };
           },
         },
         service: {
@@ -35,27 +37,52 @@ test("service creation requires a trimmed audit reason and stays tenant scoped",
     name: "Followers",
     type: "DEFAULT",
     categoryId: "category-1",
+    platformId: "platform-1",
     source: "MANUAL",
     rate: "10",
-    min: 1,
-    max: 100,
+    providerCost: "0",
+    pricingMode: "FIXED",
+    defaultMarkupPercent: "17.5",
+    defaultFixedProfit: "2.25",
+    defaultMinProfit: "1.5",
+    autoDecrease: false,
+    safetyAction: "REQUIRE_REVIEW",
+    maxAutomaticIncreasePercent: "25",
+    min: 100,
+    max: 10000,
   };
   for (const reason of [undefined, "a", "ab", "  ", "x".repeat(501)])
     await assert.rejects(
       async () => catalog.createService("admin", siteId, { ...input, reason }),
       /Vui lòng nhập lý do từ 3 đến 500 ký tự/,
     );
+  for (const rate of ["", "0", "1,000", "1000đ", "12.123456789", "1234567890123"]) {
+    await assert.rejects(
+      async () => catalog.createService("admin", siteId, { ...input, rate, reason: "Create test" }),
+      (error: any) => error.code === "RATE_INVALID" && error.message === "Giá khách không hợp lệ.",
+    );
+  }
+  await assert.rejects(
+    async () => catalog.createService("admin", siteId, { ...input, platformId: "other-platform", reason: "Create test" }),
+    (error: any) => error.code === "CATEGORY_PLATFORM_MISMATCH",
+  );
   assert.equal(created.length, 0);
 
-  await catalog.createService("admin", siteId, {
-    ...input,
-    reason: "  ABC  ",
-  });
-  await catalog.createService("admin", siteId, {
-    ...input,
-    reason: "R".repeat(500),
-  });
-  assert.equal(created.length, 2);
+  for (const [rate, reason] of [["1000", "  ABC  "], ["1000.50", "R".repeat(500)], ["0.00000001", "Small positive rate"], [" 1000.50 ", "Trimmed rate"]])
+    await catalog.createService("admin", siteId, { ...input, rate, reason });
+  assert.equal(created.length, 4);
+  assert.equal(created[0]!.rate, "1000.00000000");
+  assert.equal(created[0]!.pricingMode, "FIXED");
+  assert.equal(created[0]!.providerCost, "0.00000000");
+  assert.equal(created[0]!.defaultMarkupPercent, "17.50000000");
+  assert.equal(created[0]!.defaultFixedProfit, "2.25000000");
+  assert.equal(created[0]!.defaultMinProfit, "1.50000000");
+  assert.equal(created[0]!.autoDecrease, false);
+  assert.equal(created[0]!.safetyAction, "REQUIRE_REVIEW");
+  assert.equal(created[0]!.maxAutomaticIncreasePercent, "25.00000000");
+  assert.equal(created[1]!.rate, "1000.50000000");
+  assert.equal(created[2]!.rate, "0.00000001");
+  assert.equal(created[3]!.rate, "1000.50000000");
   assert.equal(created[0]!.siteId, siteId);
   assert.deepEqual(categoryQueries[0]!.where, {
     id: "category-1",
@@ -67,6 +94,45 @@ test("service creation requires a trimmed audit reason and stays tenant scoped",
   assert.equal(audits[0]!.siteId, siteId);
   assert.equal(audits[0]!.after.reason, "ABC");
   assert.equal(audits[1]!.after.reason, "R".repeat(500));
+  assert.equal(audits[2]!.after.reason, "Small positive rate");
+  assert.equal(audits[3]!.after.reason, "Trimmed rate");
+  const resolved = await new PricingResolver({
+    service: { findUnique: async () => created[0] },
+    user: { findUnique: async () => ({ siteId, priceGroupId: null }) },
+  }).resolveCustomerPrice("customer-1", created[0]!.id);
+  assert.equal(resolved.rate, "1000.00000000");
+  assert.equal(orderAmount(resolved.rate, 666), "666.00000000");
+});
+
+test("service create maps only malformed user-entered cost and tier decimals", async () => {
+  const siteId = "00000000-0000-4000-8000-000000000099";
+  let serviceCreates = 0;
+  const db: any = {
+    $transaction: async (work: any) => {
+      let stagedCreates = 0;
+      const result = await work({
+        serviceCategory: { findFirst: async () => ({ id: "category-1", siteId, active: true }) },
+        service: { create: async ({ data }: any) => { stagedCreates++; return { id: "service-1", ...data }; } },
+        priceGroup: { findMany: async () => [{ id: "customer", code: "CUSTOMER", defaultMinProfit: "0" }, { id: "agent", code: "AGENT", defaultMinProfit: "0" }, { id: "distributor", code: "DISTRIBUTOR", defaultMinProfit: "0" }] },
+        priceRule: { create: async () => ({}) },
+        auditLog: { create: async () => ({}) },
+      });
+      serviceCreates += stagedCreates;
+      return result;
+    },
+  };
+  const catalog = new CatalogService(db);
+  const input = { name: "Followers", type: "DEFAULT", categoryId: "category-1", source: "MANUAL", rate: "1000", min: 1, max: 100, reason: "Create service" };
+  for (const [override, code] of [
+    [{ providerCost: "1,000" }, "PROVIDER_COST_INVALID"],
+    [{ pricing: { CUSTOMER: { mode: "FIXED", value: "12.123456789" }, AGENT: { mode: "FIXED", value: "1" }, DISTRIBUTOR: { mode: "FIXED", value: "1" } } }, "PRICING_VALUE_INVALID"],
+  ] as const) {
+    await assert.rejects(
+      async () => catalog.createService("admin", siteId, { ...input, ...override }),
+      (error: any) => error.code === code,
+    );
+  }
+  assert.equal(serviceCreates, 0);
 });
 
 test("service editor edits require a reason but generic catalog edits do not", async () => {
@@ -403,9 +469,10 @@ test("catalog mutations create an audit record in the same transaction", async (
 });
 
 test("manual service fields disable only their provider sync controls", async () => {
-  let mappingUpdate: any;
+  let mappingUpdate: any, auditData: any, categoryQuery: any;
   const before = {
       id: "service-1",
+      serviceNumber: 9_007_199_254_740_993_123_456n,
       siteId: "00000000-0000-4000-8000-000000000001",
       categoryId: "category-1",
       name: "Tên từ NCC",
@@ -420,6 +487,12 @@ test("manual service fields disable only their provider sync controls", async ()
       max: 1000,
     },
     tx: any = {
+      serviceCategory: {
+        findFirst: async (query: any) => {
+          categoryQuery = query;
+          return { id: "category-2", siteId: before.siteId, platformId: "platform-1" };
+        },
+      },
       service: {
         findUnique: async () => before,
         update: async ({ data }: any) => ({ ...before, ...data }),
@@ -427,12 +500,22 @@ test("manual service fields disable only their provider sync controls", async ()
       serviceMapping: {
         updateMany: async (query: any) => ((mappingUpdate = query), query),
       },
-      auditLog: { create: async ({ data }: any) => data },
+      auditLog: { create: async ({ data }: any) => ((auditData = data), data) },
     },
     db = { $transaction: async (work: any) => work(tx) };
   const updated = await new CatalogService(db).updateService("admin-1", "00000000-0000-4000-8000-000000000001", "service-1", {
     categoryId: "category-2",
+    platformId: "platform-1",
     name: "Tên chỉnh tay",
+    icon: "https://example.com/service.png",
+    rate: "1000.50",
+    pricingMode: "FIXED",
+    defaultMarkupPercent: "12.5",
+    defaultFixedProfit: "2",
+    defaultMinProfit: "1",
+    autoDecrease: false,
+    safetyAction: "REQUIRE_REVIEW",
+    maxAutomaticIncreasePercent: "25",
     min: 20,
     max: 2000,
     type: "CUSTOM_COMMENTS",
@@ -444,7 +527,23 @@ test("manual service fields disable only their provider sync controls", async ()
   });
   assert.equal(updated.siteId, before.siteId);
   assert.equal(updated.providerCost, before.providerCost);
+  assert.equal(updated.serviceNumber, before.serviceNumber);
   assert.equal(updated.name, "Tên chỉnh tay");
+  assert.equal(updated.rate, "1000.50000000");
+  assert.equal(updated.pricingMode, "FIXED");
+  assert.equal(updated.defaultMarkupPercent, "12.50000000");
+  assert.equal(updated.defaultFixedProfit, "2.00000000");
+  assert.equal(updated.defaultMinProfit, "1.00000000");
+  assert.equal(updated.autoDecrease, false);
+  assert.equal(updated.safetyAction, "REQUIRE_REVIEW");
+  assert.equal(updated.maxAutomaticIncreasePercent, "25.00000000");
+  assert.equal(updated.icon, "https://example.com/service.png");
+  assert.deepEqual(categoryQuery.where, { id: "category-2", siteId: before.siteId, active: true, deletedAt: null });
+  assert.equal(auditData.action, "SERVICE_UPDATE");
+  assert.equal(auditData.siteId, before.siteId);
+  assert.equal(auditData.before.serviceNumber, before.serviceNumber.toString());
+  assert.equal(auditData.after.serviceNumber, before.serviceNumber.toString());
+  assert.equal(auditData.after.name, "Tên chỉnh tay");
   assert.deepEqual(mappingUpdate.where, {
     serviceId: "service-1",
     active: true,
@@ -461,6 +560,96 @@ test("manual service fields disable only their provider sync controls", async ()
     syncAverageTime: false,
     syncStatus: false,
   });
+});
+
+test("provider remapping requires permission, PANEL ownership, and an active tenant provider", async () => {
+  const siteId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const makeDb = (panelType: string, owned: boolean) => {
+    const calls: any = { updates: [], mappings: [], audits: [], providerQueries: [] };
+    const before = { id: "service-1", siteId, categoryId: "category-1", source: "MANUAL", name: "Followers", rate: "1000.00000000", providerCost: "0.00000000", min: 100, max: 10000, active: true };
+    const tx: any = {
+      service: {
+        findFirst: async () => before,
+        update: async ({ data }: any) => { calls.updates.push(data); return { ...before, ...data }; },
+      },
+      site: { findUnique: async () => ({ panelType }) },
+      serviceMapping: {
+        findMany: async () => [],
+        updateMany: async ({ where, data }: any) => { calls.mappings.push({ where, data }); return { count: 0 }; },
+        upsert: async ({ create }: any) => { calls.mappings.push(create); return { id: "mapping-1", ...create }; },
+      },
+      providerService: { findFirst: async () => ({ id: "provider-service-1", providerId: "provider-1", rate: "400.00000000" }) },
+      provider: { findFirst: async (query: any) => { calls.providerQueries.push(query); return owned ? { id: "provider-1", siteId } : null; } },
+      auditLog: { create: async ({ data }: any) => { calls.audits.push(data); return data; } },
+    };
+    return { db: { $transaction: async (work: any) => work(tx) }, calls };
+  };
+  const input = { source: "API", providerServiceId: "provider-service-1", rate: "1000", pricingMode: "FIXED" };
+  for (const [panelType, owned, allowed, code] of [
+    ["PANEL", true, false, "PERMISSION_DENIED"],
+    ["CHILD_PANEL", true, true, "CHILD_PANEL_PROVIDER_FORBIDDEN"],
+    ["PANEL", false, true, "PROVIDER_UNAVAILABLE"],
+  ] as const) {
+    const { db, calls } = makeDb(panelType, owned);
+    await assert.rejects(
+      async () => new CatalogService(db).updateService("admin", siteId, "service-1", input, allowed),
+      (error: any) => error.code === code,
+    );
+    assert.equal(calls.updates.length, 0);
+  }
+  const { db, calls } = makeDb("PANEL", true);
+  await assert.rejects(
+    () => new CatalogService(db).updateService("admin", siteId, "service-1", { ...input, providerCost: "1" }, true),
+    (error: any) => error.code === "PROVIDER_COST_FORBIDDEN",
+  );
+  assert.equal(calls.updates.length, 0);
+  const updated = await new CatalogService(db).updateService("admin", siteId, "service-1", input, true);
+  assert.equal(updated.source, "API");
+  assert.equal(updated.providerCost, "400.00000000");
+  assert.equal(updated.rate, "1000.00000000");
+  assert.equal(calls.mappings.some((item: any) => item.providerServiceId === "provider-service-1"), true);
+  assert.deepEqual(calls.providerQueries[0].where.siteId, siteId);
+  assert.equal(calls.audits[0].siteId, siteId);
+});
+
+test("provider-backed service creation rejects Child Panels and foreign providers", async () => {
+  const siteId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const input = { source: "API", providerServiceId: "provider-service-1", categoryId: "category-1", name: "Provider followers", rate: "1000", min: 100, max: 10000, reason: "Create provider service" };
+  const makeDb = (panelType: string, ownsProvider: boolean, providerRate = "400") => {
+    const calls: any = { providers: [], creates: 0, audits: [] };
+    const tx: any = {
+      serviceCategory: { findFirst: async () => ({ id: "category-1", siteId, active: true }) },
+      site: { findUnique: async () => ({ panelType }) },
+      provider: { findMany: async (query: any) => { calls.providers.push(query); return ownsProvider ? [{ id: "provider-1" }] : []; } },
+      providerService: { findFirst: async ({ where }: any) => where.providerId.in.includes("provider-1") ? { id: "provider-service-1", providerId: "provider-1", rate: providerRate, active: true, stale: false } : null },
+      service: { create: async ({ data }: any) => { calls.creates++; return { id: "service-1", ...data }; } },
+      serviceMapping: { create: async ({ data }: any) => ({ id: "mapping-1", ...data }) },
+      priceGroup: { findMany: async () => [] },
+      auditLog: { create: async ({ data }: any) => { calls.audits.push(data); return data; } },
+    };
+    return { db: { $transaction: async (work: any) => work(tx) }, calls };
+  };
+  for (const [panelType, ownsProvider, code] of [
+    ["CHILD_PANEL", true, "CHILD_PANEL_PROVIDER_FORBIDDEN"],
+    ["PANEL", false, "PROVIDER_SERVICE_NOT_FOUND"],
+  ] as const) {
+    const { db, calls } = makeDb(panelType, ownsProvider);
+    await assert.rejects(async () => new CatalogService(db).createService("admin", siteId, input), (error: any) => error.code === code);
+    assert.equal(calls.creates, 0);
+  }
+  const { db, calls } = makeDb("PANEL", true);
+  const result = await new CatalogService(db).createService("admin", siteId, input);
+  assert.equal(result.service.source, "API");
+  assert.equal(result.service.providerCost, "400");
+  assert.equal(calls.creates, 1);
+  assert.equal(calls.providers[0].where.siteId, siteId);
+  assert.equal(calls.audits[0].siteId, siteId);
+  const zeroCost = makeDb("PANEL", true, "0");
+  await assert.rejects(
+    () => new CatalogService(zeroCost.db).createService("admin", siteId, { ...input, pricingMode: "COST_PLUS_PERCENT", defaultMarkupPercent: "0" }),
+    (error: any) => error.code === "RATE_INVALID",
+  );
+  assert.equal(zeroCost.calls.creates, 0);
 });
 
 test("public catalog returns only explicitly selected safe fields", async () => {
@@ -507,7 +696,7 @@ test("public catalog returns only explicitly selected safe fields", async () => 
 test("child catalog exposes only explicitly inherited services with site overrides", async () => {
   const child = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   let serviceWhere: any;
-  const inherited = {
+  const inherited: any = {
     serviceId: "allowed-service",
     fixedRate: "12.00000000",
     markupPercent: null,
@@ -576,6 +765,51 @@ test("child catalog exposes only explicitly inherited services with site overrid
   assert.equal(result.services[0].rate, "12.00000000");
   assert.equal(result.services[0].min, 25);
   assert.equal(result.services[0].max, 500);
+  inherited.fixedRate = null;
+  inherited.markupPercent = "12.50000000";
+  const fractional = await new CatalogService(db).customerCatalog("child-user", {
+    siteId: child, page: 1, limit: 20,
+  });
+  assert.equal(fractional.services[0].rate, "11.25000000");
+});
+
+test("PANEL admin catalog exposes only its owned provider choices and editable service details", async () => {
+  const siteId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  for (const panelType of ["PANEL", "CHILD_PANEL"]) {
+    let ownedOverviewCalls = 0;
+    const db: any = {
+      site: { findUnique: async () => ({ id: siteId, parentSiteId: "parent-site", panelType }) },
+      siteServiceRule: { findMany: async () => [] },
+      service: { findMany: async () => panelType === "PANEL" ? [{ id: "owned-service", siteId, categoryId: "category", name: "Owned", rate: "1000", active: true }] : [] },
+      serviceCategory: { findMany: async () => [] },
+      platform: { findMany: async () => [] },
+    };
+    const catalog = new CatalogService(db);
+    catalog.adminOverview = async (_includePricing: boolean, requestedSiteId: string) => {
+      ownedOverviewCalls++;
+      assert.equal(requestedSiteId, siteId);
+      return {
+        services: [{ id: "owned-service", siteId, source: "API", rate: "1000.00000000", providerCost: "400.00000000", pricingMode: "FIXED" }],
+        providers: [{ id: "owned-provider", name: "Owned NCC" }],
+        providerServices: [{ id: "owned-provider-service", providerId: "owned-provider", rate: "400.00000000" }],
+        mappings: [{ serviceId: "owned-service", providerServiceId: "owned-provider-service", active: true }],
+        priceGroups: [], priceRules: [], priceHistory: [],
+      } as any;
+    };
+    const result = await catalog.tenantAdminOverview(siteId, panelType === "PANEL");
+    assert.equal(ownedOverviewCalls, panelType === "PANEL" ? 1 : 0);
+    assert.equal(result.providers.length, panelType === "PANEL" ? 1 : 0);
+    assert.equal(result.providerServices.length, panelType === "PANEL" ? 1 : 0);
+    assert.equal(result.mappings.length, panelType === "PANEL" ? 1 : 0);
+    if (panelType === "PANEL") {
+      assert.equal(result.services[0].pricingMode, "FIXED");
+      assert.equal(result.services[0].providerCost, "400.00000000");
+      const restricted = await catalog.tenantAdminOverview(siteId);
+      assert.equal(restricted.providers.length, 0);
+      assert.equal(restricted.providerServices.length, 0);
+      assert.equal(restricted.mappings.length, 0);
+    }
+  }
 });
 
 test("child platform presentation is stored locally and never updates parent master", async () => {

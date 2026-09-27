@@ -50,6 +50,34 @@ const mutationReason = (value: unknown): string => {
     );
   return result;
 };
+const catalogDecimal = (
+  value: unknown,
+  allowZero: boolean,
+  code: string,
+  message: string,
+): string => {
+  try {
+    return decimalInput(value, allowZero);
+  } catch (error) {
+    if (error instanceof Error && error.message === "INVALID_DECIMAL")
+      throw new CatalogError(code, message);
+    throw error;
+  }
+};
+const optionalCatalogDecimal = (
+  value: unknown,
+  code: string,
+  message: string,
+): string | null =>
+  value === undefined || value === null || String(value).trim() === ""
+    ? null
+    : catalogDecimal(value, true, code, message);
+const auditJson = (value: unknown) =>
+  JSON.parse(
+    JSON.stringify(value, (_key, item) =>
+      typeof item === "bigint" ? item.toString() : item,
+    ),
+  );
 const integer = (value: unknown, field: string, min = 0): number => {
   const result = Number(value);
   if (!Number.isSafeInteger(result) || result < min)
@@ -572,9 +600,7 @@ export class CatalogService {
   private applySiteRule(service: any, rule: any) {
     if (!rule) return service;
     const base = moneyUnits(service.rate);
-    const percent = BigInt(
-      String(rule.markupPercent ?? 0).split(".")[0] || "0",
-    );
+    const percent = moneyUnits(rule.markupPercent ?? 0);
     const fixed = moneyUnits(rule.fixedProfit ?? 0);
     const minimum = moneyUnits(rule.minProfit ?? 0);
     const rate =
@@ -582,7 +608,7 @@ export class CatalogService {
         ? String(rule.fixedRate)
         : moneyText(
             base +
-              (base * percent) / 100n +
+              (base * percent) / (100n * 100_000_000n) +
               (fixed > minimum ? fixed : minimum),
           );
     return {
@@ -595,7 +621,7 @@ export class CatalogService {
     };
   }
 
-  async tenantAdminOverview(siteId: string) {
+  async tenantAdminOverview(siteId: string, includeProviders = false) {
     if (siteId === ROOT_SITE_ID) return this.adminOverview(false);
     const tenantSite = await this.db.site.findUnique({
       where: { id: siteId },
@@ -659,6 +685,12 @@ export class CatalogService {
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     });
     const presented = await this.applyCatalogPresentation(siteId, platformRows, categoryRows);
+    const ownedCatalog = tenantSite?.panelType === "PANEL"
+      ? await this.adminOverview(true, siteId)
+      : null;
+    const ownedServices = new Map(
+      (ownedCatalog?.services ?? []).map((service: any) => [service.id, service]),
+    );
     const serviceMap = new Map(
       services.map((service: any) => [service.id, service]),
     );
@@ -681,13 +713,15 @@ export class CatalogService {
         ...(tenantSite?.panelType === "PANEL"
           ? services
               .filter((service: any) => service.siteId === siteId && !ruleMap.has(service.id))
-              .map((service: any) => ({ ...service, active: service.active }))
+              .map((service: any) => ({ ...(ownedServices.get(service.id) ?? service), active: service.active }))
           : []),
       ],
-      providers: [],
-      providerServices: [],
-      mappings: [],
-      priceHistory: [],
+      providers: includeProviders ? ownedCatalog?.providers ?? [] : [],
+      providerServices: includeProviders ? ownedCatalog?.providerServices ?? [] : [],
+      mappings: includeProviders ? ownedCatalog?.mappings ?? [] : [],
+      priceGroups: ownedCatalog?.priceGroups ?? [],
+      priceRules: ownedCatalog?.priceRules ?? [],
+      priceHistory: ownedCatalog?.priceHistory ?? [],
     };
   }
 
@@ -1751,7 +1785,53 @@ export class CatalogService {
     const min = integer(input.min, "min", 1),
       max = integer(input.max, "max", 1),
       source = String(input.source ?? "MANUAL"),
-      reason = mutationReason(input.reason);
+      reason = mutationReason(input.reason),
+      rate = catalogDecimal(
+        input.rate,
+        false,
+        "RATE_INVALID",
+        "Giá khách không hợp lệ.",
+      ),
+      manualProviderCost = catalogDecimal(
+        source === "MANUAL" ? input.providerCost ?? "0" : "0",
+        true,
+        "PROVIDER_COST_INVALID",
+        "Giá vốn không hợp lệ.",
+      ),
+      pricingMode = input.pricingMode === undefined
+        ? input.pricing?.CUSTOMER?.mode === "PERCENT"
+          ? "COST_PLUS_PERCENT"
+          : "FIXED"
+        : enumInput(input.pricingMode, pricingModes, "PRICING_MODE_INVALID"),
+      defaultMarkupPercent = optionalCatalogDecimal(
+        input.defaultMarkupPercent ??
+          (input.pricing?.CUSTOMER?.mode === "PERCENT"
+            ? input.pricing.CUSTOMER.value
+            : undefined),
+        "MARKUP_INVALID",
+        "Tỷ lệ lợi nhuận không hợp lệ.",
+      ) ?? "0",
+      defaultFixedProfit = optionalCatalogDecimal(
+        input.defaultFixedProfit,
+        "FIXED_PROFIT_INVALID",
+        "Lợi nhuận cố định không hợp lệ.",
+      ) ?? "0",
+      defaultMinProfit = optionalCatalogDecimal(
+        input.defaultMinProfit,
+        "MIN_PROFIT_INVALID",
+        "Lợi nhuận tối thiểu không hợp lệ.",
+      ) ?? "0",
+      maxAutomaticIncreasePercent = optionalCatalogDecimal(
+        input.maxAutomaticIncreasePercent,
+        "MAX_INCREASE_INVALID",
+        "Ngưỡng tăng giá không hợp lệ.",
+      ) ?? "50",
+      autoDecrease = input.autoDecrease === undefined
+        ? true
+        : booleanInput(input.autoDecrease, "autoDecrease"),
+      safetyAction = input.safetyAction === undefined
+        ? "AUTO_RAISE"
+        : enumInput(input.safetyAction, safetyActions, "SAFETY_ACTION_INVALID");
     if (max < min)
       throw new CatalogError(
         "RANGE_INVALID",
@@ -1771,16 +1851,23 @@ export class CatalogService {
           "CATEGORY_NOT_FOUND",
           "Danh mục không tồn tại hoặc đã tắt",
         );
+      if (String(input.platformId ?? "").trim() && category.platformId !== String(input.platformId))
+        throw new CatalogError("CATEGORY_PLATFORM_MISMATCH", "Danh mục không thuộc nền tảng đã chọn.");
       let providerService: any = null;
       if (source === "API") {
-        const tenantProviders = tx.provider?.findMany ? await tx.provider.findMany({
-          where: { siteId, deletedAt: null },
+        if (siteId !== ROOT_SITE_ID) {
+          const site = await tx.site?.findUnique({ where: { id: siteId }, select: { panelType: true } });
+          if (site?.panelType !== "PANEL")
+            throw new CatalogError("CHILD_PANEL_PROVIDER_FORBIDDEN", "Child Panel không thể quản lý nhà cung cấp.");
+        }
+        const tenantProviders = await tx.provider.findMany({
+          where: { siteId, status: { in: ["ACTIVE", "DEGRADED"] }, deletedAt: null },
           select: { id: true },
-        }) : null;
+        });
         providerService = await tx.providerService.findFirst({
           where: {
             id: String(input.providerServiceId ?? ""),
-            ...(tenantProviders ? { providerId: { in: tenantProviders.map((provider: any) => provider.id) } } : {}),
+            providerId: { in: tenantProviders.map((provider: any) => provider.id) },
             active: true,
             stale: false,
           },
@@ -1792,9 +1879,12 @@ export class CatalogService {
           );
       }
       const providerCost =
-        source === "API"
-          ? String(providerService.rate)
-          : decimalInput(input.providerCost ?? 0, true);
+        source === "API" ? String(providerService.rate) : manualProviderCost;
+      if (moneyUnits(resolveCustomerRate({
+        service: { rate, pricingMode, defaultMarkupPercent, defaultFixedProfit, defaultMinProfit },
+        providerCost,
+      })) === 0n)
+        throw new CatalogError("RATE_INVALID", "Giá khách theo cấu hình định giá phải lớn hơn 0.");
       const item = await tx.service.create({
         data: {
           siteId,
@@ -1810,8 +1900,15 @@ export class CatalogService {
             80,
           ),
           pricingModel: "PER_THOUSAND",
-          rate: decimalInput(input.rate),
+          rate,
           providerCost,
+          pricingMode,
+          defaultMarkupPercent,
+          defaultFixedProfit,
+          defaultMinProfit,
+          autoDecrease,
+          safetyAction,
+          maxAutomaticIncreasePercent,
           min,
           max,
           averageTime: input.averageTime
@@ -1862,7 +1959,12 @@ export class CatalogService {
             "PRICING_MODE_INVALID",
             "Kiểu giá không hợp lệ",
           );
-        const value = decimalInput(tier.value, true);
+        const value = catalogDecimal(
+          tier.value,
+          true,
+          "PRICING_VALUE_INVALID",
+          "Giá trị giá khách hàng không hợp lệ.",
+        );
         await tx.priceRule.create({
           data: {
             priceGroupId: group.id,
@@ -1902,6 +2004,7 @@ export class CatalogService {
         throw new CatalogError("SERVICE_NOT_FOUND", "Dịch vụ không tồn tại");
       const {
         id: _id,
+        serviceNumber: _serviceNumber,
         createdAt: _created,
         updatedAt: _updated,
         ...copy
@@ -1953,18 +2056,76 @@ export class CatalogService {
     });
   }
 
-  async updateService(actorId: string, siteId: string, id: string, input: any) {
+  async updateService(actorId: string, siteId: string, id: string, input: any, allowProviderMapping = false) {
     return this.db.$transaction(async (tx: any) => {
       const before = tx.service.findFirst
         ? await tx.service.findFirst({ where: { id, siteId } })
         : await tx.service.findUnique({ where: { id } });
       if (!before)
         throw new CatalogError("SERVICE_NOT_FOUND", "Service not found");
+      if (input.categoryId !== undefined || String(input.platformId ?? "").trim()) {
+        const category = await tx.serviceCategory.findFirst({
+          where: {
+            id: String(input.categoryId ?? before.categoryId),
+            siteId,
+            active: true,
+            deletedAt: null,
+          },
+        });
+        if (!category)
+          throw new CatalogError("CATEGORY_NOT_FOUND", "Danh mục không tồn tại hoặc đã tắt");
+        if (String(input.platformId ?? "").trim() && category.platformId !== String(input.platformId))
+          throw new CatalogError("CATEGORY_PLATFORM_MISMATCH", "Danh mục không thuộc nền tảng đã chọn.");
+      }
+      const markup = optionalCatalogDecimal(input.defaultMarkupPercent, "MARKUP_INVALID", "Tỷ lệ lợi nhuận không hợp lệ.");
+      const fixedProfit = optionalCatalogDecimal(input.defaultFixedProfit, "FIXED_PROFIT_INVALID", "Lợi nhuận cố định không hợp lệ.");
+      const minProfit = optionalCatalogDecimal(input.defaultMinProfit, "MIN_PROFIT_INVALID", "Lợi nhuận tối thiểu không hợp lệ.");
+      const maxIncrease = optionalCatalogDecimal(input.maxAutomaticIncreasePercent, "MAX_INCREASE_INVALID", "Ngưỡng tăng giá không hợp lệ.");
+      const requestedSource = input.source === undefined ? before.source : String(input.source);
+      if (requestedSource !== undefined && !["MANUAL", "API"].includes(requestedSource))
+        throw new CatalogError("SERVICE_SOURCE_INVALID", "Nguồn dịch vụ không hợp lệ.");
+      if (requestedSource === "API" && input.providerCost !== undefined)
+        throw new CatalogError("PROVIDER_COST_FORBIDDEN", "Giá vốn dịch vụ API phải lấy từ liên kết nhà cung cấp.");
+      const requestedProviderServiceId = String(input.providerServiceId ?? "").trim();
+      if (requestedSource === "MANUAL" && requestedProviderServiceId)
+        throw new CatalogError("PROVIDER_SERVICE_INVALID", "Dịch vụ thủ công không dùng liên kết NCC.");
+      const activeMapping = requestedSource === "API"
+        ? (await tx.serviceMapping.findMany({ where: { serviceId: id, active: true }, orderBy: { priority: "asc" } }))[0]
+        : null;
+      const providerChanged = requestedSource === "API" && requestedProviderServiceId && requestedProviderServiceId !== activeMapping?.providerServiceId;
+      const sourceChanged = requestedSource !== undefined && requestedSource !== before.source;
+      if (sourceChanged || providerChanged) {
+        if (!allowProviderMapping)
+          throw new CatalogError("PERMISSION_DENIED", "Không có quyền thay đổi nguồn dịch vụ hoặc liên kết NCC.");
+        if (siteId !== ROOT_SITE_ID) {
+          const site = await tx.site?.findUnique({ where: { id: siteId }, select: { panelType: true } });
+          if (site?.panelType !== "PANEL")
+            throw new CatalogError("CHILD_PANEL_PROVIDER_FORBIDDEN", "Child Panel không thể quản lý nhà cung cấp.");
+        }
+      }
+      let targetProviderService: any = null;
+      if (requestedSource === "API" && (sourceChanged || providerChanged || !activeMapping)) {
+        const providerServiceId = requestedProviderServiceId || activeMapping?.providerServiceId;
+        if (!providerServiceId)
+          throw new CatalogError("PROVIDER_SERVICE_NOT_FOUND", "Vui lòng chọn dịch vụ nhà cung cấp.");
+        targetProviderService = await tx.providerService.findFirst({
+          where: { id: providerServiceId, active: true, stale: false },
+        });
+        if (!targetProviderService)
+          throw new CatalogError("PROVIDER_SERVICE_NOT_FOUND", "Dịch vụ nhà cung cấp không tồn tại.");
+        const provider = await tx.provider.findFirst({
+          where: { id: targetProviderService.providerId, siteId, status: { in: ["ACTIVE", "DEGRADED"] }, deletedAt: null },
+        });
+        if (!provider)
+          throw new CatalogError("PROVIDER_UNAVAILABLE", "Nhà cung cấp không thuộc website này hoặc không hoạt động.");
+      }
       const data: any = {
+        ...(sourceChanged ? { source: requestedSource } : {}),
         ...(input.categoryId !== undefined
           ? { categoryId: String(input.categoryId) }
           : {}),
         ...(input.name !== undefined ? { name: name(input.name) } : {}),
+        ...(input.icon !== undefined ? { icon: safeImageUrl(input.icon) } : {}),
         ...(input.description !== undefined
           ? {
               description:
@@ -1986,10 +2147,25 @@ export class CatalogService {
         ...(input.cancel !== undefined
           ? { cancel: input.cancel === true }
           : {}),
-        ...(input.rate !== undefined ? { rate: decimalInput(input.rate) } : {}),
-        ...(input.providerCost !== undefined
-          ? { providerCost: decimalInput(input.providerCost, true) }
+        ...(input.rate !== undefined
+          ? { rate: catalogDecimal(input.rate, false, "RATE_INVALID", "Giá khách không hợp lệ.") }
           : {}),
+        ...(input.providerCost !== undefined
+          ? { providerCost: catalogDecimal(input.providerCost, true, "PROVIDER_COST_INVALID", "Giá vốn không hợp lệ.") }
+          : {}),
+        ...(input.pricingMode !== undefined
+          ? { pricingMode: enumInput(input.pricingMode, pricingModes, "PRICING_MODE_INVALID") }
+          : {}),
+        ...(markup !== null ? { defaultMarkupPercent: markup } : {}),
+        ...(fixedProfit !== null ? { defaultFixedProfit: fixedProfit } : {}),
+        ...(minProfit !== null ? { defaultMinProfit: minProfit } : {}),
+        ...(input.autoDecrease !== undefined
+          ? { autoDecrease: booleanInput(input.autoDecrease, "autoDecrease") }
+          : {}),
+        ...(input.safetyAction !== undefined
+          ? { safetyAction: enumInput(input.safetyAction, safetyActions, "SAFETY_ACTION_INVALID") }
+          : {}),
+        ...(maxIncrease !== null ? { maxAutomaticIncreasePercent: maxIncrease } : {}),
         ...(input.active !== undefined
           ? { active: Boolean(input.active) }
           : {}),
@@ -2000,12 +2176,35 @@ export class CatalogService {
           ? { max: integer(input.max, "max", 1) }
           : {}),
       };
+      if (targetProviderService)
+        data.providerCost = String(targetProviderService.rate);
+      if (requestedSource === "MANUAL" && [
+        "rate", "providerCost", "pricingMode", "defaultMarkupPercent",
+        "defaultFixedProfit", "defaultMinProfit",
+      ].some((field) => input[field] !== undefined) && moneyUnits(resolveCustomerRate({
+        service: { ...before, ...data },
+        providerCost: data.providerCost ?? before.providerCost,
+      })) === 0n)
+        throw new CatalogError("RATE_INVALID", "Giá khách theo cấu hình định giá phải lớn hơn 0.");
       if ((data.min ?? before.min) > (data.max ?? before.max))
         throw new CatalogError(
           "RANGE_INVALID",
           "Maximum must be at least minimum",
         );
       const item = await tx.service.update({ where: { id }, data });
+      if (sourceChanged && requestedSource === "MANUAL")
+        await tx.serviceMapping.updateMany({ where: { serviceId: id, active: true }, data: { active: false, syncAll: false } });
+      if (targetProviderService) {
+        await tx.serviceMapping.updateMany({
+          where: { serviceId: id, active: true, providerServiceId: { not: targetProviderService.id } },
+          data: { active: false },
+        });
+        await tx.serviceMapping.upsert({
+          where: { serviceId_providerServiceId: { serviceId: id, providerServiceId: targetProviderService.id } },
+          create: { serviceId: id, providerServiceId: targetProviderService.id, priority: 0, active: true, syncAll: true, disabledPolicy: "REQUIRE_REVIEW" },
+          update: { priority: 0, active: true },
+        });
+      }
       const manualSyncOverride: any = {};
       if (input.name !== undefined && input.name !== before.name)
         manualSyncOverride.syncName = false;
@@ -2311,8 +2510,8 @@ export class CatalogService {
         action,
         resource,
         resourceId,
-        before: before ? JSON.parse(JSON.stringify(before)) : null,
-        after: JSON.parse(JSON.stringify(after)),
+        before: before ? auditJson(before) : null,
+        after: auditJson(after),
       },
     });
   }

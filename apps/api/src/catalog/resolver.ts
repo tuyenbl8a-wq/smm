@@ -89,7 +89,7 @@ export class PricingResolver {
             providerCost: String(service.providerCost),
             safetyCost: moneyUnits(service.providerCost),
           }
-        : await this.resolveEffectiveProviderCost(serviceId, tx, user?.siteId);
+        : await this.resolveEffectiveProviderCost(serviceId, tx, service.siteId);
     const group = user?.priceGroupId
       ? await tx.priceGroup.findFirst({
           where: { id: user.priceGroupId, active: true },

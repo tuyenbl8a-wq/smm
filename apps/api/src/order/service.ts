@@ -144,9 +144,7 @@ export class OrderService {
             "Provider mapping unavailable",
           );
         const baseRate = units(resolved.rate);
-        const siteMarkup = BigInt(
-          String(siteRule?.markupPercent ?? 0).split(".")[0] || "0",
-        );
+        const siteMarkup = units(siteRule?.markupPercent ?? 0);
         const siteFixed = units(siteRule?.fixedProfit ?? 0);
         const siteMinimum = units(siteRule?.minProfit ?? 0);
         const saleRate =
@@ -155,7 +153,7 @@ export class OrderService {
             : siteRule
               ? text(
                   baseRate +
-                    (baseRate * siteMarkup) / 100n +
+                    (baseRate * siteMarkup) / (100n * SCALE) +
                     (siteFixed > siteMinimum ? siteFixed : siteMinimum),
                 )
               : resolved.rate;

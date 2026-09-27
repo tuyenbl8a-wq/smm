@@ -1684,10 +1684,37 @@ test("service creation renders, validates, trims and submits its audit reason", 
   assert.equal(fiveHundred.valid, true);
   assert.equal(fiveHundred.value.length, 500);
 
-  assert.match(script, /formFields=kind==='services'&&a==='create'\?\[\.\.\.fields,\{name:'reason',label:'Lý do \*',type:'textarea'/);
+  assert.match(script, /formFields=kind==='services'\?\(a==='create'\?\[\.\.\.fields\.filter/);
+  assert.match(script, /\{name:'reason',label:'Lý do \*',type:'textarea'/);
   assert.match(script, /placeholder:'Nhập lý do thực hiện thay đổi này…'/);
   assert.match(script, /if\(reasonField\)\{const validation=validateServiceReason\(body\.reason\);if\(!validation\.valid\)\{error\.textContent=validation\.message;reasonField\.focus\(\);return\}body\.reason=validation\.value\}/);
   assert.match(script, /api\.post\('\/api\/v1\/admin\/catalog\/.*body\)/);
+});
+
+test("service create validates positive money decimals without converting strings", () => {
+  const script = inlineAdminScript("/admin/services");
+  const start = script.indexOf("function validateMoneyDecimal");
+  const end = script.indexOf("function redact", start);
+  assert.ok(start >= 0 && end > start, "Admin includes its shared decimal validator");
+  const validate = vm.runInNewContext(script.slice(start, end) + "\nvalidateMoneyDecimal");
+  for (const value of ["1000", "1000.50", "0.00000001", " 1000.50 "]) {
+    const result = validate(value, false);
+    assert.equal(result.valid, true);
+    assert.equal(result.value, value.trim());
+    assert.equal(typeof result.value, "string");
+  }
+  for (const value of ["", "1,000", "1000đ", "12.123456789", "1234567890123"]) {
+    assert.deepEqual({ ...validate(value, false) }, { valid: false, reason: "FORMAT" });
+  }
+  assert.deepEqual({ ...validate("0", false) }, { valid: false, reason: "ZERO" });
+  assert.match(script, /name:'rate',label:'Giá khách',required:true,decimal:true,allowZero:false,inputmode:'decimal'/);
+  assert.match(script, /Giá khách phải là số dương hợp lệ, tối đa 8 chữ số thập phân\./);
+  assert.match(script, /body\[f\.name\]=validation\.value/);
+  assert.match(script, /name:'providerCost',label:'Giá vốn',required:true,decimal:true,allowZero:true,inputmode:'decimal',manualOnly:true/);
+  assert.match(script, /f\.manualOnly&&body\.source==='API'/);
+  assert.match(script, /f\.optionalDecimal&&String\(body\[f\.name\]\?\?''\)\.trim\(\)===''/);
+  assert.match(script, /providerService\.required=provider/);
+  assert.match(script, /pricingMode:'FIXED',providerCost:'0'/);
 });
 
 test("order selection is page-local and advanced filters are collapsed", () => {

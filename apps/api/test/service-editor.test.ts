@@ -297,6 +297,7 @@ function creationDatabase() {
     mappings: any[] = [],
     rules: any[] = [],
     audits: any[] = [];
+  const decimal = (value: string) => ({ toJSON: () => value, toString: () => value });
   const providerService = {
     id: "ps-create",
     providerId: "provider-1",
@@ -306,6 +307,10 @@ function creationDatabase() {
     type: "DEFAULT",
   };
   const tx: any = {
+    provider: { findMany: async ({ where }: any) =>
+      where.siteId === "00000000-0000-4000-8000-000000000001"
+        ? [{ id: "provider-1" }]
+        : [] },
     serviceCategory: {
       findFirst: async ({ where }: any) =>
         where.id === "category-1" ? { id: "category-1", active: true } : null,
@@ -316,12 +321,17 @@ function creationDatabase() {
     },
     service: {
       create: async ({ data }: any) => {
+        if (data.serviceNumber !== undefined)
+          throw new Error("serviceNumber must be database-generated");
         const row = {
           id: `service-${services.length + 1}`,
           createdAt: new Date(),
           updatedAt: new Date(),
           deletedAt: null,
           ...data,
+          serviceNumber: 9_007_199_254_740_993_123_456n + BigInt(services.length),
+          rate: decimal(String(data.rate)),
+          providerCost: decimal(String(data.providerCost)),
         };
         services.push(row);
         return row;
@@ -383,6 +393,7 @@ test("creates manual and provider services with exactly three tier prices", asyn
     type: "DEFAULT",
     rate: "1.00000000",
     providerCost: "0.40000000",
+    customFields: { nested: [null, { enabled: true }] },
     min: 10,
     max: 1000,
     reason: "Tạo mới",
@@ -393,9 +404,21 @@ test("creates manual and provider services with exactly three tier prices", asyn
     },
   });
   assert.equal(manual.service.source, "MANUAL");
+  assert.equal(state().services.length, 1);
+  assert.equal(manual.service.serviceNumber, 9_007_199_254_740_993_123_456n);
+  assert.equal(manual.service.rate.toString(), "1.00000000");
   assert.equal(state().rules.length, 3);
   assert.equal(state().audits[0].actorId, "admin-1");
+  assert.equal(state().audits[0].siteId, "00000000-0000-4000-8000-000000000001");
   assert.equal(state().audits[0].before, null);
+  assert.equal(state().audits[0].after.serviceNumber, manual.service.serviceNumber.toString());
+  assert.equal(typeof state().audits[0].after.serviceNumber, "string");
+  assert.equal(state().audits[0].after.rate, "1.00000000");
+  assert.equal(state().audits[0].after.providerCost, "0.40000000");
+  assert.equal(state().audits[0].after.createdAt, manual.service.createdAt.toISOString());
+  assert.equal(state().audits[0].after.deletedAt, null);
+  assert.deepEqual(state().audits[0].after.customFields, { nested: [null, { enabled: true }] });
+  assert.equal(state().audits[0].action, "SERVICE_CREATE");
   assert.equal(state().audits[0].after.reason, "Tạo mới");
   const provider = await catalog.createService("admin-1", "00000000-0000-4000-8000-000000000001", {
     source: "API",
@@ -408,7 +431,7 @@ test("creates manual and provider services with exactly three tier prices", asyn
     max: 1000,
     reason: "Liên kết NCC",
   });
-  assert.equal(provider.service.providerCost, "0.50000000");
+  assert.equal(provider.service.providerCost.toString(), "0.50000000");
   assert.equal(provider.mapping.providerServiceId, "ps-create");
   assert.equal(state().mappings.length, 1);
 });
@@ -435,7 +458,9 @@ test("clones service disabled with pricing and mapping copied safely", async () 
   const clone = await catalog.cloneService("admin-1", original.service.id, {
     reason: "Tạo biến thể",
   });
+  assert.equal(state().services.length, 2);
   assert.equal(clone.active, false);
+  assert.equal(clone.serviceNumber, original.service.serviceNumber + 1n);
   assert.match(clone.name, /bản sao/);
   assert.equal(
     state().mappings.filter((row) => row.serviceId === clone.id).length,
@@ -448,6 +473,9 @@ test("clones service disabled with pricing and mapping copied safely", async () 
   assert.equal(state().audits.at(-1).action, "SERVICE_CLONE");
   assert.equal(state().audits.at(-1).actorId, "admin-1");
   assert.equal(state().audits.at(-1).before.id, original.service.id);
+  assert.equal(state().audits.at(-1).before.serviceNumber, original.service.serviceNumber.toString());
+  assert.equal(state().audits.at(-1).after.serviceNumber, clone.serviceNumber.toString());
+  assert.equal(state().audits.at(-1).after.rate, "0.65000000");
   assert.equal(state().audits.at(-1).after.reason, "Tạo biến thể");
 });
 

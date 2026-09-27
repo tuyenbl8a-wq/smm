@@ -135,6 +135,49 @@ test("manual order is persisted without provider adapter outbox or fake provider
   assert.equal(order.status, "PENDING");
 });
 
+test("manual FIXED 1000 service charges 666 once and idempotent retry preserves history", async () => {
+  const siteId = "00000000-0000-4000-8000-000000000001";
+  const service = {
+    id: "manual-1000", siteId, source: "MANUAL", active: true, deletedAt: null,
+    priceReviewStatus: "OK", min: 100, max: 10000, rate: "1000.00000000",
+    providerCost: "0.00000000", pricingMode: "FIXED", defaultMarkupPercent: "0",
+    defaultFixedProfit: "0", defaultMinProfit: "0",
+  };
+  let persisted: any = null, debits = 0, outbox = 0;
+  const ledger: any[] = [], history: any[] = [];
+  const tx: any = {
+    service: { findFirst: async () => service, findUnique: async () => service },
+    user: { findFirst: async () => ({ siteId }), findUnique: async () => ({ siteId, priceGroupId: null }) },
+    order: {
+      findFirst: async () => persisted,
+      create: async ({ data }: any) => (persisted = { id: 42n, publicId: "manual-order-42", ...data }),
+    },
+    walletTransaction: { create: async ({ data }: any) => { ledger.push(data); return data; } },
+    orderHistory: { create: async ({ data }: any) => { history.push(data); return data; } },
+    providerOutbox: { create: async () => { outbox++; } },
+    $queryRawUnsafe: async (sql: string, ...args: any[]) => {
+      if (sql.startsWith("SELECT")) return [{ balance: "1000.00000000" }];
+      debits++;
+      assert.equal(args[0], "666.00000000");
+      return [{ id: "wallet-1", before: "1000.00000000", after: "334.00000000" }];
+    },
+  };
+  const db: any = { ...tx, $transaction: async (work: any) => work(tx) };
+  const input = { serviceId: service.id, quantity: 666, link: "https://example.com/post" };
+  const first = await new OrderService(db).create("customer-1", siteId, input, "manual-fixed-1000-key");
+  const retry = await new OrderService(db).create("customer-1", siteId, input, "manual-fixed-1000-key");
+  assert.equal(first.charge, "666.00000000");
+  assert.equal(first.orderNumber, "100042");
+  assert.deepEqual(retry, first);
+  assert.equal(debits, 1);
+  assert.equal(ledger.length, 1);
+  assert.equal(ledger[0].balanceBefore, "1000.00000000");
+  assert.equal(ledger[0].balanceAfter, "334.00000000");
+  assert.equal(history.length, 1);
+  assert.equal(outbox, 0);
+  assert.equal(persisted.input.source, "MANUAL");
+});
+
 test("API order snapshots mapping and creates exactly one provider outbox", async () => {
   const { db, outbox } = routingDatabase("API");
   await new OrderService(db).create(

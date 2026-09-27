@@ -282,8 +282,14 @@ test("shared service form supports Manual, provider source, three tiers and clon
     "servicePrevious",
     "serviceNext",
     "result.failed",
+    "Giá trị phải là số thập phân hợp lệ, tối đa 8 chữ số thập phân.",
+    "Giá khách phải lớn hơn 0.",
+    "rateUnits<=0n",
   ])
     assert.match(page, new RegExp(contract.replaceAll("/", "\\/")));
+  assert.ok(page.includes("values.rate=fromUnits(rateUnits)"));
+  assert.match(page, /\\d\{1,12\}.*\\d\{1,8\}/);
+  assert.match(page, /pricing\[code\]\.value=String\(pricing\[code\]\.value\?\?''\)\.trim\(\)/);
 });
 
 test("service editor requires audited reason and uses the same three-tier fields", () => {

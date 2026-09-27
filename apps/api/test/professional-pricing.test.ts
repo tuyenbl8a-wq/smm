@@ -150,3 +150,26 @@ test("resolver uses the account group and prices against expensive failover", as
   assert.equal(result.rate, "126.50000000");
   assert.equal(result.group.code, "DAI_LY_VIP");
 });
+
+test("inherited API service resolves providers owned by its direct parent", async () => {
+  const parentSiteId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const childSiteId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  let providerScope: any;
+  const db: any = {
+    service: { findUnique: async () => ({
+      ...service, id: "parent-service", siteId: parentSiteId, source: "API",
+      active: true, deletedAt: null, priceReviewStatus: "OK",
+    }) },
+    user: { findUnique: async () => ({ siteId: childSiteId, priceGroupId: null }) },
+    serviceMapping: { findMany: async () => [{ id: "mapping", providerServiceId: "provider-service", active: true, priority: 0, syncAll: true }] },
+    providerService: { findMany: async () => [{ id: "provider-service", providerId: "parent-provider", rate: "100", active: true, stale: false }] },
+    provider: { findMany: async ({ where }: any) => {
+      providerScope = where;
+      return [{ id: "parent-provider", siteId: parentSiteId, status: "ACTIVE" }];
+    } },
+  };
+  const result = await new PricingResolver(db).resolveCustomerPrice("child-user", "parent-service");
+  assert.equal(providerScope.siteId, parentSiteId);
+  assert.equal(result.provider.siteId, parentSiteId);
+  assert.equal(result.rate, "120.00000000");
+});
