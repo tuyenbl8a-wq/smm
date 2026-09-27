@@ -12,7 +12,7 @@ function makeHarness() {
   const rows = new Map<string, any>();
   const setting = {
     findMany: async ({ where }: any) => [...rows.entries()]
-      .filter(([key, value]) => key.startsWith(`${where.siteId}:`) && value.encrypted === false)
+      .filter(([key, value]) => key.startsWith(`${where.siteId}:`) && value.encrypted === false && (!where.key || key === `${where.siteId}:${where.key}`))
       .map(([key, value]) => ({ siteId: where.siteId, group: "general", key: key.split(":").slice(1).join(":"), value: value.value })),
     upsert: async ({ where, create, update }: any) => {
       const siteId = where.siteId_group_key.siteId;
@@ -138,4 +138,91 @@ test("theme settings, drafts and custom blocks cannot cross tenant boundaries in
   assert.equal(h.rows.get(`${SITE_B}:themeOverrides`).value.landing.content.nodes["hero.title"].text, "B update");
   await h.call(SITE_B, "POST", { themeOverrides: {} }); // reset only B
   assert.deepEqual(h.rows.get(`${SITE_B}:themeOverrides`).value, {});
+});
+
+test("the authenticated settings API applies a theme and merges only the editor override patch", async () => {
+  const h = makeHarness();
+  await h.admin.updateSettings("admin-a", {
+    themeMode: "GLOBAL",
+    themeGlobal: "AI_COSMIC_FUTURE",
+    themeOverrides: {
+      auth: { content: { nodes: { "auth.title": { text: "Đăng nhập riêng" } } } },
+      customer: { colors: { accent: "#aa5500" } },
+    },
+  }, SITE_A);
+
+  const applyBody = {
+    themeMode: "GLOBAL",
+    themeGlobal: "OCEAN_PREMIUM",
+    themeOverrides: {
+      colors: { primary: "#087ea4" },
+      content: {},
+      layout: {},
+      typography: {},
+    },
+  };
+  const applied = await h.call(SITE_A, "POST", applyBody);
+  assert.equal(applied.statusCode, 200);
+  assert.deepEqual(applied.body.data.updated, ["themeMode", "themeGlobal", "themeOverrides"]);
+  assert.equal(h.rows.get(`${SITE_A}:themeMode`).value, "GLOBAL");
+  assert.equal(h.rows.get(`${SITE_A}:themeGlobal`).value, "OCEAN_PREMIUM");
+  assert.equal(h.rows.get(`${SITE_A}:themeOverrides`).value.colors.primary, "#087ea4");
+  assert.equal(
+    h.rows.get(`${SITE_A}:themeOverrides`).value.auth.content.nodes["auth.title"].text,
+    "Đăng nhập riêng",
+  );
+  assert.equal(h.rows.get(`${SITE_A}:themeOverrides`).value.customer.colors.accent, "#aa5500");
+
+  const reloaded = await h.call(SITE_A, "GET");
+  assert.equal(reloaded.statusCode, 200);
+  const persisted = new Map(reloaded.body.data.map((row: any) => [row.key, row.value]));
+  assert.equal(persisted.get("themeGlobal"), "OCEAN_PREMIUM");
+  assert.equal(persisted.get("themeMode"), "GLOBAL");
+  assert.equal((persisted.get("themeOverrides") as any).colors.primary, "#087ea4");
+
+  const referenceThemes = [
+    "CREATOR_POP",
+    "URBAN_LIME_BRUTAL",
+    "CYBER_NEON_CITY",
+    "PRISM_GLASS",
+    "OCEAN_PREMIUM",
+    "BLUE_BUSINESS",
+    "ZEN_JAPANESE",
+    "BLACK_GOLD_LUXURY",
+    "BEIGE_EDITORIAL",
+  ];
+  for (const theme of referenceThemes) {
+    const result = await h.call(SITE_A, "POST", {
+      themeMode: "GLOBAL",
+      themeGlobal: theme,
+    });
+    assert.equal(result.statusCode, 200);
+    const afterReload = await h.call(SITE_A, "GET");
+    const settings = new Map(afterReload.body.data.map((row: any) => [row.key, row.value]));
+    assert.equal(settings.get("themeMode"), "GLOBAL");
+    assert.equal(settings.get("themeGlobal"), theme);
+  }
+
+  const separate = await h.call(SITE_A, "POST", {
+    themeMode: "SEPARATE",
+    themePublic: "OCEAN_PREMIUM",
+    themeAuth: "BLACK_GOLD_LUXURY",
+    themeCustomer: "ZEN_JAPANESE",
+  });
+  assert.equal(separate.statusCode, 200);
+  const separateReload = await h.call(SITE_A, "GET");
+  const separateSettings = new Map(separateReload.body.data.map((row: any) => [row.key, row.value]));
+  assert.equal(separateSettings.get("themeMode"), "SEPARATE");
+  assert.equal(separateSettings.get("themePublic"), "OCEAN_PREMIUM");
+  assert.equal(separateSettings.get("themeAuth"), "BLACK_GOLD_LUXURY");
+  assert.equal(separateSettings.get("themeCustomer"), "ZEN_JAPANESE");
+
+  const invalid = await h.call(SITE_A, "POST", {
+    themeGlobal: "CREATOR_POP",
+    themeOverrides: { colors: { primary: "not-a-color" } },
+  });
+  assert.equal(invalid.statusCode, 422);
+  assert.equal(invalid.body.error.code, "SETTING_INVALID");
+  assert.match(invalid.body.error.message, /themeOverrides/);
+  assert.equal(h.rows.get(`${SITE_A}:themeGlobal`).value, "BEIGE_EDITORIAL");
 });

@@ -6,6 +6,10 @@ import { adminPage } from "../dist/admin.js";
 import { landingPage, authPage } from "../dist/page.js";
 import { customerPage } from "../dist/customer.js";
 import { themeEditorManifests, themeIds } from "../dist/themes.js";
+import { AdminOperationsService } from "../../api/dist/admin/operations.js";
+import { AuthHandler } from "../../api/dist/auth/handler.js";
+import { ROOT_SITE_ID } from "../../api/dist/tenant/context.js";
+import { csrfValue } from "../../api/dist/auth/security.js";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(
@@ -14,6 +18,49 @@ const { chromium } = require(
 );
 const saved = new Map();
 const writes = [];
+let activeCapture = null;
+const settingModel = {
+  findMany: async ({ where = {} }) => {
+    const keys = typeof where.key === "string" ? [where.key] : where.key?.in;
+    const groups = typeof where.group === "string" ? [where.group] : where.group?.in;
+    return [...saved.entries()]
+      .filter(([key]) => !keys || keys.includes(key))
+      .map(([key, value]) => ({ siteId: ROOT_SITE_ID, group: "general", key, value, encrypted: false }))
+      .filter((row) => !groups || groups.includes(row.group))
+      .map(({ encrypted, ...row }) => row);
+  },
+  upsert: async ({ where, create, update }) => {
+    const key = where.siteId_group_key.key;
+    const value = update?.value ?? create.value;
+    saved.set(key, value);
+    return { key, value };
+  },
+};
+const sessionSecret = "theme-apply-browser-test-secret";
+const adminService = new AdminOperationsService({
+  setting: settingModel,
+  site: { findUnique: async () => ({ name: "Preview QA" }) },
+  siteDomain: { findFirst: async () => null },
+  panelSubscription: { findFirst: async () => null },
+  panelRentalPlan: { findUnique: async () => null },
+  $transaction: async (run) => run({ setting: settingModel, auditLog: { create: async () => ({}) } }),
+});
+const realUpdateSettings = adminService.updateSettings.bind(adminService);
+adminService.updateSettings = async (actorId, input, siteId) => {
+  if (activeCapture) activeCapture.body = structuredClone(input);
+  return realUpdateSettings(actorId, input, siteId);
+};
+const settingsHandler = new AuthHandler(
+  {},
+  { apiUrl: new URL("http://localhost"), sessionSecret },
+  undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+  adminService,
+);
+settingsHandler.authenticate = async () => ({
+  user: { id: "theme-admin", siteId: ROOT_SITE_ID },
+  access: { roles: ["SUPER_ADMIN"], permissions: ["settings.view", "settings.manage"] },
+  rawToken: "theme-admin-token",
+});
 let additionalChecks = 0;
 const pageErrors = [];
 const verify = (condition, message) => {
@@ -43,20 +90,28 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (url.pathname === "/api/v1/public/settings") {
-    res.end(JSON.stringify({ data: Object.fromEntries(saved) }));
+    await settingsHandler.handle(req, res, url.pathname, { id: ROOT_SITE_ID, siteNumber: 100000n, parentSiteId: null, panelType: "PANEL", status: "ACTIVE", depth: 0 });
     return;
   }
   if (url.pathname === "/api/v1/admin/settings" && req.method === "GET") {
-    res.end(JSON.stringify({ data: [...saved].map(([key, value]) => ({ key, value })) }));
+    await settingsHandler.handle(req, res, url.pathname, { id: ROOT_SITE_ID, siteNumber: 100000n, parentSiteId: null, panelType: "PANEL", status: "ACTIVE", depth: 0 });
     return;
   }
   if (url.pathname === "/api/v1/admin/settings" && req.method === "POST") {
-    let body = "";
-    for await (const chunk of req) body += chunk;
-    const value = JSON.parse(body);
-    writes.push(value);
-    for (const [key, item] of Object.entries(value)) saved.set(key, item);
-    res.end(JSON.stringify({ data: { updated: Object.keys(value) } }));
+    const capture = { method: req.method, url: url.pathname, body: null, status: 0, response: "" };
+    activeCapture = capture;
+    const originalEnd = res.end.bind(res);
+    res.end = (chunk, ...args) => {
+      capture.status = res.statusCode;
+      capture.response = String(chunk ?? "");
+      writes.push(capture);
+      return originalEnd(chunk, ...args);
+    };
+    try {
+      await settingsHandler.handle(req, res, url.pathname, { id: ROOT_SITE_ID, siteNumber: 100000n, parentSiteId: null, panelType: "PANEL", status: "ACTIVE", depth: 0 });
+    } finally {
+      activeCapture = null;
+    }
     return;
   }
   if (url.pathname.startsWith("/api/")) {
@@ -97,7 +152,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on('console', message => { if (message.type() === 'error') console.error('BROWSER', message.text()); });
   page.on("pageerror", (error) => pageErrors.push({ url: page.url(), message: error.message }));
-  await page.context().addCookies([{ name: "smm_csrf", value: "editor-csrf", url: origin }]);
+  await page.context().addCookies([{ name: "smm_csrf", value: csrfValue("theme-admin-token", sessionSecret), url: origin }]);
   await page.goto(origin + "/__editor?theme=PRISM_GLASS");
   const frame = page.frameLocator("#preview");
   await frame.locator('[data-theme-node="hero.title"]').waitFor();
@@ -182,9 +237,13 @@ try {
   await page.locator("#apply").click();
   await page.getByText("Đã áp dụng giao diện").waitFor();
   const applied = writes.at(-1);
-  assert.equal(applied.themeMode, "SEPARATE");
-  assert.equal(applied.themeAuth, "PRISM_GLASS");
-  assert.equal(applied.themeOverrides.auth.content.nodes["auth.title"].text, "Đăng nhập an toàn");
+  assert.equal(applied.method, "POST");
+  assert.equal(applied.url, "/api/v1/admin/settings");
+  assert.equal(applied.status, 200);
+  assert.equal(JSON.parse(applied.response).success, true);
+  assert.equal(applied.body.themeMode, "SEPARATE");
+  assert.equal(applied.body.themeAuth, "PRISM_GLASS");
+  assert.equal(applied.body.themeOverrides.auth.content.nodes["auth.title"].text, "Đăng nhập an toàn");
   await page.evaluate(() => window.postMessage({
     type: "theme-node-select", theme: "PRISM_GLASS", scope: "landing",
     nodeId: "hero.title", nodeType: "heading", text: "spoofed", href: "", hidden: false,
@@ -326,11 +385,15 @@ try {
   const referenceThemes = themeIds.filter((id) => id !== "AURORA_MODERN");
   const customerRoutes = ["/dashboard", "/orders/new", "/orders", "/services", "/wallet", "/panels", "/account"];
   for (const theme of referenceThemes) {
+    saved.delete("themeDraft");
     await page.goto(origin + "/__editor?theme=" + theme);
     await page.locator("#scope").selectOption("landing");
     await page.locator("#applyMode").selectOption("GLOBAL");
+    const writesBeforeApply = writes.length;
     await page.locator("#apply").click();
     await page.getByText("Đã áp dụng giao diện").waitFor();
+    const request = writes[writesBeforeApply];
+    verify(request?.method === "POST" && request.url === "/api/v1/admin/settings" && request.status === 200 && request.body.themeMode === "GLOBAL" && request.body.themeGlobal === theme && JSON.parse(request.response).success === true, `${theme} editor Apply reaches the real settings handler with the canonical selection body and receives HTTP 200`);
     verify(saved.get("themeMode") === "GLOBAL" && saved.get("themeGlobal") === theme, `${theme} global apply persists`);
 
     await page.reload();
@@ -380,8 +443,8 @@ try {
   saved.set("themeMode", "GLOBAL");
   saved.set("themeGlobal", "AI_COSMIC_FUTURE");
   const admin = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await admin.context().addCookies([{ name: "smm_csrf", value: csrfValue("theme-admin-token", sessionSecret), url: origin }]);
   admin.on("pageerror", (error) => pageErrors.push({ url: admin.url(), message: error.message }));
-  await admin.addInitScript(() => { window.confirmBox = async () => true; });
   await admin.goto(origin + "/__admin/themes");
   await admin.locator('.theme-card[data-preset="AI_COSMIC_FUTURE"]').waitFor();
   const activeCard = admin.locator(".theme-card.theme-active");
@@ -395,17 +458,23 @@ try {
   await admin.goto(origin + "/__admin/themes");
   await admin.locator('.theme-card[data-preset="CREATOR_POP"] [data-action="apply"]').click();
   await admin.waitForFunction(() => document.querySelector('.theme-card.theme-active')?.dataset.preset === "CREATOR_POP" && [...document.querySelectorAll(".theme-card [data-active-label]")].filter((badge) => getComputedStyle(badge).display !== "none").length === 1);
-  verify(saved.get("themeGlobal") === "CREATOR_POP", "Admin Apply persists the selected theme in the mock API");
+  const cardApply = writes.at(-1);
+  verify(cardApply?.method === "POST" && cardApply.url === "/api/v1/admin/settings" && cardApply.status === 200 && JSON.stringify(cardApply.body) === JSON.stringify({ themeMode: "GLOBAL", themeGlobal: "CREATOR_POP" }), "Admin card Apply sends the canonical settings body to the real handler and receives HTTP 200");
+  verify(saved.get("themeGlobal") === "CREATOR_POP", "Admin Apply persists the selected theme through AuthHandler and AdminOperationsService");
   verify(await activeCard.count() === 1 && await activeCard.getAttribute("data-preset") === "CREATOR_POP", "successful Apply marks only the newly persisted theme active");
   await admin.reload();
   await admin.waitForFunction(() => document.querySelector('.theme-card.theme-active')?.dataset.preset === "CREATOR_POP");
   verify(await admin.locator(".theme-card.theme-active").count() === 1 && await admin.locator(".theme-card [data-active-label]:visible").count() === 1, "active badge survives Admin refresh without labeling every theme in use");
   await admin.close();
+  await page.close();
+  await admin.context().close();
+  await page.context().close();
 
   assert.deepEqual(pageErrors, [], "theme editor and applied theme routes produce no browser runtime errors");
   additionalChecks += 1;
   console.log(JSON.stringify({ legacyChecks: 45 + themeIds.length * 7, additionalChecks, checks: 45 + themeIds.length * 7 + additionalChecks, themes: themeIds.length, writes: writes.length, failures: 0 }));
 } finally {
-  await browser.close();
+  server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
+  await browser.close();
 }

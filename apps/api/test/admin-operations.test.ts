@@ -1003,14 +1003,14 @@ test("structured theme overrides reject raw executable and unknown properties", 
       service.updateSettings("admin", {
         themeOverrides: { colors: { primary: "javascript:alert(1)" } },
       }),
-    /supported settings/,
+    /Thiết lập không hợp lệ: themeOverrides/,
   );
   await assert.rejects(
     () =>
       service.updateSettings("admin", {
         themeOverrides: { customCss: { body: "display:none" } },
       }),
-    /supported settings/,
+    /Thiết lập không hợp lệ: themeOverrides/,
   );
   const writesBeforeDraft = writes.length;
   await service.updateSettings("admin", {

@@ -3304,8 +3304,30 @@ export class AdminOperationsService {
     const supportedCount = Object.keys(input).filter((key) =>
       allowed.has(key),
     ).length;
+    const acceptedKeys = new Set(entries.map(([key]) => key));
+    const rejectedSettings = Object.keys(input).filter(
+      (key) => allowed.has(key) && !acceptedKeys.has(key),
+    );
+    if (rejectedSettings.length) {
+      if (rejectedSettings.includes("themeOverrides"))
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "admin_settings_rejected",
+            siteId,
+            keys: rejectedSettings,
+          }),
+        );
+      throw new AdminOperationError(
+        "SETTING_INVALID",
+        `Thiết lập không hợp lệ: ${rejectedSettings.join(", ")}. Không có thay đổi nào được lưu.`,
+      );
+    }
     if (!entries.length || entries.length !== supportedCount)
-      throw new AdminOperationError("SETTING_INVALID", "No supported settings");
+      throw new AdminOperationError(
+        "SETTING_INVALID",
+        "Không có thiết lập hợp lệ để lưu.",
+      );
     const normalizeThemeStrings = (value: any): any => {
       if (typeof value === "string") return value.normalize("NFC");
       if (Array.isArray(value)) return value.map(normalizeThemeStrings);
@@ -3318,11 +3340,76 @@ export class AdminOperationsService {
         );
       return value;
     };
+    const themeOverridesPatch = entries.find(
+      ([key]) => key === "themeOverrides",
+    )?.[1];
+    let mergedThemeOverrides = themeOverridesPatch;
+    if (
+      themeOverridesPatch &&
+      Object.keys(themeOverridesPatch).length > 0 &&
+      typeof this.db.setting?.findMany === "function"
+    ) {
+      const currentRows = await this.db.setting.findMany({
+        where: { siteId, group: "general", key: "themeOverrides", encrypted: false },
+        select: { value: true },
+        take: 1,
+      });
+      const current = currentRows[0]?.value;
+      if (current && typeof current === "object" && !Array.isArray(current)) {
+        const next = { ...current };
+        const themeGroups = new Set([
+          "colors",
+          "content",
+          "layout",
+          "typography",
+        ]);
+        const scopeGroups = new Set(["landing", "auth", "customer"]);
+        for (const [group, fields] of Object.entries(themeOverridesPatch)) {
+          if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+            next[group] = fields;
+            continue;
+          }
+          if (scopeGroups.has(group)) {
+            const currentScope = next[group];
+            const scopeValue =
+              currentScope && typeof currentScope === "object" && !Array.isArray(currentScope)
+                ? { ...currentScope }
+                : {};
+            for (const [scopeGroup, scopeFields] of Object.entries(fields)) {
+              const currentFields = scopeValue[scopeGroup];
+              scopeValue[scopeGroup] =
+                themeGroups.has(scopeGroup) &&
+                currentFields &&
+                typeof currentFields === "object" &&
+                !Array.isArray(currentFields) &&
+                scopeFields &&
+                typeof scopeFields === "object" &&
+                !Array.isArray(scopeFields)
+                  ? { ...currentFields, ...scopeFields }
+                  : scopeFields;
+            }
+            next[group] = scopeValue;
+          } else {
+            const currentFields = next[group];
+            next[group] =
+              themeGroups.has(group) &&
+              currentFields &&
+              typeof currentFields === "object" &&
+              !Array.isArray(currentFields)
+                ? { ...currentFields, ...fields }
+                : fields;
+          }
+        }
+        mergedThemeOverrides = next;
+      }
+    }
     const persistedEntries = entries.map(([key, value]) => [
       key,
-      key === "themeContent" || key === "themeOverrides" || key === "themeDraft"
-        ? normalizeThemeStrings(value)
-        : value,
+      key === "themeOverrides"
+        ? normalizeThemeStrings(mergedThemeOverrides)
+        : key === "themeContent" || key === "themeDraft"
+          ? normalizeThemeStrings(value)
+          : value,
     ] as const);
     return this.db.$transaction(async (tx: any) => {
       for (const [key, value] of persistedEntries)

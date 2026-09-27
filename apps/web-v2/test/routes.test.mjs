@@ -110,7 +110,6 @@ function themeAdminHarness(allowed, selectedMode = "GLOBAL") {
     bindActions: (action) => {
       context.action = action;
     },
-    confirmBox: async () => true,
     api: { post: async (...args) => writes.push(args) },
     toast() {},
     load() {},
