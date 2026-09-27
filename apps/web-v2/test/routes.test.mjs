@@ -1663,6 +1663,33 @@ test("catalog and price-group CTAs use canonical tenant permissions", () => {
   assert.doesNotMatch(adminOperations, /moduleHeader\([^\n]+services\.manage/);
 });
 
+test("service creation renders, validates, trims and submits its audit reason", () => {
+  const script = inlineAdminScript("/admin/services");
+  const start = script.indexOf("function validateServiceReason");
+  const end = script.indexOf("function redact", start);
+  assert.ok(start >= 0 && end > start, "the rendered Admin script includes the reason validator");
+  const validate = vm.runInNewContext(
+    script.slice(start, end) + "\nvalidateServiceReason",
+  );
+  const invalidMessage = "Lý do phải từ 3 đến 500 ký tự sau khi bỏ khoảng trắng.";
+  for (const value of ["", " ", "a", "ab", "x".repeat(501)]) {
+    const result = validate(value);
+    assert.equal(result.valid, false);
+    assert.equal(result.message, invalidMessage);
+  }
+  const three = validate("  abc  ");
+  assert.equal(three.valid, true);
+  assert.equal(three.value, "abc");
+  const fiveHundred = validate("x".repeat(500));
+  assert.equal(fiveHundred.valid, true);
+  assert.equal(fiveHundred.value.length, 500);
+
+  assert.match(script, /formFields=kind==='services'&&a==='create'\?\[\.\.\.fields,\{name:'reason',label:'Lý do \*',type:'textarea'/);
+  assert.match(script, /placeholder:'Nhập lý do thực hiện thay đổi này…'/);
+  assert.match(script, /if\(reasonField\)\{const validation=validateServiceReason\(body\.reason\);if\(!validation\.valid\)\{error\.textContent=validation\.message;reasonField\.focus\(\);return\}body\.reason=validation\.value\}/);
+  assert.match(script, /api\.post\('\/api\/v1\/admin\/catalog\/.*body\)/);
+});
+
 test("order selection is page-local and advanced filters are collapsed", () => {
   const html = adminPage("", "/admin/orders");
   assert.match(html, /advanced-filters/);

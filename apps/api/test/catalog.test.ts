@@ -5,6 +5,77 @@ import { calculateSaleRate, decimalInput } from "../src/catalog/pricing.js";
 import { CatalogService } from "../src/catalog/service.js";
 import { uniqueConflictDetails } from "../src/auth/handler.js";
 
+test("service creation requires a trimmed audit reason and stays tenant scoped", async () => {
+  const siteId = "00000000-0000-4000-8000-000000000099";
+  const categoryQueries: any[] = [],
+    created: any[] = [],
+    audits: any[] = [];
+  const db: any = {
+    $transaction: async (work: any) =>
+      work({
+        serviceCategory: {
+          findFirst: async (query: any) => {
+            categoryQueries.push(query);
+            return { id: "category-1", siteId, active: true };
+          },
+        },
+        service: {
+          create: async ({ data }: any) => {
+            const item = { id: `service-${created.length + 1}`, ...data };
+            created.push(item);
+            return item;
+          },
+        },
+        priceGroup: { findMany: async () => [] },
+        auditLog: { create: async ({ data }: any) => audits.push(data) },
+      }),
+  };
+  const catalog = new CatalogService(db);
+  const input = {
+    name: "Followers",
+    type: "DEFAULT",
+    categoryId: "category-1",
+    source: "MANUAL",
+    rate: "10",
+    min: 1,
+    max: 100,
+  };
+  for (const reason of [undefined, "a", "ab", "  ", "x".repeat(501)])
+    await assert.rejects(
+      async () => catalog.createService("admin", siteId, { ...input, reason }),
+      /Vui lòng nhập lý do từ 3 đến 500 ký tự/,
+    );
+  assert.equal(created.length, 0);
+
+  await catalog.createService("admin", siteId, {
+    ...input,
+    reason: "  ABC  ",
+  });
+  await catalog.createService("admin", siteId, {
+    ...input,
+    reason: "R".repeat(500),
+  });
+  assert.equal(created.length, 2);
+  assert.equal(created[0]!.siteId, siteId);
+  assert.deepEqual(categoryQueries[0]!.where, {
+    id: "category-1",
+    siteId,
+    active: true,
+    deletedAt: null,
+  });
+  assert.equal(audits[0]!.action, "SERVICE_CREATE");
+  assert.equal(audits[0]!.siteId, siteId);
+  assert.equal(audits[0]!.after.reason, "ABC");
+  assert.equal(audits[1]!.after.reason, "R".repeat(500));
+});
+
+test("service editor edits require a reason but generic catalog edits do not", async () => {
+  await assert.rejects(
+    async () => new CatalogService({}).updateServiceEditor("admin", "service-1", {}),
+    /Vui lòng nhập lý do từ 3 đến 500 ký tự/,
+  );
+});
+
 test("catalog delete archives records and preserves historical references", async () => {
   const updates: any[] = [],
     audits: any[] = [];
@@ -335,6 +406,7 @@ test("manual service fields disable only their provider sync controls", async ()
   let mappingUpdate: any;
   const before = {
       id: "service-1",
+      siteId: "00000000-0000-4000-8000-000000000001",
       categoryId: "category-1",
       name: "Tên từ NCC",
       description: "Mô tả NCC",
@@ -343,6 +415,7 @@ test("manual service fields disable only their provider sync controls", async ()
       refill: true,
       cancel: false,
       active: true,
+      providerCost: "7.25",
       min: 10,
       max: 1000,
     },
@@ -357,7 +430,7 @@ test("manual service fields disable only their provider sync controls", async ()
       auditLog: { create: async ({ data }: any) => data },
     },
     db = { $transaction: async (work: any) => work(tx) };
-  await new CatalogService(db).updateService("admin-1", "00000000-0000-4000-8000-000000000001", "service-1", {
+  const updated = await new CatalogService(db).updateService("admin-1", "00000000-0000-4000-8000-000000000001", "service-1", {
     categoryId: "category-2",
     name: "Tên chỉnh tay",
     min: 20,
@@ -369,6 +442,9 @@ test("manual service fields disable only their provider sync controls", async ()
     averageTime: "2 giờ",
     active: false,
   });
+  assert.equal(updated.siteId, before.siteId);
+  assert.equal(updated.providerCost, before.providerCost);
+  assert.equal(updated.name, "Tên chỉnh tay");
   assert.deepEqual(mappingUpdate.where, {
     serviceId: "service-1",
     active: true,

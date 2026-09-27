@@ -291,7 +291,9 @@ test("service editor requires audited reason and uses the same three-tier fields
     page.indexOf("export function adminServiceEditorPage"),
     page.indexOf("export function adminServiceImportPage"),
   );
-  assert.match(editor, /name="reason"/);
+  assert.match(editor, /Lý do thay đổi/);
+  assert.match(editor, /name="reason" minlength="3" maxlength="500" required/);
+  assert.match(editor, /body:JSON\.stringify\(collect\(\)\)/);
   assert.match(editor, /CUSTOMER/);
   assert.match(editor, /AGENT/);
   assert.match(editor, /DISTRIBUTOR/);
