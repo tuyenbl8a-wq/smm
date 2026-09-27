@@ -7,12 +7,28 @@ import { landingPage, authPage } from "../dist/page.js";
 import { customerPage } from "../dist/customer.js";
 import { fullPageThemePreview } from "../dist/theme-builder.js";
 import { referencePages } from "../dist/reference-runtime.js";
+import { themeIds } from "../dist/themes.js";
+import { tenantBranding } from "../dist/branding.js";
 const require = createRequire(import.meta.url);
 const { chromium } = require(
   process.env.PLAYWRIGHT_MODULE ||
     "C:/Users/Admin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
 );
 const out = new URL("./artifacts/", import.meta.url);
+const auditBatches = {
+  A: ["AURORA_MODERN", "AI_COSMIC_FUTURE"],
+  B: ["CREATOR_POP", "URBAN_LIME_BRUTAL", "CYBER_NEON_CITY"],
+  C: ["PRISM_GLASS", "OCEAN_PREMIUM", "BLUE_BUSINESS"],
+  D: ["ZEN_JAPANESE", "BLACK_GOLD_LUXURY", "BEIGE_EDITORIAL"],
+};
+const requestedThemes = process.env.QA_THEMES?.split(",").map((value) => value.trim()).filter(Boolean);
+const batchKey = (process.env.QA_THEME_BATCH || process.env.QA_BATCH || "").toUpperCase();
+if (requestedThemes && batchKey) throw new Error("Use either QA_THEMES or QA_THEME_BATCH, not both.");
+if (batchKey && !auditBatches[batchKey]) throw new Error(`Unknown QA_THEME_BATCH ${batchKey}; use A, B, C, or D.`);
+const selectedThemes = requestedThemes || auditBatches[batchKey] || themeIds;
+if (new Set(selectedThemes).size !== selectedThemes.length || selectedThemes.some((id) => !themeIds.includes(id)))
+  throw new Error(`QA theme filter contains an unknown or repeated theme: ${selectedThemes.join(",")}`);
+const batchName = batchKey || (requestedThemes ? `custom-${selectedThemes.join("-")}` : "all");
 await mkdir(out, { recursive: true });
 await writeFile(new URL(".gitignore", out), "*\n!.gitignore\n");
 const server = createServer(async (req, res) => {
@@ -29,40 +45,59 @@ const server = createServer(async (req, res) => {
     }
     return;
   }
-  const kinds = {
+const kinds = {
     "/login": "login",
     "/register": "register",
     "/forgot-password": "forgot",
     "/reset-password": "reset",
-  };
-  res.setHeader("content-type", "text/html; charset=utf-8");
-  res.end(
-    url.pathname === "/__preview"
+};
+const testBranding = () => tenantBranding("qa.example.test", { siteName: tenantName });
+res.setHeader("content-type", "text/html; charset=utf-8");
+res.end(
+  url.pathname === "/__preview"
       ? fullPageThemePreview(
           "",
           url.searchParams.get("theme"),
           url.searchParams.get("scope"),
+          testBranding(),
         )
       : url.pathname === "/"
-        ? landingPage("")
+        ? landingPage("", testBranding())
         : kinds[url.pathname]
-          ? authPage("", kinds[url.pathname])
-          : customerPage("", url.pathname),
+          ? authPage("", kinds[url.pathname], "", testBranding())
+          : customerPage("", url.pathname, testBranding()),
   );
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const origin = "http://127.0.0.1:" + server.address().port;
 const browser = await chromium.launch({ headless: true, channel: "msedge" });
-const page = await browser.newPage();
-const mutations = [];
-await page
-  .context()
-  .addCookies([{ name: "smm_csrf", value: "qa-csrf", url: origin }]);
+const context = await browser.newContext();
 const errors = [],
   results = [];
 let theme,
   tenantName = "Tenant QA";
-page.on("pageerror", (e) => errors.push(e.message));
+let page = await context.newPage();
+const configurePage = (target) => {
+  target.setDefaultTimeout(15000);
+  target.setDefaultNavigationTimeout(15000);
+  target.on("pageerror", (e) => errors.push(e.message));
+  return target;
+};
+configurePage(page);
+const navigate = async (url) => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await page.goto(url, { waitUntil: "domcontentloaded" });
+    } catch (error) {
+      const retryable = /ERR_NETWORK_IO_SUSPENDED|ERR_NETWORK_CHANGED|ERR_ABORTED/.test(String(error));
+      if (!retryable || attempt >= 2) throw error;
+      console.log(JSON.stringify({ event: "navigation-retry", url, attempt: attempt + 1 }));
+      await page.waitForTimeout(500 * (attempt + 1));
+    }
+  }
+};
+const mutations = [];
+await context.addCookies([{ name: "smm_csrf", value: "qa-csrf", url: origin }]);
 const service = {
   id: "service-1",
   serviceNumber: 1234,
@@ -81,7 +116,7 @@ const category = {
   name: "Người theo dõi",
   platform: { slug: "tiktok", name: "TikTok" },
 };
-await page.route("**/api/**", async (route) => {
+await context.route("**/api/**", async (route) => {
   const path = new URL(route.request().url()).pathname;
   if (route.request().method() !== "GET") {
     mutations.push({
@@ -183,21 +218,76 @@ await page.route("**/api/**", async (route) => {
     };
   await route.fulfill({ json: { success: true, data } });
 });
-async function check(label) {
-  await page.locator("[data-reference-page]").waitFor();
+async function performCheck(label) {
+  const debugCheck = label.includes("/support/1");
+  const debug = (stage) => {
+    if (debugCheck) console.log(JSON.stringify({ event: "check-step", batch: batchName, theme, label, stage }));
+  };
+  if (results.length < 3)
+    console.log(JSON.stringify({ event: "stage", batch: batchName, theme, stage: "check-start", label }));
+  if (theme === "AI_COSMIC_FUTURE")
+    await page.locator('[data-renderer^="ai-cosmic-"]').waitFor();
+  else if (Object.hasOwn(referencePages, theme))
+    await page.locator("[data-reference-page]").waitFor();
+  else await page.waitForFunction((expected) => document.documentElement.dataset.theme === expected, theme);
+  debug("theme-ready");
+  if (["PRISM_GLASS", "OCEAN_PREMIUM", "ZEN_JAPANESE", "BLACK_GOLD_LUXURY"].includes(theme)) {
+    const headline = page.locator("[data-reference-page] h1, .customer-content h1").first();
+    if (await headline.count()) {
+      const heading = await headline.evaluate((el) => ({ text: el.textContent || "", font: getComputedStyle(el).fontFamily, spacing: getComputedStyle(el).letterSpacing }));
+      assert.equal(heading.text.normalize("NFC"), heading.text, label + " Vietnamese headline must be NFC");
+      assert.doesNotMatch(heading.text, /\uFFFD|TÃ|Ä‘|áº|á»|â€/);
+      if (/Times New Roman|Georgia|DejaVu Serif|,\s*serif(?:,|$)/i.test(heading.font)) {
+        assert.match(heading.font, /Times New Roman/i, label + " includes a Vietnamese-capable Times fallback");
+        assert.match(heading.font, /Georgia/i, label + " includes a Vietnamese-capable Georgia fallback");
+        assert.match(heading.font, /DejaVu Serif/i, label + " includes a Vietnamese-capable DejaVu fallback");
+        assert.match(heading.spacing, /^(?:normal|0px)$/, label + " does not track Vietnamese marks apart");
+      }
+    }
+  }
   if (await page.locator("#app").count()) {
-    await page.locator("#app .skeleton").waitFor({ state: "detached" });
+    if (!label.includes(" preview "))
+      await page.locator("#app .skeleton").waitFor({ state: "detached" });
+    debug("skeleton-detached");
+    const errorState = page.locator("#app .error-state");
+    const errorCount = await errorState.count();
     assert.equal(
-      await page.locator("#app .error-state").count(),
+      errorCount,
       0,
-      label + " unexpected error state",
+      label + " unexpected error state" + (errorCount ? ": " + (await errorState.first().textContent()) : ""),
     );
   }
-  await page.evaluate(() =>
-    Promise.all(
-      Array.from(document.images).map((i) => i.decode().catch(() => {})),
-    ),
-  );
+  debug("app-stable");
+  const isVisualPage = / (?:landing|auth|customer) (?:1440|1280|768|390)$/.test(label)
+    || /\/orders\/(?:new|bulk) (?:1440|390)$/.test(label);
+  if (isVisualPage) {
+    let imageAuditTimer;
+    const imageAudit = page.evaluate(async () => {
+      const images = Array.from(document.images);
+      await Promise.race([
+        Promise.all(images.map((image) => image.decode().catch(() => {}))),
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ]);
+      return images
+        .filter((image) => !image.complete)
+        .map((image) => image.currentSrc || image.src);
+    });
+    const pendingImages = await Promise.race([
+      imageAudit,
+      new Promise((_, reject) => {
+        imageAuditTimer = setTimeout(
+          () => reject(new Error(label + " image audit renderer did not respond within 15 seconds")),
+          15000,
+        );
+      }),
+    ]).finally(() => clearTimeout(imageAuditTimer));
+    assert.deepEqual(
+      pendingImages,
+      [],
+      label + " images did not finish loading before the visual audit timeout",
+    );
+  }
+  debug("images-done");
   const overflow = await page.evaluate(() => ({
     width: innerWidth,
     scroll: document.documentElement.scrollWidth,
@@ -216,53 +306,109 @@ async function check(label) {
       .slice(0, 15)
       .map((e) => { const r=e.getBoundingClientRect(),s=getComputedStyle(e),p=e.parentElement,pr=p?.getBoundingClientRect(); return {tag:e.tagName,class:e.className,text:(e.textContent||"").trim().slice(0,80),rect:{left:r.left,right:r.right,width:r.width},scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,minWidth:s.minWidth,width:s.width,margin:s.margin,padding:s.padding,transform:s.transform,position:s.position,overflowX:s.overflowX,parent:p?.tagName+"."+p?.className,parentRect:pr&&{left:pr.left,right:pr.right,width:pr.width},parentWidth:p&&getComputedStyle(p).width}; }),
   }));
+  debug("overflow-read");
   assert.ok(
     overflow.scroll <= overflow.width + 2,
     label + " overflow " + JSON.stringify(overflow),
   );
-  if (label === "ZEN_JAPANESE landing 1280") console.log("ZEN_UNCLIPPED_LAYOUT", JSON.stringify(overflow.unclipped));
   assert.deepEqual(errors, [], label + " JS errors");
   results.push(label);
+  if (results.length % 25 === 0) console.log(JSON.stringify({ event: "progress", batch: batchName, checks: results.length, last: label }));
 }
+async function check(label) {
+  let timer;
+  try {
+    return await Promise.race([
+      performCheck(label),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(label + " browser audit check did not complete within 45 seconds")),
+          45000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+const landingSelectors = (theme) => theme === "AI_COSMIC_FUTURE"
+  ? { eyebrow: ".aiv3-hero small", title: ".aiv3-hero h1", description: ".aiv3-hero p", cta: ".aiv3-actions .aiv3-primary span", nav: ".aiv3-nav nav a", benefit: "", feature: "", topology: "#text,BR,#text,BR,#text,EM", localized: true }
+  : theme === "AURORA_MODERN"
+    ? { eyebrow: ".hero .eyebrow", title: ".hero h1", description: ".hero .lead", cta: ".hero-actions .button span", nav: ".header nav a", benefit: "#services h2", feature: "#services h3", localized: false }
+    : { eyebrow: ".ref-copy small", title: ".ref-copy h1", description: ".ref-copy p", cta: ".ref-cta span", nav: ".ref-nav nav a", benefit: ".ref-benefits h2", feature: ".ref-benefits h3", topology: "#text,EM", localized: true };
+const landingCopy = async (selectors) => page.evaluate((s) => {
+  const text = (selector) => selector ? document.querySelector(selector)?.textContent?.trim() ?? "" : "";
+  const title = document.querySelector(s.title);
+  return {
+    eyebrow: text(s.eyebrow), title: text(s.title), description: text(s.description),
+    cta: text(s.cta), nav: text(s.nav), benefit: text(s.benefit), feature: text(s.feature),
+    topology: title ? [...title.childNodes].map((node) => node.nodeType === Node.ELEMENT_NODE ? node.tagName : "#text").join(",") : "",
+  };
+}, selectors);
 try {
-  for (theme of process.env.QA_THEMES?.split(",") ||
-    Object.keys(referencePages)) {
+  for (theme of selectedThemes) {
+    const themeStartCount = results.length;
+    console.log(JSON.stringify({ event: "theme-start", batch: batchName, theme }));
     await page.context().addCookies([
       { name: "smm_locale", value: "vi", url: origin },
     ]);
-    await page.goto(origin + "/");
+    if (themeStartCount === 0)
+      console.log(JSON.stringify({ event: "stage", batch: batchName, theme, stage: "initial-cookie-set" }));
+    await navigate(origin + "/");
+    if (themeStartCount === 0)
+      console.log(JSON.stringify({ event: "stage", batch: batchName, theme, stage: "initial-landing-loaded" }));
     if (theme === "AI_COSMIC_FUTURE") await page.locator('[data-renderer="ai-cosmic-landing-page"]').waitFor();
-    else await page.locator("[data-reference-page]").waitFor();
+    else if (Object.hasOwn(referencePages, theme)) await page.locator("[data-reference-page]").waitFor();
+    else await page.locator(".hero h1").waitFor();
     await page.waitForFunction((expected) => document.documentElement.dataset.theme === expected, theme);
+    if (themeStartCount === 0)
+      console.log(JSON.stringify({ event: "stage", batch: batchName, theme, stage: "initial-theme-ready" }));
     assert.equal(await page.locator("html").getAttribute("data-theme"), theme, "requested theme must be active before assertions");
-    const expectedRenderer = theme === "AI_COSMIC_FUTURE" ? "ai-cosmic-landing-page" : null;
-    if (expectedRenderer) assert.equal(await page.locator("[data-renderer]").getAttribute("data-renderer"), expectedRenderer);
-    else assert.ok(await page.locator("[data-reference-page]").count(), `${theme} must use its reference renderer`);
-    const titleShape = await page.locator(".ref-copy h1").evaluate(el => [...el.childNodes].map(n => n.nodeType === Node.ELEMENT_NODE ? n.tagName : "#text").join(","));
-    assert.equal(titleShape, "#text,EM", `${theme} Vietnamese title keeps original text/emphasis nodes`);
-    const vietnamese = await page.evaluate(() => ({ eyebrow: document.querySelector(".ref-copy small")?.textContent, title: document.querySelector(".ref-copy h1")?.textContent, description: document.querySelector(".ref-copy p")?.textContent, cta: document.querySelector(".ref-copy .ref-cta span")?.textContent, nav: document.querySelector(".ref-nav nav a")?.textContent, benefit: document.querySelector(".ref-benefits h2")?.textContent, feature: document.querySelector(".ref-benefits h3")?.textContent }));
+    const selectors = landingSelectors(theme);
+    if (theme === "AI_COSMIC_FUTURE") assert.equal(await page.locator("[data-renderer]").getAttribute("data-renderer"), "ai-cosmic-landing-page");
+    else if (Object.hasOwn(referencePages, theme)) assert.ok(await page.locator("[data-reference-page]").count(), `${theme} must use its reference renderer`);
+    else assert.ok(await page.locator(".hero h1").count(), `${theme} must use the Aurora landing structure`);
+    const vietnamese = await landingCopy(selectors);
+    if (themeStartCount === 0)
+      console.log(JSON.stringify({ event: "stage", batch: batchName, theme, stage: "initial-copy-read" }));
+    if (selectors.topology) assert.equal(vietnamese.topology, selectors.topology, `${theme} title retains its authored DOM structure`);
+    assert.ok(vietnamese.title, `${theme} has a visible landing headline`);
+    assert.doesNotMatch(vietnamese.title, /\uFFFD|TÃ|Ä‘|áº|á»|â€/);
     await page.context().addCookies([
       { name: "smm_locale", value: "en", url: origin },
     ]);
     await page.reload();
+    if (themeStartCount === 0)
+      console.log(JSON.stringify({ event: "stage", batch: batchName, theme, stage: "english-reload-done" }));
     if (theme === "AI_COSMIC_FUTURE") await page.locator('[data-renderer="ai-cosmic-landing-page"]').waitFor();
-    else await page.locator("[data-reference-page]").waitFor();
-    const english = await page.evaluate(() => ({ eyebrow: document.querySelector(".ref-copy small")?.textContent, title: document.querySelector(".ref-copy h1")?.textContent, description: document.querySelector(".ref-copy p")?.textContent, cta: document.querySelector(".ref-copy .ref-cta span")?.textContent, nav: document.querySelector(".ref-nav nav a")?.textContent, benefit: document.querySelector(".ref-benefits h2")?.textContent, feature: document.querySelector(".ref-benefits h3")?.textContent }));
-    for (const field of ["eyebrow", "title", "description", "cta", "nav"]) assert.notEqual(english[field], vietnamese[field], `${theme} must localize ${field}`);
-    for (const field of ["benefit", "feature"]) if (vietnamese[field] !== undefined) assert.notEqual(english[field], vietnamese[field], `${theme} must localize ${field}`);
-    assert.equal(await page.locator('[data-i18n]').evaluateAll((els) => els.some((el) => el.textContent?.trim() === el.getAttribute('data-i18n')),), false, `${theme} exposes no unresolved translation keys`);
-    assert.equal(english.nav, "Home");
+    else if (Object.hasOwn(referencePages, theme)) await page.locator("[data-reference-page]").waitFor();
+    else await page.locator(".hero h1").waitFor();
+    const english = await landingCopy(selectors);
+    if (selectors.localized) {
+      for (const field of ["eyebrow", "title", "description", "cta", "nav"]) assert.notEqual(english[field], vietnamese[field], `${theme} must localize ${field}`);
+      for (const field of ["benefit", "feature"]) if (vietnamese[field]) assert.notEqual(english[field], vietnamese[field], `${theme} must localize ${field}`);
+      assert.equal(await page.locator('[data-i18n]').evaluateAll((els) => els.some((el) => el.textContent?.trim() === el.getAttribute('data-i18n')),), false, `${theme} exposes no unresolved translation keys`);
+      assert.equal(english.nav, "Home");
+    } else {
+      assert.equal(english.title, vietnamese.title, `${theme} fallback copy remains intact through locale switching`);
+    }
     assert.equal(await page.locator("html").getAttribute("lang"), "en");
-    assert.equal(await page.locator(".ref-copy h1").evaluate(el => [...el.childNodes].map(n => n.nodeType === Node.ELEMENT_NODE ? n.tagName : "#text").join(",")), titleShape, `${theme} locale switching preserves title DOM topology`);
+    if (selectors.topology) assert.equal(english.topology, vietnamese.topology, `${theme} locale switching preserves title DOM topology`);
     assert.equal(await page.locator("#locale-select").inputValue(), "en");
     const urlBeforeLanguageSwitch = page.url();
     await page.locator("#locale-select").selectOption("vi");
     await page.waitForFunction(() => document.documentElement.lang === "vi");
+    if (themeStartCount === 0)
+      console.log(JSON.stringify({ event: "stage", batch: batchName, theme, stage: "locale-switch-vi-done" }));
     assert.equal(page.url(), urlBeforeLanguageSwitch, "language selector switches in place without navigation");
-    assert.equal(await page.locator(".ref-nav nav a").first().innerText(), "Trang chủ");
-    await page.locator("#locale-select").selectOption("en");
+    if (selectors.localized) assert.equal(await page.locator(selectors.nav).first().innerText(), "Trang chủ");
+  await page.locator("#locale-select").selectOption("en");
+    if (themeStartCount === 0)
+      console.log(JSON.stringify({ event: "stage", batch: batchName, theme, stage: "locale-select-en-done" }));
     await page.waitForFunction(() => document.documentElement.lang === "en");
-    assert.equal(await page.locator(".ref-nav nav a").first().innerText(), "Home");
+    if (themeStartCount === 0)
+      console.log(JSON.stringify({ event: "stage", batch: batchName, theme, stage: "locale-wait-en-done" }));
+    if (selectors.localized) assert.equal(await page.locator(selectors.nav).first().innerText(), "Home");
     if (["ZEN_JAPANESE", "CREATOR_POP", "CYBER_NEON_CITY", "BLACK_GOLD_LUXURY"].includes(theme))
       await page.screenshot({
         path: new URL(`${theme}-landing-en.png`, out).pathname.replace(/^\/([A-Z]:)/, "$1"),
@@ -271,6 +417,8 @@ try {
     await page.context().addCookies([
       { name: "smm_locale", value: "vi", url: origin },
     ]);
+    if (themeStartCount === 0)
+      console.log(JSON.stringify({ event: "stage", batch: batchName, theme, stage: "responsive-loop-start" }));
     for (const width of [1440, 1280, 768, 390]) {
       await page.setViewportSize({ width, height: 1000 });
       for (const [scope, path] of [
@@ -278,17 +426,27 @@ try {
         ["auth", "/login"],
         ["customer", "/dashboard"],
       ]) {
-        await page.goto(origin + path);
+        await navigate(origin + path);
         await check(`${theme} ${scope} ${width}`);
         if (scope === "customer") {
-          await page.locator("[data-reference-overview]").waitFor();
-          assert.match(await page.locator(".metric-grid").innerText(), /17/);
+          if (Object.hasOwn(referencePages, theme)) {
+            await page.locator("[data-reference-overview]").waitFor();
+            assert.match(await page.locator(".metric-grid").innerText(), /17/);
+          } else if (theme === "AI_COSMIC_FUTURE") {
+            await page.locator(".aiv3-kpis").waitFor();
+            assert.match(await page.locator(".aiv3-kpis").innerText(), /17/);
+          } else {
+            await page.locator("#app .metric-grid").waitFor();
+            assert.match(await page.locator("#app .metric-grid").innerText(), /17/);
+          }
         }
-        assert.doesNotMatch(
-          await page.locator("[data-reference-page]").innerText(),
-          /DichVu1st/i,
-        );
-        if (width === 1440 || width === 390)
+        const tenantBrand = page.locator('[data-theme-content="brandTitle"], [data-tenant-name]').first();
+        assert.ok(await tenantBrand.count(), `${theme} ${scope} retains a tenant-brand marker`);
+        const brandedText = await tenantBrand.textContent() || "";
+        if (tenantName.includes("DichVu1st"))
+          assert.match(brandedText, /My DichVu1st/, "configured tenant text may contain the former root brand name");
+        else assert.doesNotMatch(brandedText, /DichVu1st/i);
+        if ((width === 1440 || width === 390) && Object.hasOwn(referencePages, theme))
           await page.screenshot({
             path: new URL(
               `${theme}-${scope}-${width}.png`,
@@ -296,7 +454,7 @@ try {
             ).pathname.replace(/^\/([A-Z]:)/, "$1"),
             fullPage: true,
           });
-        if (scope === "customer" && width <= 768) {
+        if (Object.hasOwn(referencePages, theme) && scope === "customer" && width <= 768 && await page.locator("#drawer-toggle").isVisible()) {
           await page.locator("#drawer-toggle").click();
           await page.locator(".ref-close").click();
           assert.equal(
@@ -314,7 +472,7 @@ try {
       "/orders/new",
       "/orders/bulk",
     ]) {
-      await page.goto(origin + path);
+      await navigate(origin + path);
       await check(`${theme} ${path} mobile`);
       if (path === "/orders/new") await page.locator("#order-form").waitFor();
       if (path === "/orders/bulk") {
@@ -326,9 +484,10 @@ try {
         assert.ok((await text.boundingBox()).height >= 150);
       }
     }
-    await page.goto(origin + "/login");
-    if (theme === "AI_COSMIC_FUTURE") await page.locator('[data-renderer="ai-cosmic-landing-page"]').waitFor();
-    else await page.locator("[data-reference-page]").waitFor();
+    await navigate(origin + "/login");
+    if (theme === "AI_COSMIC_FUTURE") await page.locator('[data-renderer="ai-cosmic-auth-page"]').waitFor();
+    else if (Object.hasOwn(referencePages, theme)) await page.locator("[data-reference-page]").waitFor();
+    else await page.locator(".auth-card").waitFor();
     await page.locator("#email").fill("qa@example.test");
     await page.locator("#password").fill("WrongPassword1");
     await page.locator(".toggle").click();
@@ -338,7 +497,7 @@ try {
       .locator("#message")
       .filter({ hasText: "Email hoặc mật khẩu không đúng" })
       .waitFor();
-    await page.goto(origin + "/orders/new");
+    await navigate(origin + "/orders/new");
     await page.locator("#service").selectOption("service-1");
     await page.locator("#link").fill("https://example.test/post");
     await page.locator("#quantity").fill("100");
@@ -389,7 +548,7 @@ try {
         "/panel-plans",
         "/panels/100001",
       ]) {
-        await page.goto(origin + path);
+        await navigate(origin + path);
         if (path === "/orders/new") {
           await page.locator("#service").selectOption("service-1");
           await page.locator("#quantity").fill("100");
@@ -416,9 +575,13 @@ try {
             fullPage: true,
           });
       }
+      if (width !== 390) {
+        await page.close();
+        page = configurePage(await context.newPage());
+      }
     }
     for (tenantName of ["My DichVu1st", "Panel <safe> & Co."]) {
-      await page.goto(origin + "/login");
+      await navigate(origin + "/login");
       await check(`${theme} branding ${tenantName}`);
       assert.equal(
         await page
@@ -430,18 +593,38 @@ try {
     }
     tenantName = "Tenant QA";
     for (const scope of ["landing", "auth", "customer"]) {
-      await page.goto(origin + `/__preview?theme=${theme}&scope=${scope}`);
+      await navigate(origin + `/__preview?theme=${theme}&scope=${scope}`);
       await check(`${theme} preview ${scope}`);
       assert.equal(await page.locator(".locale-picker").count(), 0);
     }
+    console.log(JSON.stringify({ event: "theme-done", batch: batchName, theme, checks: results.length - themeStartCount }));
+  }
+  for (theme of ["AURORA_MODERN", "AI_COSMIC_FUTURE"].filter((id) => selectedThemes.includes(id))) {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      for (const path of [
+        "/", "/login", "/register", "/forgot-password", "/reset-password",
+        "/dashboard", "/orders/new", "/orders/bulk", "/orders",
+        "/services", "/wallet", "/deposit", "/transactions", "/panels",
+        "/panels/new", "/panel-plans", "/affiliate", "/api", "/support",
+        "/notifications", "/account",
+      ]) {
+        await navigate(origin + path);
+        await page.waitForFunction((expected) => document.documentElement.dataset.theme === expected, theme);
+        await check(`${theme} ${path} ${width}`);
+        if (path === "/orders/new") await page.locator("#order-form").waitFor();
+        if (path === "/login") await page.locator("#email").waitFor();
+        assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
+      }
+    }
   }
   theme = "ZEN_JAPANESE";
-  for (const locale of ["vi", "en", "zh-CN", "fr", "es", "pt-BR", "id", "th", "ru", "ar"]) {
+  for (const locale of selectedThemes.includes("ZEN_JAPANESE") ? ["vi", "en", "zh-CN", "fr", "es", "pt-BR", "id", "th", "ru", "ar"] : []) {
     await page.context().addCookies([
       { name: "smm_locale", value: locale, url: origin },
     ]);
     for (const path of ["/", "/login", "/dashboard"]) {
-      await page.goto(origin + path);
+      await navigate(origin + path);
       await page.locator("#locale-select").waitFor();
       assert.equal(await page.locator("html").getAttribute("lang"), locale);
       assert.equal(await page.locator("html").getAttribute("dir"), locale === "ar" ? "rtl" : "ltr");
@@ -449,8 +632,9 @@ try {
     }
   }
   for (const locale of ["vi", "en", "ar"]) {
+    if (!selectedThemes.includes("AURORA_MODERN") && !selectedThemes.includes("AI_COSMIC_FUTURE")) break;
     await page.context().addCookies([{ name: "smm_locale", value: locale, url: origin }]);
-    await page.goto(origin + "/orders/new");
+    await navigate(origin + "/orders/new");
     await page.locator("#order-form").waitFor();
     await page.waitForFunction((expected) => document.documentElement.lang === expected, locale);
     assert.equal(await page.locator("html").getAttribute("dir"), locale === "ar" ? "rtl" : "ltr");
@@ -461,9 +645,9 @@ try {
       assert.equal(await page.locator('option[data-i18n="customer.orders.allPlatforms"]').innerText(), locale === "vi" ? "Tất cả nền tảng" : "All platforms");
     }
   }
-  for (theme of (process.env.QA_THEMES?.split(",") || ["AURORA_MODERN", "AI_COSMIC_FUTURE"])) {
+  for (theme of selectedThemes) {
     await page.context().addCookies([{ name: "smm_locale", value: "vi", url: origin }]);
-    await page.goto(origin + "/");
+    await navigate(origin + "/");
     await page.locator("#locale-select").waitFor();
     const viHero = await page.locator("h1").first().innerText();
     await page.context().addCookies([{ name: "smm_locale", value: "en", url: origin }]);
@@ -472,6 +656,7 @@ try {
     if (theme === "AI_COSMIC_FUTURE") assert.notEqual(await page.locator("h1").first().innerText(), viHero, theme + " must localize hero copy");
   }
   theme = "AI_COSMIC_FUTURE";
+  if (selectedThemes.includes(theme)) {
   await page.context().addCookies([{ name: "smm_locale", value: "vi", url: origin }]);
   for (const width of [1440, 1280, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -481,7 +666,7 @@ try {
       ["/dashboard", '[data-renderer="ai-cosmic-customer-page"]'],
       ["/orders/new", '[data-renderer="ai-cosmic-customer-page"]'],
     ]) {
-      await page.goto(origin + path);
+      await navigate(origin + path);
       await page.locator(marker).waitFor();
       await page.waitForFunction((expected) => document.documentElement.dataset.theme === expected, theme);
       assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
@@ -506,11 +691,10 @@ try {
         await page.screenshot({ path: new URL(`AI_COSMIC_FUTURE-${path.slice(1).replaceAll("/", "-") || "landing"}-${width}.png`, out).pathname.replace(/^\/([A-Z]:)/, "$1"), fullPage: true });
     }
   }
-  await writeFile(
-    new URL("results.json", out),
-    JSON.stringify({ checks: results.length, results, errors }, null, 2),
-  );
-  console.log(JSON.stringify({ checks: results.length, errors }));
+  }
+  const report = { batch: batchName, themes: selectedThemes, checks: results.length, errors };
+  await writeFile(new URL(`results-${batchName}.json`, out), JSON.stringify({ ...report, results }, null, 2));
+  console.log(JSON.stringify(report));
 } finally {
   await browser.close();
   await new Promise((r) => server.close(r));

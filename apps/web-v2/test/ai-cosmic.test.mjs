@@ -132,16 +132,44 @@ test("theme editor enforces a denied Panel entitlement from the real API envelop
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const controls = [{ disabled: false }, { disabled: false }];
   const requests = [];
+  const preview = { contentWindow: { postMessage() {} }, dataset: {} };
+  const state = { textContent: "" };
+  const select = () => ({ value: "", options: [], append(option) { this.options.push(option); if (!this.value) this.value = option.value; }, replaceChildren() { this.options = []; } });
+  const controlsElement = {
+    querySelectorAll: () => [],
+    addEventListener() {},
+  };
+  const elements = new Map([
+    ["#preview", preview], ["#scope", { value: "landing" }],
+    ["#applyMode", { value: "GLOBAL" }], ["#controls", controlsElement],
+    ["#state", state], ["#nodeEditor", { hidden: true }],
+    ["#nodeText", { value: "", closest: () => ({}) }],
+    ["#nodeHref", { value: "" }], ["#nodeHidden", { checked: false, closest: () => ({}) }],
+    ["#nodeName", { textContent: "" }], ["#nodeHrefWrap", { hidden: false }],
+    ["#nodeDuplicate", {}], ["#nodeReset", {}], ["#nodeUp", {}], ["#nodeDown", {}], ["#blockList", { replaceChildren() {} }],
+    ["#addBlock", {}], ["#undo", {}], ["#reset", {}], ["#save", {}],
+    ["#sectionSelect", select()], ["#sectionHidden", { checked: false }],
+    ["#sectionPreset", select()], ["#blockType", { value: "paragraph" }],
+    ["#blockSection", select()], ["#sectionMoveWrap", { hidden: true }],
+    ["#sectionUp", {}], ["#sectionDown", {}], ["#resetSection", {}],
+    ["#apply", {}], ["#newtab", {}],
+  ]);
   const context = {
-    preview: { contentWindow: { postMessage() {} } }, scope: { value: "landing" },
-    newtab: {}, controls: {}, state: {}, undo: {}, reset: {}, save: {}, apply: {},
+    preview, scope: { value: "landing" }, newtab: {}, controls: controlsElement, state,
+    undo: {}, reset: {}, save: {}, apply: {},
     structuredClone, location: { origin: "https://child.test" }, addEventListener() {},
-    document: { body: { insertAdjacentHTML() {} }, querySelectorAll: selector => selector === "[data-device]" ? [] : controls },
+    document: {
+      cookie: "",
+      querySelector: selector => elements.get(selector),
+      querySelectorAll: selector => selector === "[data-device]" ? [] : controls,
+      createElement: () => ({ value: "", textContent: "" }),
+    },
     fetch: async (url) => { requests.push(url); return { ok: true, json: async () => ({ data: { panelEntitlement: { allowThemes: false } } }) }; },
   };
   new vm.Script(script).runInNewContext(context);
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(requests, ["/api/v1/me"]);
   assert.ok(controls.every(control => control.disabled));
-  assert.match(context.preview.src, /^\/admin\/theme-preview\?theme=CREATOR_POP&scope=landing/);
+  assert.match(preview.src, /^\/admin\/theme-preview\?theme=CREATOR_POP&scope=landing&editor=1/);
+  assert.equal(state.textContent, "Gói Panel hiện tại không cho phép thay đổi giao diện.");
 });

@@ -50,13 +50,22 @@ const inlineAdminScript = (route) => {
 };
 
 // Execute the actual rendered admin theme function with inert UI/API dependencies.
-function themeAdminHarness(allowed) {
+function themeAdminHarness(allowed, selectedMode = "GLOBAL") {
   const script = inlineAdminScript("/admin/themes");
   const start = script.indexOf("function renderThemes(d)");
   const end = script.indexOf("function renderAffiliate", start);
   assert.ok(start >= 0 && end > start);
   const frame = {},
     scope = { value: "landing" };
+  const applyScope = {
+    value: "themePublic",
+    options: [
+      { text: "Public / Landing" },
+      { text: "Đăng nhập / Auth" },
+      { text: "Khu vực khách hàng" },
+    ],
+    selectedIndex: 0,
+  };
   const modal = {
     classList: { add() {}, remove() {} },
     querySelector: (selector) =>
@@ -85,11 +94,17 @@ function themeAdminHarness(allowed) {
     openPreview: {},
     location: {},
     document: {
-      querySelector: (selector) => (selector === "#modal" ? modal : {}),
+      querySelector: (selector) =>
+        selector === "#modal"
+          ? modal
+          : selector === "#themeApplyScope"
+            ? applyScope
+            : {},
+      querySelectorAll: () => [],
     },
     FormData: class {
       get(key) {
-        return key === "mode" ? "GLOBAL" : null;
+        return key === "mode" ? selectedMode : null;
       }
     },
     bindActions: (action) => {
@@ -103,7 +118,7 @@ function themeAdminHarness(allowed) {
   new vm.Script(
     script.slice(start, end) + "\nrenderThemes([]);",
   ).runInNewContext(context);
-  return { context, writes, frame, scope, modal };
+  return { context, writes, frame, scope, modal, applyScope };
 }
 
 test("server-rendered branding is tenant-safe across public, auth, customer and admin shells", () => {
@@ -599,7 +614,9 @@ test("eleven final runtime themes are available and safely allowlisted", async (
   );
   assert.doesNotMatch(themes.themeStyles, /<script|javascript:/i);
   assert.match(adminOperations, /Bản xem trước không thay đổi/);
-  assert.match(adminOperations, /Áp dụng.*cho website/);
+  assert.match(adminOperations, /themeApplyScope/);
+  assert.match(adminOperations, /themeMode:'SEPARATE',\[applyScope\]:id/);
+  assert.match(adminOperations, /Đang áp dụng/);
 });
 
 test("customer and conditional payment workflows are behavioral and secret-safe", () => {
@@ -827,7 +844,8 @@ test("visual theme builder routes render real landing auth and customer architec
   }
 });
 test("visual editor provides true device viewports, draft controls and safe structured bridge", async () => {
-  const { themeEditorPage } = await import("../dist/theme-builder.js"),
+  const { themeEditorPage, fullPageThemePreview } = await import("../dist/theme-builder.js"),
+    { themeIds, themeEditorManifests } = await import("../dist/themes.js"),
     html = themeEditorPage("BLACK_GOLD_LUXURY");
   for (const token of [
     "1440",
@@ -839,9 +857,44 @@ test("visual editor provides true device viewports, draft controls and safe stru
     "Khôi phục mặc định",
     "theme-draft",
     "themeOverrides",
+    "scope:scope.value",
+    "Đã nạp bản nháp đã lưu",
+    "theme-node-select",
+    "event.source!==frame.contentWindow",
+    "nodeReset",
+    "content.nodes",
+    "themeCustomer",
   ])
     assert.match(html, new RegExp(token));
   assert.doesNotMatch(html, /contenteditable|eval\(/);
+  assert.equal(Object.keys(themeEditorManifests).length, 11);
+  const signatures = new Set();
+  for (const id of themeIds) {
+    for (const scope of ["landing", "auth", "customer"]) {
+      const manifest = themeEditorManifests[id][scope];
+      assert.ok(manifest.nodes.length > 0, `${id} ${scope} editable nodes`);
+      assert.ok(Array.isArray(manifest.sections), `${id} ${scope} sections`);
+      assert.ok(Array.isArray(manifest.artwork), `${id} ${scope} artwork registry`);
+      assert.ok(Object.keys(manifest.structuralPresets).length > 0, `${id} ${scope} layout presets`);
+      assert.ok(manifest.nodes.every(node => node.id && node.type && node.defaultValue !== undefined && node.operations.length && typeof node.removable === "boolean"), `${id} ${scope} node schema`);
+      assert.ok(manifest.sections.every(section => section.id && section.selector && section.allowedBlocks.length && typeof section.optional === "boolean" && typeof section.reorderable === "boolean"), `${id} ${scope} section schema`);
+      if (id !== "AURORA_MODERN") assert.notEqual(manifest, themeEditorManifests.AURORA_MODERN[scope], `${id} has its own ${scope} manifest object`);
+      assert.ok(manifest.sections.every(section => Array.isArray(section.allowedBlocks) && section.layoutPresets.every(preset => typeof preset === "string")), `${id} ${scope} insertion and preset allowlists`);
+      assert.ok(manifest.artwork.every(art => art.id && art.selector && typeof art.replaceable === "boolean" && art.fitPresets.length && art.positionPresets.length), `${id} ${scope} artwork permissions`);
+      const preview = fullPageThemePreview("", id, scope);
+      for (const section of manifest.sections)
+        assert.ok(preview.includes(`data-theme-section="${section.id}"`), `${id} ${scope} insertion slot ${section.id} exists in the actual composition`);
+      for (const artwork of manifest.artwork)
+        assert.ok(preview.includes(artwork.selector.replace(/\[data-theme-artwork="|"\]/g, "")), `${id} ${scope} artwork selector exists in actual composition`);
+      if (scope === "landing") signatures.add(JSON.stringify({ nodes: manifest.nodes.map(node => node.id), sections: manifest.sections.map(section => section.id), artwork: manifest.artwork.map(art => art.replaceable), presets: manifest.structuralPresets }));
+    }
+  }
+  assert.equal(signatures.size, 11, "all themes declare a distinct landing editing surface");
+  for (const [scope, node] of [["landing", "hero.title"], ["auth", "auth.title"], ["customer", "customer.pageTitle"]]) {
+    const preview = fullPageThemePreview("", "BLACK_GOLD_LUXURY", scope, undefined, true);
+    assert.match(preview, new RegExp(`data-theme-node="${node}"`));
+    assert.match(preview, /data-theme-editor-mode/);
+  }
 });
 test("Soft Beige Premium has its own editorial architectures in every requested scope", async () => {
   const { themeStructure } = await import("../dist/themes.js");
@@ -1135,6 +1188,17 @@ test("references 01-03 keep distinct compositions and Aurora stays unnumbered", 
     1,
     "unsupported themes cannot be applied",
   );
+  const separate = themeAdminHarness(true, "SEPARATE");
+  separate.applyScope.value = "themeAuth";
+  separate.applyScope.selectedIndex = 1;
+  separate.applyScope.onchange();
+  await separate.context.action("apply", "BLACK_GOLD_LUXURY");
+  assert.deepEqual(JSON.parse(JSON.stringify(separate.writes)), [
+    [
+      "/api/v1/admin/settings",
+      { themeMode: "SEPARATE", themeAuth: "BLACK_GOLD_LUXURY" },
+    ],
+  ]);
 });
 test("AI cosmic reference keeps one navigation and dense runtime landmarks", async () => {
   const { fullPageThemePreview } = await import("../dist/theme-builder.js");

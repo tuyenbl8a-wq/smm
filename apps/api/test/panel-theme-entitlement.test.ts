@@ -80,6 +80,39 @@ test("theme entitlement blocks theme fields through the authenticated settings A
   });
   assert.equal(draftBlocked.response.body.error.code, "PANEL_THEME_NOT_ALLOWED");
   assert.equal(draftBlocked.writes.length, 0);
+  const forbiddenWrites = [
+    {
+      themeDraft: {
+        themeId: "AI_COSMIC_FUTURE", scope: "landing",
+        overrides: { content: { nodes: { "hero.title": { text: "Blocked edit" } } } },
+      },
+    },
+    {
+      themeDraft: {
+        themeId: "AI_COSMIC_FUTURE", scope: "landing",
+        overrides: { content: { customBlocks: [{ id: "block-denied-1", section: "hero", type: "paragraph", value: "Blocked add" }] } },
+      },
+    },
+    {
+      themeOverrides: {
+        landing: { content: { nodes: { "hero.title": { text: "Blocked edit" } } } },
+      },
+    },
+    {
+      themeOverrides: {
+        landing: { content: { customBlocks: [{ id: "block-denied-2", section: "hero", type: "paragraph", value: "Blocked add" }] } },
+      },
+    },
+    { themeOverrides: {} }, // reset
+    { themeGlobal: "AI_COSMIC_FUTURE" }, // apply/publish
+    { themeMode: "SEPARATE", themePublic: "AI_COSMIC_FUTURE" }, // scoped publish
+  ];
+  for (const body of forbiddenWrites) {
+    const denied = await postTheme(false, body);
+    assert.equal(denied.response.statusCode, 422);
+    assert.equal(denied.response.body.error.code, "PANEL_THEME_NOT_ALLOWED");
+    assert.equal(denied.writes.length, 0);
+  }
 });
 
 test("theme entitlement allows plan holders to save themes through the same API", async () => {

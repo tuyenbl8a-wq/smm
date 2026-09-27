@@ -751,7 +751,7 @@ test("provider sync translates an incorrect provider order id", async () => {
   );
 });
 
-test("runtime theme settings accept exactly the two current Panel presets", async () => {
+test("runtime theme settings accept all eleven supported themes", async () => {
   const writes: any[] = [];
   const audits: any[] = [];
   const tx = {
@@ -764,6 +764,15 @@ test("runtime theme settings accept exactly the two current Panel presets", asyn
   const themeIds = [
     "AURORA_MODERN",
     "AI_COSMIC_FUTURE",
+    "CREATOR_POP",
+    "URBAN_LIME_BRUTAL",
+    "CYBER_NEON_CITY",
+    "PRISM_GLASS",
+    "OCEAN_PREMIUM",
+    "BLUE_BUSINESS",
+    "ZEN_JAPANESE",
+    "BLACK_GOLD_LUXURY",
+    "BEIGE_EDITORIAL",
   ];
   const themeFields = [
     "themeGlobal",
@@ -781,6 +790,7 @@ test("runtime theme settings accept exactly the two current Panel presets", asyn
     const draftResult = await service.updateSettings("admin", {
       themeDraft: {
         themeId,
+        scope: "landing",
         overrides: { colors: { primary: "#087ea4" } },
       },
     });
@@ -796,6 +806,22 @@ test("runtime theme settings accept exactly the two current Panel presets", asyn
     },
   });
   assert.deepEqual(contentResult.updated, ["themeContent"]);
+  await assert.rejects(
+    () =>
+      service.updateSettings("admin", {
+        themeDraft: {
+          themeId: "AURORA_MODERN",
+          scope: "admin",
+          overrides: {},
+        },
+      }),
+    (error: AdminOperationError) => error.code === "SETTING_INVALID",
+  );
+  const decomposed = "Tiếng Việt chuẩn hóa".normalize("NFD");
+  await service.updateSettings("admin", {
+    themeContent: { heroTitle: decomposed },
+  });
+  assert.equal(writes.at(-1).create.value.heroTitle, decomposed.normalize("NFC"));
 
   const removedThemeIds = [
     "DARK_LUXURY",
@@ -868,6 +894,110 @@ test("structured theme overrides reject raw executable and unknown properties", 
       }),
   };
   const service = new AdminOperationsService(db, "0".repeat(64));
+  const scopedResult = await service.updateSettings("admin", {
+    themeOverrides: {
+      landing: { colors: { primary: "#087ea4" } },
+      customer: { layout: { density: "spacious" } },
+    },
+  });
+  assert.deepEqual(scopedResult.updated, ["themeOverrides"]);
+  const decomposedTitle = "Bắt đầu từ đây".normalize("NFD");
+  await service.updateSettings("admin", {
+    themeOverrides: {
+      landing: {
+        content: {
+          nodes: {
+            "hero.title": { text: decomposedTitle },
+            "hero.primaryCta": {
+              text: "Bắt đầu ngay",
+              href: "/register",
+              hidden: false,
+            },
+          },
+        },
+      },
+    },
+  });
+  const persistedNodes = writes.at(-1).create.value.landing.content.nodes;
+  assert.equal(persistedNodes["hero.title"].text, decomposedTitle.normalize("NFC"));
+  assert.equal(persistedNodes["hero.primaryCta"].href, "/register");
+  const blockCopy = "Dịch vụ dành cho bạn".normalize("NFD");
+  await service.updateSettings("admin", {
+    themeOverrides: {
+      landing: {
+        content: {
+          customBlocks: [{
+            id: "block-hero-copy-1",
+            section: "hero",
+            type: "paragraph",
+            value: blockCopy,
+            order: 0,
+            visible: true,
+          }],
+        },
+      },
+    },
+  });
+  const persistedBlocks = writes.at(-1).create.value.landing.content.customBlocks;
+  assert.equal(persistedBlocks[0].value, blockCopy.normalize("NFC"));
+  await service.updateSettings("admin", {
+    themeGlobal: "OCEAN_PREMIUM",
+    themeOverrides: { landing: { content: { artwork: { "hero.artwork": {
+      src: "https://assets.example.test/ocean-replacement.webp",
+      alt: "Ảnh đại dương thay thế",
+      fit: "contain",
+      position: "top",
+      hidden: true,
+    } } } } },
+  });
+  assert.equal(writes.at(-1).create.value.landing.content.artwork["hero.artwork"].alt, "Ảnh đại dương thay thế");
+  await service.updateSettings("admin", {
+    themeGlobal: "AURORA_MODERN",
+    themeOverrides: { landing: { layout: { sections: { features: { order: 1 }, stats: { order: 0 } } } } },
+  });
+  assert.equal(writes.at(-1).create.value.landing.layout.sections.stats.order, 0);
+  for (const nodes of [
+    { "hero.unknown": { text: "Không được phép" } },
+    { "hero.primaryCta": { href: "javascript:alert(1)" } },
+    { "hero.title": { html: "<script>alert(1)</script>" } },
+  ])
+    await assert.rejects(
+      () => service.updateSettings("admin", {
+        themeOverrides: { landing: { content: { nodes } } },
+      }),
+      (error: AdminOperationError) => error.code === "SETTING_INVALID",
+    );
+  for (const customBlocks of [
+    [{ id: "block-x", section: "hero", type: "paragraph", value: "x" }],
+    [{ id: "block-safe-1", section: "hero", type: "paragraph", value: "<script>x</script>", html: "bad" }],
+    [{ id: "block-safe-2", section: "hero", type: "button", value: "Unsafe", href: "javascript:alert(1)" }],
+    [{ id: "block-safe-3", section: "wallet", type: "paragraph", value: "Outside allowlist" }],
+    [{ id: "block-safe-4", section: "features", type: "paragraph", value: "Wrong block type for features" }],
+  ])
+    await assert.rejects(
+      () => service.updateSettings("admin", {
+        themeOverrides: { landing: { content: { customBlocks } } },
+      }),
+      (error: AdminOperationError) => error.code === "SETTING_INVALID",
+    );
+  for (const [themeGlobal, artwork] of [
+    ["OCEAN_PREMIUM", { "hero.artwork": { src: "data:image/png;base64,AAAA" } }],
+    ["AI_COSMIC_FUTURE", { "hero.artwork": { src: "https://assets.example.test/unapproved.png" } }],
+  ] as const)
+    await assert.rejects(
+      () => service.updateSettings("admin", {
+        themeGlobal,
+        themeOverrides: { landing: { content: { artwork } } },
+      }),
+      (error: AdminOperationError) => error.code === "SETTING_INVALID",
+    );
+  await assert.rejects(
+    () => service.updateSettings("admin", {
+      themeGlobal: "OCEAN_PREMIUM",
+      themeOverrides: { landing: { layout: { sections: { features: { order: 0 } } } } },
+    }),
+    (error: AdminOperationError) => error.code === "SETTING_INVALID",
+  );
   await assert.rejects(
     () =>
       service.updateSettings("admin", {
@@ -882,6 +1012,7 @@ test("structured theme overrides reject raw executable and unknown properties", 
       }),
     /supported settings/,
   );
+  const writesBeforeDraft = writes.length;
   await service.updateSettings("admin", {
     themeDraft: {
       themeId: "AURORA_MODERN",
@@ -891,7 +1022,7 @@ test("structured theme overrides reject raw executable and unknown properties", 
       },
     },
   });
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, writesBeforeDraft + 1);
 });
 
 test("order analytics aggregates Decimal money and every status inside the active filter", async () => {

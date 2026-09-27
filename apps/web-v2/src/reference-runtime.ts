@@ -69,11 +69,12 @@ export function referencePreview(
     form: extract(/<section class="auth-card">[\s\S]*?<\/section>/),
     sidebar: extract(/<aside class="sidebar">[\s\S]*?<\/aside>/),
     topbar: extract(/<header class="topbar">[\s\S]*?<\/header>/),
-    content: `<main id="app" class="customer-content">${overview}</main>`,
+    content: `<main id="app" class="customer-content" data-theme-section="dashboard" data-theme-slot="content">${overview}</main>`,
   };
   let result = page[scope];
   for (const [name, html] of Object.entries(nodes))
     result = result.replace(`<div data-reference-slot="${name}"></div>`, html);
+  if (scope === "auth") result = result.replace(/<main class="ref-auth ([^"]+)" data-reference-page/, '<main class="ref-auth $1" data-reference-page data-theme-section="marketing" data-theme-slot="content"');
   return result.replace(/DichVu1st/giu, "Social Platform");
 }
 
@@ -91,7 +92,11 @@ export function mountReferencePage(
   if (!current) return;
   const template = document.createElement("template");
   template.innerHTML = selected[scope];
-  const page = template.content.firstElementChild!;
+  const page = template.content.firstElementChild as HTMLElement;
+  if (scope === "auth") {
+    page.dataset.themeSection = "marketing";
+    page.dataset.themeSlot = "content";
+  }
   const selectors: Record<string, string> =
     scope === "landing"
       ? { pricing: "#pricing" }
@@ -105,7 +110,13 @@ export function mountReferencePage(
   for (const [name, selector] of Object.entries(selectors)) {
     const live = current.querySelector(selector),
       target = page.querySelector(`[data-reference-slot="${name}"]`);
-    if (live && target) target.replaceWith(live);
+    if (live && target) {
+      if (scope === "customer" && name === "content") {
+        live.setAttribute("data-theme-section", "dashboard");
+        live.setAttribute("data-theme-slot", "content");
+      }
+      target.replaceWith(live);
+    }
   }
   if (scope === "landing") {
     document.querySelector("body > .header")?.remove();

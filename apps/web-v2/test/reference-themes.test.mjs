@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   referencePages,
+  referenceStyles,
   referencePreview,
   renderReferenceOrderMix,
 } from "../dist/reference-runtime.js";
@@ -54,6 +55,36 @@ test("canonical theme numbers always select their matching renderer and artwork"
       assert.match(page, new RegExp(`class="[^"]*${id === "ZEN_JAPANESE" ? "zen-landing" : "-landing"}`));
       assert.match(page, new RegExp(`/theme-assets/${({CREATOR_POP:"creator-pop",URBAN_LIME_BRUTAL:"urban-lime",CYBER_NEON_CITY:"cyber-neon",PRISM_GLASS:"prism-glass",OCEAN_PREMIUM:"ocean-premium",BLUE_BUSINESS:"blue-business",ZEN_JAPANESE:"zen-japanese",BLACK_GOLD_LUXURY:"black-gold",BEIGE_EDITORIAL:"beige-editorial"})[id]}/scene\\.png`));
     }
+  }
+});
+test("Vietnamese customer-facing reference copy stays NFC and serif headlines use Vietnamese-capable fallback stacks", async () => {
+  for (const [id, pages] of Object.entries(referencePages)) {
+    for (const scope of ["landing", "auth", "customer", "overview"]) {
+      const html = pages[scope];
+      assert.equal(html.normalize("NFC"), html, id + " " + scope + " source must be NFC");
+      assert.doesNotMatch(html, /\uFFFD/, id + " " + scope + " has no replacement glyph");
+    }
+  }
+  for (const id of ["PRISM_GLASS", "OCEAN_PREMIUM", "ZEN_JAPANESE", "BLACK_GOLD_LUXURY"]) {
+    const pages = referencePages[id];
+    for (const scope of ["landing", "auth", "customer", "overview"]) {
+      const html = pages[scope];
+      assert.equal(html.normalize("NFC"), html, id + " " + scope + " source must be NFC");
+      assert.doesNotMatch(html, /\uFFFD/, id + " " + scope + " has no replacement glyph");
+      assert.ok(/[ăâđêôơưĂÂĐÊÔƠƯáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởợúùủũụứừửữựýỳỷỹỵ]/u.test(html), id + " retains real Vietnamese copy");
+    }
+    const preview = fullPageThemePreview("", id, "landing");
+    assert.equal(preview.normalize("NFC"), preview, id + " iframe preview must be NFC");
+    assert.doesNotMatch(preview, /\uFFFD/);
+  }
+  assert.match((await import("../dist/themes.js")).themeStyles, /"Times New Roman",Georgia,"DejaVu Serif",serif/);
+  assert.match(referenceStyles, /data-theme="PRISM_GLASS"[^}]+letter-spacing:0!important/);
+  for (const selector of [".prism-message h1", ".prism-auth-island h1", ".ocean-horizon h1", ".zen-landscape h1", ".gold-monument h1"]) {
+    const start = referenceStyles.indexOf(selector + "{");
+    const rule = referenceStyles.slice(start, referenceStyles.indexOf("}", start));
+    assert.ok(start >= 0, selector + " exists in compiled theme styles");
+    assert.ok(rule.includes('"Times New Roman",Georgia,"DejaVu Serif",serif'), selector + " uses the Vietnamese-capable local face first");
+    assert.match(rule, /letter-spacing:(?:0|-.015em)/, selector + " uses restrained tracking");
   }
 });
 test("every reference mounts complete real auth cards, catalog controls and customer shell", () => {
@@ -119,8 +150,13 @@ test("every reference mounts complete real auth cards, catalog controls and cust
   }
 });
 test("serialized runtime is valid JavaScript in every scope", () => {
-  for (const scope of ["public", "auth", "customer"])
-    assert.doesNotThrow(() => new Function(runtimeThemeScript("", scope)));
+  for (const scope of ["public", "auth", "customer"]) {
+    const runtime = runtimeThemeScript("", scope);
+    assert.doesNotThrow(() => new Function(runtime));
+    assert.match(runtime, /scopeOverrides=overrides\[compositionScope\]/);
+    assert.match(runtime, /activeOverrides\.content\?\.nodes/);
+    assert.match(runtime, /smm:localechange/);
+  }
 });
 test("runtime server allowlists every referenced artwork and no other path", async () => {
   const main = await readFile(

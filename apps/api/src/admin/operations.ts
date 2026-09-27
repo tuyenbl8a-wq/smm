@@ -2956,6 +2956,15 @@ export class AdminOperationsService {
       themeIds = new Set([
         "AURORA_MODERN",
         "AI_COSMIC_FUTURE",
+        "CREATOR_POP",
+        "URBAN_LIME_BRUTAL",
+        "CYBER_NEON_CITY",
+        "PRISM_GLASS",
+        "OCEAN_PREMIUM",
+        "BLUE_BUSINESS",
+        "ZEN_JAPANESE",
+        "BLACK_GOLD_LUXURY",
+        "BEIGE_EDITORIAL",
       ]),
       entries = Object.entries(input).filter(([key, value]) => {
         if (!allowed.has(key)) return false;
@@ -2977,6 +2986,12 @@ export class AdminOperationsService {
           if (
             key === "themeDraft" &&
             !themeIds.has(String((value as any).themeId))
+          )
+            return false;
+          if (
+            key === "themeDraft" &&
+            (value as any).scope !== undefined &&
+            !["landing", "auth", "customer"].includes(String((value as any).scope))
           )
             return false;
           if (
@@ -3007,40 +3022,218 @@ export class AdminOperationsService {
               "primaryCta",
               "secondaryCta",
               "footerText",
+              "nodes",
+              "customBlocks",
+              "artwork",
             ]),
-            layout: new Set(["density", "serviceVariant"]),
+            layout: new Set(["density", "serviceVariant", "sections"]),
             typography: new Set(["font", "baseSize"]),
           };
-          if (!Object.keys(candidate).every((group) => groups[group]))
-            return false;
-          return Object.entries(candidate).every(
-            ([group, fields]: any) =>
-              fields &&
-              typeof fields === "object" &&
-              !Array.isArray(fields) &&
-              Object.entries(fields).every(
-                ([name, field]) =>
-                  groups[group]!.has(name) &&
-                  (group === "colors"
-                    ? typeof field === "string" && /^#[0-9a-f]{6}$/i.test(field)
-                    : group === "layout"
-                      ? [
-                          "compact",
-                          "comfortable",
-                          "spacious",
-                          "cards",
-                          "table",
-                          "catalog",
-                        ].includes(String(field))
-                      : group === "typography"
-                        ? ["system", "serif", "display"].includes(
-                            String(field),
-                          ) ||
-                          (name === "baseSize" &&
-                            Number(field) >= 14 &&
-                            Number(field) <= 20)
-                        : typeof field === "string" && field.length <= 500),
-              ),
+          const scopes = new Set(["landing", "auth", "customer"]);
+          const scopedThemeKey: Record<string, string> = { landing: "themePublic", auth: "themeAuth", customer: "themeCustomer" };
+          const themeForScope = (scope: string) => String(
+            input?.[scopedThemeKey[scope]!] ?? input?.themeGlobal ?? input?.themePublic ??
+            input?.themeAuth ?? input?.themeCustomer ??
+            (key === "themeDraft" ? (value as any).themeId : "AURORA_MODERN"),
+          );
+          const sectionsByTheme: Record<string, Record<string, Set<string>>> = {
+            AURORA_MODERN: { landing: new Set(["hero", "features", "stats", "cta", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+            AI_COSMIC_FUTURE: { landing: new Set(["hero", "features", "stats", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+            CREATOR_POP: { landing: new Set(["hero", "features", "stats", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+            URBAN_LIME_BRUTAL: { landing: new Set(["hero", "features", "stats", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+            CYBER_NEON_CITY: { landing: new Set(["hero", "features", "stats", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+            PRISM_GLASS: { landing: new Set(["hero", "features", "stats", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+            OCEAN_PREMIUM: { landing: new Set(["hero", "features", "stats", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+            BLUE_BUSINESS: { landing: new Set(["hero", "features", "stats", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+            ZEN_JAPANESE: { landing: new Set(["hero", "features", "stats", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+            BLACK_GOLD_LUXURY: { landing: new Set(["hero", "features", "stats", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+            BEIGE_EDITORIAL: { landing: new Set(["hero", "features", "stats", "footer", "navigation"]), auth: new Set(["marketing"]), customer: new Set(["dashboard"]) },
+          };
+          const blockTypesBySection: Record<string, Set<string>> = {
+            hero: new Set(["eyebrow", "heading", "paragraph", "button", "link", "image"]),
+            features: new Set(["feature"]),
+            stats: new Set(["stat"]),
+            cta: new Set(["heading", "paragraph", "button", "link"]),
+            footer: new Set(["paragraph", "link"]),
+            navigation: new Set(["link"]),
+            marketing: new Set(["eyebrow", "heading", "paragraph", "image"]),
+            dashboard: new Set(["eyebrow", "heading", "paragraph", "link"]),
+          };
+          const optionalSectionsByTheme: Record<string, Set<string>> = {
+            AURORA_MODERN: new Set(["features", "stats", "cta"]),
+            AI_COSMIC_FUTURE: new Set(["features", "stats"]),
+            CREATOR_POP: new Set(["features", "stats"]),
+            URBAN_LIME_BRUTAL: new Set(["features", "stats"]),
+            CYBER_NEON_CITY: new Set(["features", "stats"]),
+            PRISM_GLASS: new Set(["features", "stats"]),
+            OCEAN_PREMIUM: new Set(["features", "stats"]),
+            BLUE_BUSINESS: new Set(["features", "stats"]),
+            ZEN_JAPANESE: new Set(["features", "stats"]),
+            BLACK_GOLD_LUXURY: new Set(["features", "stats"]),
+            BEIGE_EDITORIAL: new Set(["features", "stats"]),
+          };
+          const reorderableSectionsByTheme: Record<string, Set<string>> = {
+            AURORA_MODERN: new Set(["features", "stats"]),
+          };
+          const heroPresetsByTheme: Record<string, Set<string>> = {
+            AURORA_MODERN: new Set(["split", "centered", "compact", "wide"]),
+            AI_COSMIC_FUTURE: new Set(["split", "overlay", "wide"]),
+            CREATOR_POP: new Set(["split", "centered", "wide"]),
+            URBAN_LIME_BRUTAL: new Set(["split", "compact", "wide"]),
+            CYBER_NEON_CITY: new Set(["split", "overlay", "wide"]),
+            PRISM_GLASS: new Set(["split", "centered", "overlay"]),
+            OCEAN_PREMIUM: new Set(["split", "wide", "centered"]),
+            BLUE_BUSINESS: new Set(["split", "centered", "compact"]),
+            ZEN_JAPANESE: new Set(["split", "centered", "compact"]),
+            BLACK_GOLD_LUXURY: new Set(["split", "overlay", "wide"]),
+            BEIGE_EDITORIAL: new Set(["split", "centered", "wide"]),
+          };
+          const featurePresetsByTheme: Record<string, Set<string>> = {
+            AURORA_MODERN: new Set(["2-column", "3-column"]),
+            AI_COSMIC_FUTURE: new Set(["2-column", "4-column"]),
+            CREATOR_POP: new Set(["2-column", "3-column", "4-column"]),
+            URBAN_LIME_BRUTAL: new Set(["2-column", "3-column"]),
+            CYBER_NEON_CITY: new Set(["3-column", "4-column"]),
+            PRISM_GLASS: new Set(["2-column", "3-column"]),
+            OCEAN_PREMIUM: new Set(["2-column", "3-column"]),
+            BLUE_BUSINESS: new Set(["2-column", "3-column", "4-column"]),
+            ZEN_JAPANESE: new Set(["2-column", "3-column"]),
+            BLACK_GOLD_LUXURY: new Set(["2-column", "3-column"]),
+            BEIGE_EDITORIAL: new Set(["2-column", "3-column"]),
+          };
+          const navigationPresets = new Set(["split", "centered", "compact"]);
+          const validSectionSettings = (value: any, themeId: string, scope: string) =>
+            value && typeof value === "object" && !Array.isArray(value) &&
+            Object.entries(value).every(([sectionId, patch]: [string, any]) => {
+              if (!sectionsByTheme[themeId]?.[scope]?.has(sectionId) || !patch || typeof patch !== "object" || Array.isArray(patch)) return false;
+              if (!Object.keys(patch).every((name) => ["hidden", "preset", "order"].includes(name))) return false;
+              if (patch.hidden !== undefined && (typeof patch.hidden !== "boolean" || !optionalSectionsByTheme[themeId]?.has(sectionId))) return false;
+              if (patch.order !== undefined && (!reorderableSectionsByTheme[themeId]?.has(sectionId) || !Number.isInteger(patch.order) || patch.order < 0 || patch.order >= 20)) return false;
+              if (patch.preset !== undefined) {
+                const allowed = sectionId === "hero" ? heroPresetsByTheme[themeId] : sectionId === "features" ? featurePresetsByTheme[themeId] : sectionId === "navigation" ? navigationPresets : undefined;
+                if (!allowed?.has(String(patch.preset))) return false;
+              }
+              return true;
+            });
+          const editableNodeIds = new Set([
+            "header.brand", "hero.eyebrow", "hero.title", "hero.description",
+            "hero.primaryCta", "hero.secondaryCta", "footer.description",
+            "nav.home", "nav.services", "nav.pricing", "nav.support", "nav.process",
+            "auth.marketingTitle", "auth.marketingDescription", "auth.title",
+            "auth.description", "auth.submit", "customer.topbarTitle",
+            "customer.pageTitle", "customer.pageDescription",
+          ]);
+          const validNodeContent = (value: any) =>
+            value &&
+            typeof value === "object" &&
+            !Array.isArray(value) &&
+            Object.entries(value).length <= editableNodeIds.size &&
+            Object.entries(value).every(([nodeId, patch]: [string, any]) =>
+              editableNodeIds.has(nodeId) &&
+              patch &&
+              typeof patch === "object" &&
+              !Array.isArray(patch) &&
+              Object.keys(patch).every((key) => ["text", "href", "hidden", "order"].includes(key)) &&
+              (patch.text === undefined || (typeof patch.text === "string" && patch.text.length <= 500)) &&
+              (patch.hidden === undefined || typeof patch.hidden === "boolean") &&
+              (patch.order === undefined || (nodeId.startsWith("nav.") && Number.isInteger(patch.order) && patch.order >= 0 && patch.order < 20)) &&
+              (patch.href === undefined || (typeof patch.href === "string" && patch.href.length <= 2048 && (() => {
+                try { return ["http:", "https:"].includes(new URL(patch.href, "https://theme.invalid").protocol); }
+                catch { return false; }
+              })())),
+            );
+          const artworkByTheme: Record<string, boolean> = {
+            AI_COSMIC_FUTURE: false,
+            CREATOR_POP: true,
+            URBAN_LIME_BRUTAL: true,
+            CYBER_NEON_CITY: true,
+            PRISM_GLASS: true,
+            OCEAN_PREMIUM: true,
+            BLUE_BUSINESS: true,
+            ZEN_JAPANESE: true,
+            BLACK_GOLD_LUXURY: false,
+            BEIGE_EDITORIAL: true,
+          };
+          const validArtwork = (value: any, themeId: string) =>
+            artworkByTheme[themeId] === true && value && typeof value === "object" && !Array.isArray(value) &&
+            Object.keys(value).length <= 1 && Object.entries(value).every(([id, patch]: [string, any]) =>
+              id === "hero.artwork" && patch && typeof patch === "object" && !Array.isArray(patch) &&
+              Object.keys(patch).every((name) => ["src", "alt", "hidden", "fit", "position"].includes(name)) &&
+              (patch.src === undefined || (typeof patch.src === "string" && patch.src.length <= 2048 && (() => { try { return ["http:", "https:"].includes(new URL(patch.src, "https://theme.invalid").protocol); } catch { return false; } })())) &&
+              (patch.alt === undefined || (typeof patch.alt === "string" && patch.alt.length <= 240)) &&
+              (patch.hidden === undefined || typeof patch.hidden === "boolean") &&
+              (patch.fit === undefined || ["cover", "contain"].includes(String(patch.fit))) &&
+              (patch.position === undefined || ["center", "top", "left", "right", "bottom"].includes(String(patch.position))),
+            );
+          const validCustomBlocks = (value: any, themeId: string, scope: string) =>
+            Array.isArray(value) &&
+            value.length <= 30 &&
+            themeIds.has(themeId) &&
+            value.every((block: any) =>
+              block &&
+              typeof block === "object" &&
+              !Array.isArray(block) &&
+              Object.keys(block).every((key) => ["id", "section", "type", "value", "href", "src", "alt", "visible", "order"].includes(key)) &&
+              typeof block.id === "string" && /^block-[a-z0-9-]{4,48}$/.test(block.id) &&
+              typeof block.section === "string" && sectionsByTheme[themeId]?.[scope]?.has(block.section) === true &&
+              typeof block.type === "string" && blockTypesBySection[block.section]?.has(block.type) === true &&
+              typeof block.value === "string" && block.value.length <= 500 &&
+              (block.href === undefined || (typeof block.href === "string" && block.href.length <= 2048 && (() => { try { return ["http:", "https:"].includes(new URL(block.href, "https://theme.invalid").protocol); } catch { return false; } })())) &&
+              (block.src === undefined || (typeof block.src === "string" && block.src.length <= 2048 && (() => { try { return ["http:", "https:"].includes(new URL(block.src, "https://theme.invalid").protocol); } catch { return false; } })())) &&
+              (block.alt === undefined || (typeof block.alt === "string" && block.alt.length <= 240)) &&
+              (block.visible === undefined || typeof block.visible === "boolean") &&
+              (block.order === undefined || (Number.isInteger(block.order) && block.order >= 0 && block.order < 100)) &&
+              (block.order === undefined || block.order < 100),
+            );
+          const validGroup = (group: string, fields: any, scope = "landing") =>
+            groups[group] &&
+            fields &&
+            typeof fields === "object" &&
+            !Array.isArray(fields) &&
+            Object.entries(fields).every(
+              ([name, field]) =>
+                groups[group]!.has(name) &&
+                (group === "content" && name === "nodes"
+                  ? validNodeContent(field)
+                  : group === "content" && name === "artwork"
+                    ? validArtwork(field, themeForScope(scope))
+                  : group === "content" && name === "customBlocks"
+                    ? validCustomBlocks(field, themeForScope(scope), scope)
+                  : group === "colors"
+                  ? typeof field === "string" && /^#[0-9a-f]{6}$/i.test(field)
+                  : group === "layout" && name === "sections"
+                    ? validSectionSettings(field, themeForScope(scope), scope)
+                  : group === "layout"
+                    ? [
+                        "compact",
+                        "comfortable",
+                        "spacious",
+                        "cards",
+                        "table",
+                        "catalog",
+                      ].includes(String(field))
+                    : group === "typography"
+                      ? ["system", "serif", "display"].includes(
+                          String(field),
+                        ) ||
+                        (name === "baseSize" &&
+                          Number(field) >= 14 &&
+                          Number(field) <= 20)
+                      : typeof field === "string" && field.length <= 500),
+            );
+          const validGroups = (value: any, scope = "landing") =>
+            value &&
+            typeof value === "object" &&
+            !Array.isArray(value) &&
+            Object.entries(value).every(([group, fields]) =>
+              validGroup(group, fields, scope),
+            );
+          return Object.entries(candidate).every(([group, fields]) =>
+            groups[group]
+              ? validGroup(group, fields)
+                : key === "themeOverrides" &&
+                scopes.has(group) &&
+                validGroups(fields, group),
           );
         }
         if (key === "themeOptions") {
@@ -3113,8 +3306,26 @@ export class AdminOperationsService {
     ).length;
     if (!entries.length || entries.length !== supportedCount)
       throw new AdminOperationError("SETTING_INVALID", "No supported settings");
+    const normalizeThemeStrings = (value: any): any => {
+      if (typeof value === "string") return value.normalize("NFC");
+      if (Array.isArray(value)) return value.map(normalizeThemeStrings);
+      if (value && typeof value === "object")
+        return Object.fromEntries(
+          Object.entries(value).map(([key, nested]) => [
+            key,
+            normalizeThemeStrings(nested),
+          ]),
+        );
+      return value;
+    };
+    const persistedEntries = entries.map(([key, value]) => [
+      key,
+      key === "themeContent" || key === "themeOverrides" || key === "themeDraft"
+        ? normalizeThemeStrings(value)
+        : value,
+    ] as const);
     return this.db.$transaction(async (tx: any) => {
-      for (const [key, value] of entries)
+      for (const [key, value] of persistedEntries)
         await tx.setting.upsert({
           where: { siteId_group_key: { siteId, group: "general", key } },
           update: { value, encrypted: false },
@@ -3126,7 +3337,7 @@ export class AdminOperationsService {
           actorId,
           action: "SETTINGS_UPDATE",
           resource: "Setting",
-          after: Object.fromEntries(entries),
+          after: Object.fromEntries(persistedEntries),
         },
       });
       return { updated: entries.map(([key]) => key) };
