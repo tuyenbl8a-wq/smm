@@ -271,7 +271,11 @@ test("interactive provider administration is tenant-scoped and never exposes cre
       findFirst: async ({ where }: any) =>
         rows.find((row) => matches(where, row)) ?? null,
     },
-    providerService: { findMany: async () => [] },
+    providerService: {
+      findMany: async () => [],
+      count: async ({ where }: any) =>
+        rows.filter((row) => row.id === where.providerId).length,
+    },
     orderProviderLog: { findMany: async () => [] },
   };
   const service = new ProviderService(db, key);
@@ -299,6 +303,45 @@ test("interactive provider administration is tenant-scoped and never exposes cre
     (await service.list(ROOT_SITE)).map((row: any) => row.id),
     [rows[2]!.id],
   );
+});
+
+test("provider connection test persists the latest balance snapshot", async () => {
+  const key = "01234567890123456789012345678901";
+  const provider: any = {
+    id: "00000000-0000-4000-8000-000000000201",
+    siteId: SITE_A,
+    name: "Balance NCC",
+    apiUrl: "https://balance.test",
+    apiKeyEncrypted: encryptSecret("balance-secret", key),
+    timeoutMs: 1000,
+    currency: "USD",
+    balance: null,
+    deletedAt: null,
+    lastSuccessAt: null,
+  };
+  const db: any = {
+    provider: {
+      findFirst: async ({ where }: any) =>
+        where.id === provider.id && where.siteId === SITE_A ? provider : null,
+      update: async ({ where, data }: any) => {
+        assert.equal(where.id, provider.id);
+        Object.assign(provider, data);
+        return provider;
+      },
+    },
+  };
+  const service = new ProviderService(db, key);
+  (service as any).adapter = () => ({
+    getBalance: async () => ({ balance: "123.45000000", currency: "USD" }),
+  });
+
+  assert.deepEqual(await service.test(SITE_A, provider.id), {
+    balance: "123.45000000",
+    currency: "USD",
+  });
+  assert.equal(String(provider.balance), "123.45000000");
+  assert.equal(provider.currency, "USD");
+  assert.equal(provider.lastSuccessAt instanceof Date, true);
 });
 
 test("managed child upstream hides credentials, locks endpoint settings, and rotates only its dedicated key", async () => {
