@@ -634,9 +634,17 @@ export class ProviderService {
       where: { siteId, deletedAt: null },
       orderBy: [{ priority: "asc" }, { name: "asc" }],
     });
-    return rows.map(({ apiKeyEncrypted, ...x }: any) => ({
+    const counts = await Promise.all(
+      rows.map((row: any) =>
+        this.db.providerService.count({
+          where: { providerId: row.id, active: true, stale: false },
+        }),
+      ),
+    );
+    return rows.map(({ apiKeyEncrypted, ...x }: any, index: number) => ({
       ...x,
       balance: x.balance == null ? null : String(x.balance),
+      servicesCount: counts[index] ?? 0,
       apiKeyMasked: maskSecret(
         decryptSecret(apiKeyEncrypted, this.encryptionKey),
       ),
@@ -1078,6 +1086,15 @@ export class ProviderService {
     });
     if (!provider)
       throw new ProviderConfigError("PROVIDER_NOT_FOUND", "Provider not found");
-    return this.adapter(provider).getBalance();
+    const result = await this.adapter(provider).getBalance();
+    await this.db.provider.update({
+      where: { id },
+      data: {
+        balance: result.balance,
+        currency: result.currency,
+        lastSuccessAt: new Date(),
+      },
+    });
+    return result;
   }
 }
