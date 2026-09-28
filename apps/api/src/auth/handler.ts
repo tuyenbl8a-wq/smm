@@ -1597,12 +1597,12 @@ export class AuthHandler {
         );
       }
       if (["POST", "PATCH", "PUT", "DELETE"].includes(request.method ?? "")) {
-        const csrf = this.cookie(request, "smm_csrf");
+        const csrfCookies = this.cookies(request, "smm_csrf");
         const header = this.header(request, "x-csrf-token");
         if (
-          !csrf ||
-          csrf !== header ||
-          !verifyCsrf(csrf, auth.rawToken, this.config.sessionSecret)
+          !header ||
+          !csrfCookies.includes(header) ||
+          !verifyCsrf(header, auth.rawToken, this.config.sessionSecret)
         )
           return this.error(
             response,
@@ -2963,26 +2963,39 @@ export class AuthHandler {
     return this.ok(response, { changed: true });
   }
   private async authenticate(request: IncomingMessage, siteId: string) {
-    const rawToken = this.cookie(request, "smm_session");
-    if (!rawToken) return null;
-    const session = await this.store.findSession(tokenHash(rawToken));
-    if (!session || session.revokedAt || session.expiresAt <= new Date())
-      return null;
-    const user = await this.store.findUserById(session.userId, siteId);
-    if (!user || user.status !== "ACTIVE" || user.siteId !== siteId)
-      return null;
-    const access = await this.store.rolesAndPermissions(user.id);
-    const entitlement = this.store.panelEntitlements
-      ? await this.store.panelEntitlements(siteId)
-      : null;
-    const effectiveAccess = applyPanelEntitlement(user.id, access, entitlement);
-    return {
-      rawToken,
-      session,
-      user,
-      access: effectiveAccess,
-      panelEntitlement: entitlement,
-    };
+    const rawTokens = [...new Set(this.cookies(request, "smm_session"))];
+    if (!rawTokens.length) return null;
+    const csrfHeader = this.header(request, "x-csrf-token") ?? "";
+    const preferred = csrfHeader
+      ? rawTokens.filter((rawToken) =>
+          verifyCsrf(csrfHeader, rawToken, this.config.sessionSecret),
+        )
+      : [];
+    const candidates = [
+      ...preferred,
+      ...rawTokens.filter((rawToken) => !preferred.includes(rawToken)),
+    ];
+    for (const rawToken of candidates) {
+      const session = await this.store.findSession(tokenHash(rawToken));
+      if (!session || session.revokedAt || session.expiresAt <= new Date())
+        continue;
+      const user = await this.store.findUserById(session.userId, siteId);
+      if (!user || user.status !== "ACTIVE" || user.siteId !== siteId)
+        continue;
+      const access = await this.store.rolesAndPermissions(user.id);
+      const entitlement = this.store.panelEntitlements
+        ? await this.store.panelEntitlements(siteId)
+        : null;
+      const effectiveAccess = applyPanelEntitlement(user.id, access, entitlement);
+      return {
+        rawToken,
+        session,
+        user,
+        access: effectiveAccess,
+        panelEntitlement: entitlement,
+      };
+    }
+    return null;
   }
   private async issueSession(
     response: ServerResponse,
@@ -3005,6 +3018,12 @@ export class AuthHandler {
     const secure = this.config.environment === "production" ? "; Secure" : "";
     const domain = this.cookieDomain();
     response.setHeader("set-cookie", [
+      ...(domain
+        ? [
+            `smm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,
+            `smm_csrf=; Path=/; SameSite=Lax; Max-Age=0${secure}`,
+          ]
+        : []),
       `smm_session=${rawToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${domain}${secure}`,
       `smm_csrf=${csrf}; Path=/; SameSite=Lax; Max-Age=${SESSION_SECONDS}${domain}${secure}`,
     ]);
@@ -3022,8 +3041,14 @@ export class AuthHandler {
     const domain = this.cookieDomain();
     const secure = this.config.environment === "production" ? "; Secure" : "";
     response.setHeader("set-cookie", [
-      `smm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${domain}${secure}`,
-      `smm_csrf=; Path=/; SameSite=Lax; Max-Age=0${domain}${secure}`,
+      `smm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,
+      `smm_csrf=; Path=/; SameSite=Lax; Max-Age=0${secure}`,
+      ...(domain
+        ? [
+            `smm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${domain}${secure}`,
+            `smm_csrf=; Path=/; SameSite=Lax; Max-Age=0${domain}${secure}`,
+          ]
+        : []),
     ]);
   }
   private cookieDomain() {
@@ -3077,12 +3102,11 @@ export class AuthHandler {
     };
   }
   private csrf(request: IncomingMessage, rawToken: string) {
+    const header = this.header(request, "x-csrf-token") ?? "";
     if (
-      !verifyCsrf(
-        this.header(request, "x-csrf-token") ?? "",
-        rawToken,
-        this.config.sessionSecret,
-      )
+      !header ||
+      !this.cookies(request, "smm_csrf").includes(header) ||
+      !verifyCsrf(header, rawToken, this.config.sessionSecret)
     )
       throw new InputError("CSRF_INVALID", "Invalid CSRF token");
   }
@@ -3222,14 +3246,18 @@ export class AuthHandler {
       );
     return password;
   }
-  private cookie(request: IncomingMessage, name: string) {
+  private cookies(request: IncomingMessage, name: string) {
     const raw = this.header(request, "cookie");
+    if (!raw) return [];
     return raw
-      ?.split(";")
+      .split(";")
       .map((item) => item.trim().split("="))
-      .find(([key]) => key === name)
-      ?.slice(1)
-      .join("=");
+      .filter(([key]) => key === name)
+      .map((parts) => parts.slice(1).join("="))
+      .filter(Boolean);
+  }
+  private cookie(request: IncomingMessage, name: string) {
+    return this.cookies(request, name)[0];
   }
   private header(request: IncomingMessage, name: string) {
     const value = request.headers[name];
