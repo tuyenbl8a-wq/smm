@@ -1854,3 +1854,14 @@ test("mobile admin round 2 keeps operational cards compact and plan permissions 
   assert.match(admin, /row-menu-items/);
   assert.doesNotMatch(admin, /can\('orders\.sync'\)\|\|can\('orders\.manage'\).*data-mobile-sync/);
 });
+
+
+test("admin runtime defines shared mutations and confirmations and normalizes provider intervals", () => {
+  assert.match(adminOperations, /async function mutate\(/);
+  assert.match(adminOperations, /function confirmBox\(/);
+  assert.match(adminOperations, /api\.post\(path,body,headers\)/);
+  assert.match(adminOperations, /body\.syncIntervalMinutes=Number\(body\.syncIntervalMinutes\)/);
+  const rendered = inlineAdminScript("/admin/providers");
+  assert.match(rendered, /async function mutate\(/);
+  assert.match(rendered, /function confirmBox\(/);
+});
