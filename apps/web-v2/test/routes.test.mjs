@@ -448,6 +448,23 @@ test("admin UI excludes secret fields and never stores sessions locally", () => 
   ])
     assert.doesNotMatch(admin, new RegExp(secret));
 });
+test("shared admin mutation helper powers non-editor row actions", () => {
+  assert.match(
+    adminOperations,
+    /async function mutate\(path,body,label,headers\)/,
+  );
+  assert.match(adminOperations, /await api\.post\(path,body,headers\)/);
+  assert.match(adminOperations, /toast\(result\?\.message\|\|label\+' thành công'\)/);
+  assert.match(adminOperations, /await load\(\)/);
+  for (const action of [
+    "providers/'+id+'/'+a",
+    "catalog/'+kind+'/'+id+'/update",
+    "pricing/alerts/'+id+'/resolve",
+    "payment-methods/'+id+'/test",
+  ])
+    assert.match(adminOperations, new RegExp(action.replaceAll("/", "\\/").replaceAll("+", "\\+")));
+});
+
 test("remaining admin modules use real mutation contracts", () => {
   for (const contract of [
     "staff/candidates",
