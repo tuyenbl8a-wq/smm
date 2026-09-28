@@ -1657,7 +1657,7 @@ test("affiliate and reports have dedicated renderers instead of order filters", 
 });
 
 test("catalog and price-group CTAs use canonical tenant permissions", () => {
-  assert.match(adminOperations, /moduleHeader\('\+ Tạo nhóm giá','create','users\.pricing\.manage'\)/);
+  assert.match(adminOperations, /moduleHeader\('Tạo nhóm giá','create','users\.pricing\.manage'\)/);
   assert.match(adminOperations, /moduleHeader\(\(kind===['"]platforms/);
   assert.match(adminOperations, /services\.create/);
   assert.doesNotMatch(adminOperations, /moduleHeader\([^\n]+services\.manage/);
