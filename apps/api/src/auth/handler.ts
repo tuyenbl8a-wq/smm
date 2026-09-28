@@ -2797,7 +2797,11 @@ export class AuthHandler {
       if (error instanceof InputError)
         return this.error(
           response,
-          error.code === "AUTH_RATE_LIMITED" ? 429 : 422,
+          error.code === "AUTH_RATE_LIMITED"
+            ? 429
+            : error.code === "CSRF_INVALID"
+              ? 403
+              : 422,
           error.code,
           error.message,
         );
