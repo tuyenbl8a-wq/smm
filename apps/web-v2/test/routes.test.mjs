@@ -321,9 +321,12 @@ test("mass order uses a four-step validated preview and the authoritative order 
   );
   assert.doesNotMatch(customer, /api\/v1\/customer\/orders\/bulk/);
 });
-test("authenticated API client includes cookies, CSRF, timeout and normalized errors", () => {
+test("authenticated API client includes cookies, CSRF recovery, timeout and normalized errors", () => {
   assert.match(client, /credentials:'include'/);
   assert.match(client, /x-csrf-token/);
+  assert.match(client, /csrfCookies/);
+  assert.match(client, /CSRF_INVALID/);
+  assert.match(client, /i<tokens\.length-1\)continue/);
   assert.match(client, /AbortController/);
   assert.match(client, /method:'PUT'/);
   assert.match(client, /method:'PATCH'/);
