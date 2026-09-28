@@ -98,8 +98,8 @@ test("duplicate legacy/domain session cookies select the session matching the CS
   assert.equal(res.body.success, true);
   assert.deepEqual(revoked, ["current-session"]);
   const cookies = res.headers.get("set-cookie") as string[];
-  assert.ok(cookies.some((value) => value.includes("Max-Age=0") && !value.includes("Domain=")));
-  assert.ok(cookies.some((value) => value.includes("Domain=.dichvu1st.com")));
+  assert.equal(cookies.some((value) => value.includes("Max-Age=0") && !value.includes("Domain=")), true);
+  assert.equal(cookies.some((value) => value.includes("Domain=.dichvu1st.com")), true);
 });
 
 test("Panel mutations accept the valid CSRF pair even when stale cookies appear first", async () => {
