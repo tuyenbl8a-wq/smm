@@ -1281,3 +1281,17 @@ test("order selection is page-local and advanced filters are collapsed", () => {
   assert.match(html, /id="bulkBar" hidden/);
   assert.match(html, /Cập nhật từ NCC/);
 });
+
+
+test("mobile admin uses compact cards and direct customer/order actions", () => {
+  assert.match(adminOperations, /mobile-user-list/);
+  assert.match(adminOperations, /quick-wallet/);
+  assert.match(adminOperations, /quick-status/);
+  assert.match(adminOperations, /#orders/);
+  assert.match(adminOperations, /location\.hash\.slice\(1\)/);
+  assert.match(admin, /mobile-order-list/);
+  assert.match(admin, /data-mobile-sync/);
+  assert.match(admin, /resource-table/);
+  assert.match(admin, /mobile-card-actions/);
+  assert.match(adminUx, /mobileHide:true/);
+});
