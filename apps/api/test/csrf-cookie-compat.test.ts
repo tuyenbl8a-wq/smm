@@ -26,10 +26,18 @@ function fakeStore() {
   };
   return {
     revoked,
+    user,
     store: {
       findSession: async (hash: string) => sessions.get(hash) ?? null,
       findUserById: async (id: string, siteId: string) => id === user.id && siteId === ROOT ? user : null,
       rolesAndPermissions: async () => ({ roles: ["SUPER_ADMIN"], permissions: ["settings.manage"] }),
+      createSession: async ({ userId, tokenHash: hash, expiresAt }: any) => ({
+        id: "new-session",
+        userId,
+        tokenHash: hash,
+        expiresAt,
+        revokedAt: null,
+      }),
       revokeSession: async (id: string) => { revoked.push(id); },
     } as any,
   };
@@ -100,6 +108,35 @@ test("duplicate legacy/domain session cookies select the session matching the CS
   const cookies = res.headers.get("set-cookie") as string[];
   assert.equal(cookies.some((value) => value.includes("Max-Age=0") && !value.includes("Domain=")), true);
   assert.equal(cookies.some((value) => value.includes("Domain=.dichvu1st.com")), true);
+});
+
+
+test("new sessions are host-only so custom panel domains can keep their own login cookie", async () => {
+  const { store, user } = fakeStore();
+  const handler: any = new AuthHandler(store, config());
+  const res = response();
+  await handler.issueSession(
+    res,
+    {
+      headers: { "x-smm-tenant-host": "smmlike.site" },
+      socket: {},
+    } as any,
+    user,
+    200,
+  );
+  const cookies = res.headers.get("set-cookie") as string[];
+  const active = cookies.filter((value) => !value.includes("Max-Age=0"));
+  assert.equal(active.length, 2);
+  assert.equal(active.every((value) => !value.includes("Domain=")), true);
+  assert.equal(active.every((value) => value.includes("; Secure")), true);
+  assert.equal(
+    cookies.some(
+      (value) =>
+        value.includes("Max-Age=0") &&
+        value.includes("Domain=.dichvu1st.com"),
+    ),
+    true,
+  );
 });
 
 test("Panel mutations accept the valid CSRF pair even when stale cookies appear first", async () => {
