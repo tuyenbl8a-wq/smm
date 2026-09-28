@@ -1839,3 +1839,18 @@ test("mobile admin and customer surfaces stay compact and action-oriented", () =
   assert.match(customer, /customer-desktop-only/);
   assert.match(components + customer, /min-height:44px|customer-card-action/);
 });
+
+
+test("mobile admin round 2 keeps operational cards compact and plan permissions safe", () => {
+  assert.match(adminOperations, /mobileHide/);
+  assert.match(adminOperations, /permission-accordion/);
+  assert.match(adminOperations, /syncPlanCapabilities/);
+  assert.match(adminOperations, /panels\.resale\.manage/);
+  assert.match(adminUx, /mobile-hide/);
+  assert.match(adminUx, /Mở thao tác/);
+  assert.match(adminUx, /Cho phép bán lại Panel/);
+  assert.match(admin, /closeAdminDrawer/);
+  assert.match(admin, /body\.admin-drawer-open/);
+  assert.match(admin, /row-menu-items/);
+  assert.doesNotMatch(admin, /can\('orders\.sync'\)\|\|can\('orders\.manage'\).*data-mobile-sync/);
+});
