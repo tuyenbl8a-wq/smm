@@ -1822,3 +1822,20 @@ test("rendered Panel conversion controls preview and submit the selected explici
   node("#panelTypeTarget").onchange();
   assert.equal(node("#convertPanelType").disabled, true);
 });
+
+
+test("mobile admin and customer surfaces stay compact and action-oriented", () => {
+  assert.match(adminOperations, /mobile-user-list/);
+  assert.match(adminOperations, /quick-edit/);
+  assert.match(adminOperations, /quick-wallet/);
+  assert.match(adminOperations, /quick-status/);
+  assert.match(admin, /mobile-order-list/);
+  assert.match(admin, /data-mobile-sync/);
+  assert.match(admin, /mobile-card-actions/);
+  assert.match(adminUx, /mobileHide:true/);
+  assert.match(customer, /mobile-bottom-nav/);
+  assert.match(customer, /customer-mobile-orders/);
+  assert.match(customer, /customer-mobile-transactions/);
+  assert.match(customer, /customer-desktop-only/);
+  assert.match(components + customer, /min-height:44px|customer-card-action/);
+});
