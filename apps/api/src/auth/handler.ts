@@ -3003,10 +3003,16 @@ export class AuthHandler {
       : null;
     const csrf = csrfValue(rawToken, this.config.sessionSecret);
     const secure = this.config.environment === "production" ? "; Secure" : "";
-    const domain = this.cookieDomain();
+    const legacyDomain = this.legacyCookieDomain();
     response.setHeader("set-cookie", [
-      `smm_session=${rawToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${domain}${secure}`,
-      `smm_csrf=${csrf}; Path=/; SameSite=Lax; Max-Age=${SESSION_SECONDS}${domain}${secure}`,
+      ...(legacyDomain
+        ? [
+            `smm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${legacyDomain}${secure}`,
+            `smm_csrf=; Path=/; SameSite=Lax; Max-Age=0${legacyDomain}${secure}`,
+          ]
+        : []),
+      `smm_session=${rawToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${secure}`,
+      `smm_csrf=${csrf}; Path=/; SameSite=Lax; Max-Age=${SESSION_SECONDS}${secure}`,
     ]);
     return this.ok(
       response,
@@ -3019,14 +3025,20 @@ export class AuthHandler {
     );
   }
   private clearCookies(response: ServerResponse) {
-    const domain = this.cookieDomain();
     const secure = this.config.environment === "production" ? "; Secure" : "";
+    const legacyDomain = this.legacyCookieDomain();
     response.setHeader("set-cookie", [
-      `smm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${domain}${secure}`,
-      `smm_csrf=; Path=/; SameSite=Lax; Max-Age=0${domain}${secure}`,
+      `smm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,
+      `smm_csrf=; Path=/; SameSite=Lax; Max-Age=0${secure}`,
+      ...(legacyDomain
+        ? [
+            `smm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${legacyDomain}${secure}`,
+            `smm_csrf=; Path=/; SameSite=Lax; Max-Age=0${legacyDomain}${secure}`,
+          ]
+        : []),
     ]);
   }
-  private cookieDomain() {
+  private legacyCookieDomain() {
     if (this.config.environment !== "production") return "";
     const host = this.config.appUrl.hostname.toLowerCase();
     const parts = host.split(".");
