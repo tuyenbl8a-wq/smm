@@ -169,6 +169,26 @@ test("all customer panel actions use the same renter ownership scope", async () 
   assert.equal(f.sites.find((site) => site.id === "child-a").ownerUserId, "child-a-user");
 });
 
+
+test("a removed custom domain can be re-added to the same panel without duplicating its unique hostname", async () => {
+  const f = ownershipFixture();
+  const original = f.domains.find((domain: any) => domain.id === "verified-a");
+  assert.equal(original.status, "VERIFIED");
+  await f.service.removeDomain(ROOT, RENTER_A, "101", "verified-a");
+  assert.equal(original.status, "DISABLED");
+  const restored = await f.service.addDomain(ROOT, RENTER_A, "101", "a.example");
+  assert.equal(restored.id, "verified-a");
+  assert.equal(restored.status, "PENDING");
+  assert.equal(restored.isPrimary, false);
+  assert.equal(restored.providerZoneId, "zone-a.example");
+  assert.deepEqual(restored.nameservers, ["ns1.test", "ns2.test"]);
+  assert.equal(
+    f.domains.filter((domain: any) => domain.hostname === "a.example").length,
+    1,
+  );
+});
+
+
 test("auto-renew changes create one safe, correctly scoped audit event per actual change", async () => {
   const f = ownershipFixture();
   await f.service.autoRenew(ROOT, RENTER_A, "101", true);
