@@ -1084,20 +1084,38 @@ export class PanelManagementService {
         "Plan does not allow custom domains",
       );
     const hostname = normalizeHostname(String(value));
+    const existing = await this.db.siteDomain.findFirst({
+      where: { hostname },
+    });
+    if (
+      existing &&
+      (existing.siteId !== panel.id ||
+        existing.type !== "CUSTOM" ||
+        existing.status !== "DISABLED")
+    )
+      throw new TenantError(
+        "DOMAIN_ALREADY_EXISTS",
+        "Domain is already attached to a panel",
+      );
     const zone = await this.dns.createZone(hostname);
     try {
-      const domain = await this.db.siteDomain.create({
-        data: {
-          siteId: panel.id,
-          hostname,
-          type: "CUSTOM",
-          status: "PENDING",
-          isPrimary: false,
-          verificationToken: randomBytes(24).toString("base64url"),
-          providerZoneId: zone.zoneId,
-          assignedNameservers: zone.nameservers,
-        },
-      });
+      const data = {
+        siteId: panel.id,
+        hostname,
+        type: "CUSTOM",
+        status: "PENDING",
+        isPrimary: false,
+        verificationToken: randomBytes(24).toString("base64url"),
+        providerZoneId: zone.zoneId,
+        assignedNameservers: zone.nameservers,
+        verifiedAt: null,
+      };
+      const domain = existing
+        ? await this.db.siteDomain.update({
+            where: { id: existing.id },
+            data,
+          })
+        : await this.db.siteDomain.create({ data });
       return { ...domain, nameservers: zone.nameservers };
     } catch (error) {
       if (zone.created)
