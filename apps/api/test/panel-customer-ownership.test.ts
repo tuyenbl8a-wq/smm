@@ -189,6 +189,19 @@ test("a removed custom domain can be re-added to the same panel without duplicat
 });
 
 
+test("a disabled domain owned by another panel cannot be reclaimed", async () => {
+  const f = ownershipFixture();
+  const foreign = f.domains.find((domain: any) => domain.id === "domain-b");
+  foreign.status = "DISABLED";
+  await assert.rejects(
+    () => f.service.addDomain(ROOT, RENTER_A, "101", "b.example"),
+    (error: any) => error.code === "DOMAIN_ALREADY_EXISTS",
+  );
+  assert.equal(f.domains.filter((domain: any) => domain.hostname === "b.example").length, 1);
+  assert.equal(foreign.siteId, "child-b");
+});
+
+
 test("auto-renew changes create one safe, correctly scoped audit event per actual change", async () => {
   const f = ownershipFixture();
   await f.service.autoRenew(ROOT, RENTER_A, "101", true);
