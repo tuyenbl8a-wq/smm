@@ -184,16 +184,26 @@ export class PrismaAuthStore implements AuthStore {
   }) {
     return this.db.$transaction(async (tx: any) => {
       const role = await tx.role.findUniqueOrThrow({ where: { code: "USER" } });
+      const siteId = input.siteId ?? ROOT_SITE_ID;
       const group =
         (await tx.priceGroup.findUnique({
-          where: input.siteId
-            ? { siteId_code: { siteId: input.siteId, code: "CUSTOMER" } }
-            : { code: "CUSTOMER" },
+          where: { siteId_code: { siteId, code: "CUSTOMER" } },
         })) ??
-        (await tx.priceGroup.findUniqueOrThrow({
-          where: input.siteId
-            ? { siteId_code: { siteId: input.siteId, code: "NORMAL" } }
-            : { code: "NORMAL" },
+        (await tx.priceGroup.findUnique({
+          where: { siteId_code: { siteId, code: "NORMAL" } },
+        })) ??
+        (await tx.priceGroup.findFirst({
+          where: { siteId, active: true },
+          orderBy: [{ tierOrder: "asc" }, { createdAt: "asc" }],
+        })) ??
+        (await tx.priceGroup.create({
+          data: {
+            siteId,
+            name: "Khách hàng",
+            code: "CUSTOMER",
+            active: true,
+            tierOrder: 0,
+          },
         }));
       const { referredByCode, ...userInput } = input;
       const referrer = referredByCode
