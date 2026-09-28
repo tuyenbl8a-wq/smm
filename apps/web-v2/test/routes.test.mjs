@@ -465,6 +465,17 @@ test("shared admin mutation helper powers non-editor row actions", () => {
     assert.match(adminOperations, new RegExp(action.replaceAll("/", "\\/").replaceAll("+", "\\+")));
 });
 
+test("provider list renders balance and concrete service counts", () => {
+  const providerModule = adminOperations.slice(
+    adminOperations.indexOf("function renderProviders"),
+    adminOperations.indexOf("function renderPriceGroups"),
+  );
+  assert.match(providerModule, /key:'balance',label:'Số dư NCC'/);
+  assert.match(providerModule, /r\.balance==null\?'Chưa kiểm tra'/);
+  assert.match(providerModule, /key:'servicesCount',label:'Dịch vụ'/);
+  assert.match(providerModule, /r\.servicesCount\?\?0/);
+});
+
 test("remaining admin modules use real mutation contracts", () => {
   for (const contract of [
     "staff/candidates",
