@@ -1855,6 +1855,13 @@ test("rendered Panel conversion controls preview and submit the selected explici
 });
 
 
+test("desktop panel cards stay compact while mobile cards remain full width", () => {
+  assert.ok(customerUx.includes("minmax(min(100%,300px),420px)"));
+  assert.ok(customerUx.includes("justify-content:start;align-items:start"));
+  assert.ok(customerUx.includes(".panel-card>.button{width:100%;min-height:46px"));
+  assert.ok(customerUx.includes("@media(max-width:560px){.panel-list{grid-template-columns:1fr}"));
+});
+
 test("mobile admin and customer surfaces stay compact and action-oriented", () => {
   assert.match(adminOperations, /mobile-user-list/);
   assert.match(adminOperations, /quick-edit/);
