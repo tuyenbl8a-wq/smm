@@ -1855,6 +1855,15 @@ test("rendered Panel conversion controls preview and submit the selected explici
 });
 
 
+test("AI Cosmic desktop sidebar keeps navigation and footer controls from overlapping", async () => {
+  const { aiCosmicStyles } = await import("../dist/ai-cosmic-styles.js");
+  const { customerI18nScript } = await import("../dist/i18n.js");
+  assert.ok(aiCosmicStyles.includes(".aiv3-sidebar>.sidebar>nav{min-height:0;overflow-y:auto"));
+  assert.ok(aiCosmicStyles.includes(".aiv3-sidebar>.sidebar>.logout{position:static"));
+  assert.ok(aiCosmicStyles.includes("display:flex;flex-direction:column;overflow:hidden"));
+  assert.ok(customerI18nScript().includes(".aiv3-sidebar>.sidebar"));
+});
+
 test("desktop panel cards stay compact while mobile cards remain full width", () => {
   assert.ok(customerUx.includes("minmax(min(100%,300px),420px)"));
   assert.ok(customerUx.includes("justify-content:start;align-items:start"));
