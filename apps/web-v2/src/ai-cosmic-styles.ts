@@ -67,7 +67,7 @@ a{color:inherit;text-decoration:none}
 .aiv3-workspace{min-width:0}
 .aiv3-close{display:none}
 .aiv3-sidebar{border-right:1px solid #237ccd;background:#020d1c}
-.aiv3-sidebar>.sidebar{position:sticky;top:0;height:calc(100vh - 38px);width:100%;padding:26px 14px;margin:0;border:0;border-radius:0;background:transparent;overflow-y:auto}
+.aiv3-sidebar>.sidebar{position:sticky;top:0;height:calc(100vh - 38px);width:100%;padding:26px 14px;margin:0;border:0;border-radius:0;background:transparent;display:flex;flex-direction:column;overflow:hidden}.aiv3-sidebar>.sidebar>nav{min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-right:4px}.aiv3-sidebar>.sidebar>.logout{position:static;bottom:auto;width:100%;margin-top:10px;flex:0 0 auto}
 .sidebar .brand{font-size:28px;padding:0 8px 18px}
 .sidebar nav a{font-size:16px;padding:13px 15px;color:#b9d4f4;border-radius:11px;margin:3px 0}
 .sidebar nav a.active{background:linear-gradient(100deg,#2543a6,#6334f1);box-shadow:inset 3px 0 #ceadff,0 0 15px #4239ec55;color:#fff}
@@ -151,7 +151,7 @@ a{color:inherit;text-decoration:none}
 .aiv3-manifesto>span{font-size:24px;margin-right:30px}
 .aiv3-dashboard{grid-template-columns:1fr;margin:8px}
 .aiv3-sidebar{border:0}
-.aiv3-sidebar>.sidebar{position:fixed;inset:0 auto 0 0;width:270px;height:100dvh;background:#03132b;z-index:100;transform:translateX(-110%);box-shadow:15px 0 50px #0009}
+.aiv3-sidebar>.sidebar{position:fixed;inset:0 auto 0 0;width:270px;height:100dvh;background:#03132b;z-index:100;transform:translateX(-110%);box-shadow:15px 0 50px #0009;display:flex;flex-direction:column;overflow:hidden}.aiv3-sidebar>.sidebar>nav{min-height:0;overflow-y:auto}
 .aiv3-sidebar>.sidebar.open{transform:translateX(0)}
 .aiv3-close{display:block;background:#112d53;color:#c7eaff;border:1px solid #416cbe;border-radius:8px;padding:12px;width:100%;margin-bottom:16px}
 #drawer-toggle{display:block}
